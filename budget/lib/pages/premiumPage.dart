@@ -1197,28 +1197,8 @@ class LockedFeature extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The free edition must not intercept taps on formerly gated features.
+    // Formerly gated controls remain interactive without a purchase.
     return child;
-    /* Widget child = IgnorePointer(child: this.child);
-    if (showLock)
-      child = Stack(
-        alignment: AlignmentDirectional.center,
-        children: [
-          IgnorePointer(child: this.child),
-          Icon(appStateSettings["outlinedIcons"]
-              ? Icons.lock_outlined
-              : Icons.lock_rounded),
-        ],
-      );
-    return Tappable(
-      onTap: () async {
-        bool result = await premiumPopupPushRoute(context);
-        if (actionAfter != null && result == true) actionAfter!();
-      },
-      borderRadius: 20,
-      color: Colors.transparent,
-      child: child,
-    ); */
   }
 }
 
