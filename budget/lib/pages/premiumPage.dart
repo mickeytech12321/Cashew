@@ -26,8 +26,10 @@ import 'package:sa3_liquid/sa3_liquid.dart';
 import 'package:budget/widgets/openContainerNavigation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 
-bool premiumPopupEnabled = kIsWeb == false;
-bool tryStoreEnabled = kIsWeb == false && kDebugMode == false;
+// Free edition: no premium upsell prompts.
+bool premiumPopupEnabled = false;
+// Free edition does not initialize the app-store purchase flow.
+bool tryStoreEnabled = false;
 StreamSubscription<List<PurchaseDetails>>? purchaseListener;
 Map<String, ProductDetails> storeProducts = {};
 Map<String, String> productIDs = {
@@ -1195,7 +1197,9 @@ class LockedFeature extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget child = IgnorePointer(child: this.child);
+    // The free edition must not intercept taps on formerly gated features.
+    return child;
+    /* Widget child = IgnorePointer(child: this.child);
     if (showLock)
       child = Stack(
         alignment: AlignmentDirectional.center,
@@ -1214,7 +1218,7 @@ class LockedFeature extends StatelessWidget {
       borderRadius: 20,
       color: Colors.transparent,
       child: child,
-    );
+    ); */
   }
 }
 
