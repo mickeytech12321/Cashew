@@ -1108,8 +1108,14 @@ class LockedFeature extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Formerly gated controls remain interactive without a purchase.
-    return child;
+    // Free edition: preserve the original follow-up action without gating.
+    if (actionAfter == null) return child;
+    return Tappable(
+      onTap: () => actionAfter!(),
+      borderRadius: 20,
+      color: Colors.transparent,
+      child: child,
+    );
   }
 }
 
