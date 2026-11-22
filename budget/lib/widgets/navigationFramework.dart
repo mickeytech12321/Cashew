@@ -430,7 +430,8 @@ class PageNavigationFrameworkState extends State<PageNavigationFramework> {
       runQuickActionsPayLoads(context);
       initializeLocalizedMonthNames();
       // Free edition: do not initialize the purchase store.
-if (entireAppLoaded == false) {
+
+      if (entireAppLoaded == false) {
         await runAllCloudFunctions(context);
       }
 
