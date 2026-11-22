@@ -16,12 +16,19 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Use Java 17 for legacy Gradle 7.5
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
-      - name: Flutter version
-        run: flutter --version
+      - name: Toolchain versions
+        run: |
+          java -version
+          flutter --version
       - name: Resolve dependencies
         working-directory: budget
         run: flutter pub get
