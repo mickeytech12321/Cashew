@@ -2,6 +2,13 @@
 
 Branch: `feature/free-edition` (not merged into main).
 
+## 2026-11-23 — Modernization phase 1 audit and first dependency migration
+
+- Added [MODERNIZATION_AUDIT.md](MODERNIZATION_AUDIT.md) with a prioritized inventory of build blockers, security concerns, and exit gates (commit `9c5f00a`).
+- Replaced obsolete `melWiss/flutter_file_picker` Git dependency with maintained pub.dev `file_picker: ^8.3.7` to eliminate removed Flutter v1 `Registrar` Java API (commit `1bf2b11`).
+- This dependency change is **not yet verified by a successful build**; the old fork had custom behavior and import/export must be regression-tested.
+- The preceding Android CI run [#51](https://github.com/mickeytech12321/Cashew/actions/runs/45202843882) failed in the old Git file_picker plugin's Java compilation.
+
 ## 2026-11-23 — Android identity and dependency modernization
 
 - Set Android `applicationId` and Gradle `namespace` to `com.mickey.cashew`.
