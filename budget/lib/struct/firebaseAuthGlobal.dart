@@ -50,7 +50,7 @@ Future<FirebaseFirestore?> firebaseGetDBInstance() async {
       GoogleSignInAuthentication? googleAuth = googleUser?.authentication;
 
       _credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth?.accessToken,
+        accessToken: null,
         idToken: googleAuth?.idToken,
       );
 
