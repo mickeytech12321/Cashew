@@ -27,3 +27,9 @@ Status: **Audit started; migration and successful APK are not yet verified.**
 
 ## Verification policy
 A committed plan is not a passing build. Each phase must cite its commit and CI run, record failures honestly, and only be marked complete after its exit gates pass.
+
+## Source-level verification (follow-up)
+- Inspected `budget/lib/main.dart`: app startup unconditionally calls `Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)` **before** local database initialization. Simply removing the Google Services Gradle plugin does not prevent Firebase initialization. This is a confirmed privacy and configuration blocker; cloud functionality must be isolated carefully without breaking local startup.
+- Inspected `budget/lib/struct/firebaseAuthGlobal.dart`: code signs in anonymously or with Google and obtains Firestore instances. These paths need explicit configuration gating and tests before release.
+- Inspected `budget/android/app/src/main/AndroidManifest.xml`: upstream `cashewapp.web.app` deep links remain. They must be removed or replaced with owned domains after evaluating app-link behavior.
+- The file-picker replacement build was in progress when these notes were added; do not infer success from the dependency edit.
