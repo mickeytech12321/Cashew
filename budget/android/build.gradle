@@ -27,3 +27,20 @@ subprojects {
         }
     }
 }
+
+
+// The charset detector Android plugin compiles Kotlin for JVM 17 but leaves
+// Java at JVM 8. Kotlin 2.x rejects mixed targets. Align this library's Java
+// target with Kotlin without patching downloaded pub-cache source files.
+subprojects { subproject ->
+    if (subproject.name == 'flutter_charset_detector_android') {
+        subproject.plugins.withId('com.android.library') {
+            subproject.android {
+                compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
+            }
+        }
+    }
+}
