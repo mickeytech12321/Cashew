@@ -125,12 +125,11 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
           cache = Path.home() / '.pub-cache' / 'hosted' / 'pub.dev'
           patched = []
           for path in sorted(cache.glob('*/android/build.gradle.kts')):
               source = path.read_text()
-              if not re.search(r'(?m)^kotlin\\s*\\{', source):
+              if 'kotlin {' not in source:
                   continue
               if 'org.jetbrains.kotlin.android' in source or 'kotlin("android")' in source:
                   continue
@@ -140,6 +139,8 @@ jobs:
               path.write_text(source)
               patched.append(str(path))
           print('Patched Kotlin Android plugin declarations:', len(patched))
+          if not any('quick_actions_android-' in name for name in patched):
+              raise SystemExit('Expected quick_actions_android patch missing; check plugin detection')
           for path in patched:
               print(path)
           PY
