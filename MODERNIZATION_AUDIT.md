@@ -33,3 +33,30 @@ A committed plan is not a passing build. Each phase must cite its commit and CI 
 - Inspected `budget/lib/struct/firebaseAuthGlobal.dart`: code signs in anonymously or with Google and obtains Firestore instances. These paths need explicit configuration gating and tests before release.
 - Inspected `budget/android/app/src/main/AndroidManifest.xml`: upstream `cashewapp.web.app` deep links remain. They must be removed or replaced with owned domains after evaluating app-link behavior.
 - The file-picker replacement build was in progress when these notes were added; do not infer success from the dependency edit.
+
+
+## Dependency audit — 2026-11-23
+
+This audit is based on the current pubspec and the checked-in lockfile; the lockfile is stale relative to recent pubspec edits. CI runs `flutter pub get` and may resolve newer transitive plugin versions. A green APK build is not yet confirmed.
+
+### Confirmed legacy Android embedding failures in CI
+- `image_picker_android 0.8.8+2`: removed Flutter `PluginRegistry.Registrar` API; parent image_picker upgraded to ^1.2.0.
+- `in_app_purchase_android 0.3.6`: removed Flutter API; purchase code removed from premiumPage and purchase dependencies removed from pubspec.
+- `path_provider_android 2.2.1`: removed Flutter API; Android implementation overridden to ^2.2.18.
+- `home_widget 0.8.1`: Kotlin/JVM target mismatch; upgraded to ^0.9.0.
+
+### Other Android plugin versions in checked-in lockfile requiring verification
+`google_sign_in_android 6.1.16`, `local_auth_android 1.0.32`, `quick_actions_android 1.0.7`, `shared_preferences_android 2.1.4`, `url_launcher_android 6.3.2`, and `flutter_charset_detector_android 1.0.0`. These are NOT confirmed broken; do not blindly force incompatible federated implementation versions.
+
+### Architectural cleanup still required
+- Premium UI, subscription banners, and compatibility stubs remain; no checkout implementation should be restored.
+- Firebase packages and Google sign-in remain declared although free-edition cloud initialization is disabled; remove only after tracing all import/call sites and replacing the corresponding features.
+- CI currently patches legacy plugin namespaces and value_layout_builder in the pub cache; replace those with maintained packages or vendored source fixes after the first successful build.
+- The app's Android Java target was aligned to Java 17 and core-library desugaring upgraded to 2.1.4.
+- Verify runtime startup, offline database, core screens, and unlocked features on a real Android device after producing an APK.
+
+### Build acceptance criteria
+1. `flutter pub get` completes with a reproducible dependency graph.
+2. `flutter build apk --debug` succeeds and CI publishes `cashew-free-edition-debug`.
+3. App launches and operates offline without Google sign-in or billing.
+4. Premium-only features are accessible without payment; no purchase prompts remain.
