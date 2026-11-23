@@ -33,6 +33,35 @@ jobs:
       - name: Resolve dependencies
         working-directory: budget
         run: flutter pub get
+      - name: Add namespaces to legacy Android Flutter plugins
+        working-directory: budget
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import xml.etree.ElementTree as ET
+
+          cache = pathlib.Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+          for gradle in cache.glob("*/android/build.gradle"):
+              content = gradle.read_text()
+              if re.search(r"\\bnamespace\\s*(?:=|\\(|[\\x27\\x22])", content):
+                  continue
+              manifest = gradle.parent / "src" / "main" / "AndroidManifest.xml"
+              namespace = None
+              if manifest.exists():
+                  try:
+                      namespace = ET.parse(manifest).getroot().attrib.get("package")
+                  except ET.ParseError:
+                      pass
+              if not namespace:
+                  name = gradle.parent.parent.name.rsplit("-", 1)[0].replace("-", "_")
+                  namespace = "dev.cashew.legacy." + re.sub(r"[^a-zA-Z0-9_]", "_", name)
+              if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)+", namespace):
+                  raise ValueError(f"Invalid namespace {namespace} for {gradle}")
+              gradle.write_text(content + f'\\nandroid {{ namespace "{namespace}" }}\\n')
+              print(f"Added namespace {namespace} to {gradle.parent.parent.name}")
+          PY
       - name: Build Android debug APK
         working-directory: budget
         run: flutter build apk --debug
