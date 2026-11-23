@@ -139,7 +139,7 @@ jobs:
           else:
               if 'plugins {' not in source:
                   raise SystemExit('Cannot locate Gradle plugins block for Kotlin Android plugin')
-              updated = source.replace('plugins {', 'plugins {\\n    id("org.jetbrains.kotlin.android")', 1)
+              updated = source.replace('plugins {', 'plugins {\n    id("org.jetbrains.kotlin.android")', 1)
               path.write_text(updated)
               print(f'Applied Kotlin Android plugin to {path}')
           PY
