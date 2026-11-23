@@ -33,6 +33,39 @@ jobs:
       - name: Resolve dependencies
         working-directory: budget
         run: flutter pub get
+      - name: Audit resolved Android plugin compatibility
+        working-directory: budget
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+          root = Path.cwd()
+          deps = json.loads((root / '.dart_tool' / 'package_config.json').read_text())['packages']
+          plugins = []
+          legacy = []
+          for dep in deps:
+              uri = dep['rootUri']
+              if not uri.startswith('file:'):
+                  continue
+              from urllib.parse import urlparse, unquote
+              folder = Path(unquote(urlparse(uri).path))
+              if not (folder / 'android').is_dir():
+                  continue
+              plugins.append(dep['name'])
+              for source in (folder / 'android' / 'src').rglob('*') if (folder / 'android' / 'src').exists() else []:
+                  if source.suffix not in ('.java', '.kt'):
+                      continue
+                  content = source.read_text(errors='replace')
+                  if 'PluginRegistry.Registrar' in content or re.search(r'\\bRegistrar\\b', content):
+                      legacy.append(f'{dep["name"]}: {source.relative_to(folder)}')
+          print('Resolved Android plugins:', len(plugins))
+          print('\\n'.join(sorted(plugins)))
+          print('Legacy Registrar references:', len(legacy))
+          print('\\n'.join(sorted(legacy)))
+          if any(name.startswith('in_app_purchase') for name in plugins):
+              raise SystemExit('Free edition must not include billing plugins')
+          PY
       - name: Add namespaces to legacy Android Flutter plugins
         working-directory: budget
         run: |
