@@ -2,6 +2,12 @@
 
 Branch: `feature/free-edition` (not merged into main).
 
+## 2026-11-23 — Offline-first preview isolation
+
+- Introduced `enableCashewCloudServices = false` in `budget/lib/struct/cloudConfiguration.dart` and gated startup Firebase initialization and two Firebase authentication/Firestore helper entry points. This is a **preview configuration**, not a fully audited guarantee that every cloud call is disabled; other call sites require inspection.
+- Skipped the unrelated upstream Firebase Hosting PR deployment job for `feature/free-edition`, which depends on upstream project `budget-app-flutter` and its secret. Other branches retain their previous behavior (commit `5a32ef4`).
+- Android build result still unverified as of this changelog entry; do not distribute until build and offline smoke tests pass.
+
 ## 2026-11-23 — Modernization phase 1 audit and first dependency migration
 
 - Added [MODERNIZATION_AUDIT.md](MODERNIZATION_AUDIT.md) with a prioritized inventory of build blockers, security concerns, and exit gates (commit `9c5f00a`).
