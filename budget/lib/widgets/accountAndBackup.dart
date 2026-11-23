@@ -208,7 +208,7 @@ void refreshUIAfterLoginChange() {
 Future<bool> testIfHasGmailAccess() async {
   print("TESTING GMAIL");
   try {
-    final authHeaders = await googleSignIn!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
+    final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
     gMail.GmailApi gmailApi = gMail.GmailApi(authenticateClient);
     gMail.ListMessagesResponse results = await gmailApi.users.messages
@@ -413,7 +413,7 @@ Future<void> createBackup(
 
     DBFileInfo currentDBFileInfo = await getCurrentDBFileInfo();
 
-    final authHeaders = await googleSignIn!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
+    final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
     final driveApi = drive.DriveApi(authenticateClient);
 
@@ -478,7 +478,7 @@ Future<void> deleteRecentBackups(context, amountToKeep,
       loadingIndeterminateKey.currentState?.setVisibility(true);
     }
 
-    final authHeaders = await googleSignIn!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
+    final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
     final driveApi = drive.DriveApi(authenticateClient);
 
@@ -759,7 +759,7 @@ class GoogleAccountLoginButtonState extends State<GoogleAccountLoginButton> {
 
 Future<(drive.DriveApi? driveApi, List<drive.File>?)> getDriveFiles() async {
   try {
-    final authHeaders = await googleSignIn!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
+    final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
     drive.DriveApi driveApi = drive.DriveApi(authenticateClient);
 
