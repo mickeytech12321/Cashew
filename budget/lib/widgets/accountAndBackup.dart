@@ -72,6 +72,14 @@ class GoogleAuthClient extends http.BaseClient {
 
 signIn.GoogleSignIn? googleSignIn;
 signIn.GoogleSignInAccount? googleUser;
+const List<String> googleScopes = <String>[
+  'https://www.googleapis.com/auth/userinfo.profile',
+  'https://www.googleapis.com/auth/userinfo.email',
+  drive.DriveApi.driveAppdataScope,
+  drive.DriveApi.driveFileScope,
+  gMail.GmailApi.gmailReadonlyScope,
+  gMail.GmailApi.gmailModifyScope,
+];
 
 Future<bool> signInGoogle(
     {BuildContext? context,
@@ -129,28 +137,15 @@ Future<bool> signInGoogle(
               ]
             : [])
       ];
-      googleSignIn = getPlatform() == PlatformOS.isIOS
-          ? signIn.GoogleSignIn(
-              clientId: DefaultFirebaseOptions.currentPlatform.iosClientId,
-              scopes: scopes)
-          : signIn.GoogleSignIn.standard(scopes: scopes);
-      // googleSignIn?.currentUser?.clearAuthCache();
-
+      googleSignIn = signIn.GoogleSignIn.instance;
+      await googleSignIn!.initialize(
+        clientId: getPlatform() == PlatformOS.isIOS
+            ? DefaultFirebaseOptions.currentPlatform.iosClientId
+            : null,
+      );
       final signIn.GoogleSignInAccount? account = silentSignIn == true
-          ?
-          // kIsWeb
-          //     ? await googleSignIn?.signInSilently()
-          // Google Sign-in silent on web no longer gives access to the scopes
-          // https://pub.dev/packages/google_sign_in_web#differences-between-google-identity-services-sdk-and-google-sign-in-for-web-sdk
-          // await googleSignIn?.signInSilently().then((value) async {
-          //     return await googleSignIn?.signIn();
-          //   })
-          // Currently we do not use silent sign in anymore, as it does not allow any access
-          // to GDrive or other tools, so there is no point to get the username/email form silent
-          kIsWeb
-              ? await googleSignIn?.signIn()
-              : await googleSignIn?.signInSilently()
-          : await googleSignIn?.signIn();
+          ? await googleSignIn!.attemptLightweightAuthentication()
+          : await googleSignIn!.authenticate(scopeHint: scopes);
 
       if (account != null) {
         // print("ACCOUNT");
@@ -213,7 +208,7 @@ void refreshUIAfterLoginChange() {
 Future<bool> testIfHasGmailAccess() async {
   print("TESTING GMAIL");
   try {
-    final authHeaders = await googleUser!.authHeaders;
+    final authHeaders = await googleSignIn!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
     gMail.GmailApi gmailApi = gMail.GmailApi(authenticateClient);
     gMail.ListMessagesResponse results = await gmailApi.users.messages
@@ -418,7 +413,7 @@ Future<void> createBackup(
 
     DBFileInfo currentDBFileInfo = await getCurrentDBFileInfo();
 
-    final authHeaders = await googleUser!.authHeaders;
+    final authHeaders = await googleSignIn!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
     final driveApi = drive.DriveApi(authenticateClient);
 
@@ -483,7 +478,7 @@ Future<void> deleteRecentBackups(context, amountToKeep,
       loadingIndeterminateKey.currentState?.setVisibility(true);
     }
 
-    final authHeaders = await googleUser!.authHeaders;
+    final authHeaders = await googleSignIn!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
     final driveApi = drive.DriveApi(authenticateClient);
 
@@ -764,7 +759,7 @@ class GoogleAccountLoginButtonState extends State<GoogleAccountLoginButton> {
 
 Future<(drive.DriveApi? driveApi, List<drive.File>?)> getDriveFiles() async {
   try {
-    final authHeaders = await googleUser!.authHeaders;
+    final authHeaders = await googleSignIn!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
     drive.DriveApi driveApi = drive.DriveApi(authenticateClient);
 
