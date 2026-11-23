@@ -116,6 +116,9 @@ dependency_overrides:
   win32: ^5.15.0
   flutter_plugin_android_lifecycle: ^2.0.32
   path_provider_android: ^2.2.18
+  quick_actions_android: ^1.1.0
+  shared_preferences_android: ^2.4.0
+  url_launcher_android: ^6.3.15
 
 dev_dependencies:
   drift_dev: ^2.14.0
