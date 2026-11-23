@@ -56,9 +56,9 @@ android {
     compileOptions {
       // Flag to enable support for the new language APIs
       coreLibraryDesugaringEnabled true
-      // Sets Java compatibility to Java 8
-      sourceCompatibility JavaVersion.VERSION_1_8
-      targetCompatibility JavaVersion.VERSION_1_8
+      // Align Android Java bytecode with the Java 17 / Kotlin 2 toolchain.
+      sourceCompatibility JavaVersion.VERSION_17
+      targetCompatibility JavaVersion.VERSION_17
     }
 
     signingConfigs {
@@ -82,7 +82,7 @@ flutter {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib"
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.2.2'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
     implementation platform('com.google.firebase:firebase-bom:31.1.1')
     implementation 'com.google.firebase:firebase-auth'
     implementation 'com.google.firebase:firebase-firestore'
