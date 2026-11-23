@@ -120,6 +120,29 @@ jobs:
               path.write_text(patched)
               print(f"Patched {path}: mixins={count}")
           PY
+      - name: Fix quick_actions Android Kotlin plugin declaration
+        working-directory: budget
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          cache = Path.home() / '.pub-cache' / 'hosted' / 'pub.dev'
+          files = sorted(cache.glob('quick_actions_android-*/android/build.gradle.kts'))
+          if len(files) != 1:
+              raise SystemExit(f'Expected one quick_actions_android Kotlin build script; got {len(files)}')
+          path = files[0]
+          source = path.read_text()
+          if 'kotlin {' not in source:
+              print('No Kotlin extension block: no patch necessary')
+          elif re.search(r'id\\(["\\\']org\\.jetbrains\\.kotlin\\.android["\\\']\\)', source):
+              print('Kotlin Android plugin already declared; no patch necessary')
+          else:
+              updated, count = re.subn(r'plugins\\s*\\{', 'plugins {\\n    id("org.jetbrains.kotlin.android")', source, count=1)
+              if count != 1:
+                  raise SystemExit('Cannot locate Gradle plugins block for Kotlin Android plugin')
+              path.write_text(updated)
+              print(f'Applied Kotlin Android plugin to {path}')
+          PY
       - name: Build Android debug APK
         working-directory: budget
         run: flutter build apk --debug
