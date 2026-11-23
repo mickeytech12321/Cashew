@@ -2,6 +2,12 @@
 
 Branch: `feature/free-edition` (not merged into main).
 
+## 2026-11-23 — JVM target alignment for charset detector
+
+- [Android build #68](https://github.com/mickeytech12321/Cashew/actions/runs/45206369283) **failed** at `:flutter_charset_detector_android:compileDebugKotlin`: Java target 1.8 versus Kotlin target 17.
+- Added a scoped Android library Java 17 compatibility setting for `flutter_charset_detector_android` in `budget/android/build.gradle` (commit `25b8452`). This is a project-side configuration fix, not a downloaded dependency patch.
+- **Verification pending:** the next CI build must confirm the error is gone and identify any subsequent blockers.
+
 ## 2026-11-23 — Offline-first preview isolation
 
 - Introduced `enableCashewCloudServices = false` in `budget/lib/struct/cloudConfiguration.dart` and gated startup Firebase initialization and two Firebase authentication/Firestore helper entry points. This is a **preview configuration**, not a fully audited guarantee that every cloud call is disabled; other call sites require inspection.
