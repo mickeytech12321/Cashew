@@ -134,12 +134,12 @@ jobs:
           source = path.read_text()
           if 'kotlin {' not in source:
               print('No Kotlin extension block: no patch necessary')
-          elif re.search(r'id\\(["\\\']org\\.jetbrains\\.kotlin\\.android["\\\']\\)', source):
+          elif 'org.jetbrains.kotlin.android' in source or 'kotlin("android")' in source:
               print('Kotlin Android plugin already declared; no patch necessary')
           else:
-              updated, count = re.subn(r'plugins\\s*\\{', 'plugins {\\n    id("org.jetbrains.kotlin.android")', source, count=1)
-              if count != 1:
+              if 'plugins {' not in source:
                   raise SystemExit('Cannot locate Gradle plugins block for Kotlin Android plugin')
+              updated = source.replace('plugins {', 'plugins {\\n    id("org.jetbrains.kotlin.android")', 1)
               path.write_text(updated)
               print(f'Applied Kotlin Android plugin to {path}')
           PY
