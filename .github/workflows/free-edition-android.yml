@@ -120,28 +120,28 @@ jobs:
               path.write_text(patched)
               print(f"Patched {path}: mixins={count}")
           PY
-      - name: Fix quick_actions Android Kotlin plugin declaration
+      - name: Fix Kotlin Android plugin declarations in resolved dependencies
         working-directory: budget
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
           cache = Path.home() / '.pub-cache' / 'hosted' / 'pub.dev'
-          files = sorted(cache.glob('quick_actions_android-*/android/build.gradle.kts'))
-          if len(files) != 1:
-              raise SystemExit(f'Expected one quick_actions_android Kotlin build script; got {len(files)}')
-          path = files[0]
-          source = path.read_text()
-          if 'kotlin {' not in source:
-              print('No Kotlin extension block: no patch necessary')
-          elif 'org.jetbrains.kotlin.android' in source or 'kotlin("android")' in source:
-              print('Kotlin Android plugin already declared; no patch necessary')
-          else:
+          patched = []
+          for path in sorted(cache.glob('*/android/build.gradle.kts')):
+              source = path.read_text()
+              if not re.search(r'(?m)^kotlin\\s*\\{', source):
+                  continue
+              if 'org.jetbrains.kotlin.android' in source or 'kotlin("android")' in source:
+                  continue
               if 'plugins {' not in source:
-                  raise SystemExit('Cannot locate Gradle plugins block for Kotlin Android plugin')
-              updated = source.replace('plugins {', 'plugins {\n    id("org.jetbrains.kotlin.android")', 1)
-              path.write_text(updated)
-              print(f'Applied Kotlin Android plugin to {path}')
+                  raise SystemExit(f'Kotlin extension without plugins block: {path}')
+              source = source.replace('plugins {', 'plugins {' + chr(10) + '    id("org.jetbrains.kotlin.android")', 1)
+              path.write_text(source)
+              patched.append(str(path))
+          print('Patched Kotlin Android plugin declarations:', len(patched))
+          for path in patched:
+              print(path)
           PY
       - name: Build Android debug APK
         working-directory: budget
