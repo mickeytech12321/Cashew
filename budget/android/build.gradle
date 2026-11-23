@@ -33,7 +33,7 @@ subprojects {
 // Java at JVM 8. Kotlin 2.x rejects mixed targets. Align this library's Java
 // target with Kotlin without patching downloaded pub-cache source files.
 subprojects { subproject ->
-    if (subproject.name == 'flutter_charset_detector_android') {
+    if (subproject.name in ['flutter_charset_detector_android', 'home_widget']) {
         subproject.plugins.withId('com.android.library') {
             subproject.android {
                 compileOptions {
