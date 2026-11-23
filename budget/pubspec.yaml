@@ -117,6 +117,7 @@ flutter_icons:
 
 dependency_overrides:
   win32: ^5.15.0
+  flutter_plugin_android_lifecycle: ^2.0.32
 
 dev_dependencies:
   drift_dev: ^2.14.0
