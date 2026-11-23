@@ -76,12 +76,12 @@ jobs:
               source = path.read_text()
               patched = source.replace("rebuildIfNecessary();", "runLayoutCallback();")
               patched, count = re.subn(
-                  r"(with[^\n;{]*?)(RenderAbstractLayoutBuilderMixin<)",
-                  r"\1RenderObjectWithLayoutCallbackMixin, \2",
+                  r"(RenderObjectWithChildMixin<[^>]+>\s*,)",
+                  r"\1 RenderObjectWithLayoutCallbackMixin,",
                   patched,
               )
               if count == 0:
-                  print(f"No mixin declaration matched in {path}; inspecting source is required")
+                  raise RuntimeError(f"No RenderObjectWithChildMixin declaration matched in {path}")
               if patched == source:
                   raise RuntimeError(f"No compatibility changes applied to {path}")
               path.write_text(patched)
