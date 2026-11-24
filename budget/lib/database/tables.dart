@@ -1,3 +1,4 @@
+import 'package:budget/struct/upcomingTransactionsFunctions.dart' show nextRecurringDate;
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
 import 'package:budget/pages/homePage/homePageLineGraph.dart';
@@ -4429,7 +4430,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Future<List<Map<String, dynamic>>> calculatePlanningScenario(
-      String scenarioPk, {String? scheduledWalletPk}) async {
+      String scenarioPk, {String? scheduledWalletPk, bool projectRecurrences = false}) async {
     final scenario = await customSelect(
       'SELECT * FROM planning_scenarios WHERE scenario_pk = ?',
       variables: [Variable<String>(scenarioPk)]).getSingleOrNull();
@@ -4492,14 +4493,45 @@ class FinanceDatabase extends _$FinanceDatabase {
                   TransactionSpecialType.repetitive,
                 ])))
           .get();
+      final lastScheduledBySeries = <String, DateTime>{};
+      String seriesKey(String id) => id.replaceFirst(RegExp(r'::predict::[0-9]+$'), '');
       for (final entry in scheduled) {
-        points.add({
-          'date': entry.dateCreated,
-          'item_pk': entry.transactionPk,
-          'name': entry.name,
-          'amount': entry.amount,
-          'scheduled': true,
-        });
+        final series = seriesKey(entry.transactionPk);
+        final last = lastScheduledBySeries[series];
+        if (last == null || entry.dateCreated.isAfter(last)) {
+          lastScheduledBySeries[series] = entry.dateCreated;
+        }
+      }
+      for (final entry in scheduled) {
+        void addOccurrence(DateTime date, {required bool projected}) {
+          points.add({
+            'date': date,
+            'item_pk': entry.transactionPk,
+            'name': entry.name,
+            'amount': entry.amount,
+            'scheduled': true,
+            'projected': projected,
+          });
+        }
+
+        addOccurrence(entry.dateCreated, projected: false);
+        if (!projectRecurrences ||
+            entry.createdAnotherFutureTransaction == true ||
+            entry.objectiveFk != null ||
+            entry.objectiveLoanFk != null ||
+            (entry.type != TransactionSpecialType.subscription &&
+                entry.type != TransactionSpecialType.repetitive) ||
+            entry.dateCreated != lastScheduledBySeries[seriesKey(entry.transactionPk)]) {
+          continue;
+        }
+        var date = entry.dateCreated;
+        while (true) {
+          final next = nextRecurringDate(date, entry.reoccurrence, entry.periodLength);
+          if (next == null || !next.isAfter(date) || next.isAfter(horizon) ||
+              (entry.endDate?.isBefore(next) ?? false)) break;
+          addOccurrence(next, projected: true);
+          date = next;
+        }
       }
     }
     points.sort((a, b) {

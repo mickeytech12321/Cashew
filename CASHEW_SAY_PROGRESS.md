@@ -36,7 +36,7 @@
 - TODO: Egyptian bank/e-wallet rules.
 
 ## Phase 04 — Financial Planning
-- PARTIAL: offline scenario calculations skip occurrences before the forecast base date and order simultaneous entries consistently. Settings → Cash-flow scenarios can create and reopen single-currency scenarios, add one-off or fixed-day recurring events and show a chronological running balance. Saved scenarios and entries can be edited or deleted with confirmation. Forecasts can include already-scheduled unpaid bills and recurring entries for a chosen account. Generated future recurrences, currency conversion inside scenarios, and goal integration remain.
+- PARTIAL: offline scenario calculations skip occurrences before the forecast base date and order simultaneous entries consistently. Settings → Cash-flow scenarios can create and reopen single-currency scenarios, add one-off or fixed-day recurring events and show a chronological running balance. Saved scenarios and entries can be edited or deleted with confirmation. Forecasts can include already-scheduled unpaid bills and recurring entries for a chosen account. Opt-in projections extend active subscriptions and repeating transactions using Cashew’s calendar rules and end dates without writing ledger entries. Currency conversion inside scenarios and goal integration remain.
 - TODO: bills/subscriptions planning UI and goals improvements.
 
 ## Phase 05 — Wealth

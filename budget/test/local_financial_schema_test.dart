@@ -19,6 +19,52 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('projects calendar recurrences once per series through its end date',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePlanningScenario(
+        scenarioPk: 'plan',
+        name: 'Plan',
+        baseDate: DateTime(2027, 1, 1),
+        horizonDays: 150,
+        startingBalance: 100);
+    Future<void> scheduled(String id, DateTime date) => db
+        .into(db.transactions)
+        .insert(Transaction(
+          transactionPk: id,
+          name: 'Subscription',
+          amount: -10,
+          note: '',
+          categoryFk: 'category',
+          walletFk: 'account',
+          dateCreated: date,
+          income: false,
+          paid: false,
+          skipPaid: false,
+          reoccurrence: BudgetReoccurence.monthly,
+          periodLength: 1,
+          type: TransactionSpecialType.subscription,
+          endDate: DateTime(2027, 4, 1),
+        ))
+        .then((_) {});
+    await scheduled('series', DateTime(2027, 1, 31));
+    final initial = await db.calculatePlanningScenario('plan',
+        scheduledWalletPk: 'account', projectRecurrences: true);
+    expect(initial.map((row) => row['date']), [
+      DateTime(2027, 1, 1),
+      DateTime(2027, 1, 31),
+      DateTime(2027, 2, 28),
+      DateTime(2027, 3, 28),
+    ]);
+    await scheduled('series::predict::1', DateTime(2027, 2, 28));
+    final updated = await db.calculatePlanningScenario('plan',
+        scheduledWalletPk: 'account', projectRecurrences: true);
+    expect(updated.map((row) => row['balance']), [100, 90, 80, 70]);
+    expect(updated.where((row) => row['projected'] == true), hasLength(1));
+    expect(await db.select(db.transactions).get(), hasLength(2));
+  });
+
   test('wealth snapshots require known rates and preserve capture values',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());

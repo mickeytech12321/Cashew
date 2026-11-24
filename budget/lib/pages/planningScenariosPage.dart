@@ -19,6 +19,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   bool _busy = false;
   late final _wallets = database.getAllWallets();
   String? _scheduledWalletPk;
+  bool _projectRecurrences = false;
 
   String _label(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
@@ -46,11 +47,13 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
     setState(() {
       if (_selected?['scenario_pk'] != scenario['scenario_pk']) {
         _scheduledWalletPk = null;
+        _projectRecurrences = false;
       }
       _selected = scenario;
       final id = scenario['scenario_pk'] as String;
       _forecast = database.calculatePlanningScenario(id,
-          scheduledWalletPk: _scheduledWalletPk);
+          scheduledWalletPk: _scheduledWalletPk,
+          projectRecurrences: _projectRecurrences);
       _items = database.getPlanningScenarioItems(id);
     });
   }
@@ -264,6 +267,19 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                     );
                   },
                 ),
+              if (_selected != null && _scheduledWalletPk != null)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_label('Project future recurring entries',
+                      'توقّع البنود المتكررة القادمة')),
+                  value: _projectRecurrences,
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          _projectRecurrences = value;
+                          _select(_selected!);
+                        },
+                ),
               if (_selected != null)
                 Wrap(children: [
                   TextButton(
@@ -339,7 +355,9 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                           _label('Starting balance', 'الرصيد الافتتاحي')),
                       subtitle: Text([
                         dates.formatMediumDate(point['date'] as DateTime),
-                        if (point['scheduled'] == true)
+                        if (point['projected'] == true)
+                          _label('Projected recurrence', 'تكرار متوقع')
+                        else if (point['scheduled'] == true)
                           _label('Scheduled', 'مجدولة'),
                       ].join(' · ')),
                       trailing:
