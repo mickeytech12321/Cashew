@@ -60,11 +60,11 @@ class FinancialAssistant {
   /// Local deterministic parser. It does not send financial data to a network.
   FinancialAssistantIntent parse(String input) {
     final raw = input.trim();
-    final lower = raw.toLowerCase();
+    final lower = raw.toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
     final parsed = FinancialMessageParser.parse(raw);
 
     FinancialAssistantIntentType type = FinancialAssistantIntentType.unknown;
-    if (RegExp(r'حول|حوّل|transfer', caseSensitive: false).hasMatch(lower)) {
+    if (RegExp(r'^(?:(?:please|log|record)\s+)*(?:transfer\b|(?:حوّلت|حولت|حوّل|حول)(?:\s|$))').hasMatch(lower)) {
       type = FinancialAssistantIntentType.transfer;
     } else if (RegExp(r'رصيد|\bbalance\b').hasMatch(lower)) {
       type = FinancialAssistantIntentType.queryBalance;
@@ -72,12 +72,12 @@ class FinancialAssistant {
         .hasMatch(lower)) {
       type = FinancialAssistantIntentType.querySpending;
     } else if (RegExp(
-      r'قبضت|استلمت|دخل|income|received|salary',
+      r'قبضت|استلمت|دخل|\b(?:income|received|salary)\b',
       caseSensitive: false,
     ).hasMatch(lower)) {
       type = FinancialAssistantIntentType.addIncome;
     } else if (RegExp(
-      r'دفعت|اشتريت|صرف|expense|spent|paid|bought',
+      r'دفعت|اشتريت|صرف|\b(?:expense|spent|paid|bought)\b',
       caseSensitive: false,
     ).hasMatch(lower)) {
       type = FinancialAssistantIntentType.addExpense;
