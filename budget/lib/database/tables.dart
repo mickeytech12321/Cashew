@@ -2854,7 +2854,6 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Future<int> createOrUpdateCategoryLimit(CategoryBudgetLimit categoryLimit,
       {bool insert = false}) async {
-    if (!transaction.amount.isFinite) return null;
     double maxAmount = 999999999999;
     if (categoryLimit.amount >= maxAmount)
       categoryLimit = categoryLimit.copyWith(amount: maxAmount);
@@ -3465,6 +3464,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }) async {
     if (updateSharedEntry == true && appStateSettings["sharedBudgets"] == false)
       updateSharedEntry = false;
+    if (!transaction.amount.isFinite) return null;
     double maxAmount = 999999999999;
     if (transaction.amount >= maxAmount)
       transaction = transaction.copyWith(amount: maxAmount);
