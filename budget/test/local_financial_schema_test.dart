@@ -21,6 +21,49 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('household previews enforce account visibility and role limits', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final date = DateTime(2027, 2, 1);
+    for (final id in ['shared', 'personal', 'archived']) {
+      await db.into(db.wallets).insert(WalletsCompanion.insert(
+        walletPk: Value(id), name: id, order: 0, currency: const Value('egp'),
+      ));
+      await db.into(db.transactions).insert(Transaction(
+        transactionPk: id, name: id, amount: 100, note: '', categoryFk: 'category',
+        walletFk: id, dateCreated: date, income: true, paid: true, skipPaid: false,
+      ));
+    }
+    await db.saveAccountDetails(walletPk: 'archived', accountType: 'cash', archived: true);
+    await db.saveHouseholdMember(memberPk: 'person', displayName: 'Person', role: 'editor');
+    await db.saveHouseholdMember(memberPk: 'owner', displayName: 'Owner', role: 'owner');
+    await db.saveHouseholdMember(memberPk: 'remote', displayName: 'Remote', role: 'owner',
+        localOnly: false);
+    await db.setHouseholdAccountAccess(memberPk: 'person', walletPk: 'shared',
+        canView: true, canEdit: true);
+    await db.setHouseholdAccountAccess(memberPk: 'person', walletPk: 'archived',
+        canView: true, canEdit: true);
+    final preview = await db.previewLocalHouseholdBalances('person', date);
+    expect(preview.map((row) => (row.name, row.balance)), [('shared', 100.0)]);
+    expect((await db.previewLocalHouseholdBalances('owner', date)).map((row) => row.name),
+        ['personal', 'shared']);
+    expect(await db.previewLocalHouseholdBalances('remote', date), isEmpty);
+    await db.saveHouseholdMember(memberPk: 'person', displayName: 'Person', role: 'viewer');
+    final access = await db.getLocalHouseholdAccountAccess('person');
+    expect(access.singleWhere((row) => row.id == 'shared').canEdit, isFalse);
+    await expectLater(db.setHouseholdAccountAccess(memberPk: 'person', walletPk: 'shared',
+        canView: true, canEdit: true), throwsArgumentError);
+    await db.saveHouseholdMember(memberPk: 'person', displayName: 'Person', role: 'editor');
+    expect((await db.getLocalHouseholdAccountAccess('person'))
+        .singleWhere((row) => row.id == 'shared').canEdit, isFalse);
+    await db.setHouseholdAccountAccess(memberPk: 'person', walletPk: 'shared',
+        canView: false, canEdit: false);
+    expect(await db.previewLocalHouseholdBalances('person', date), isEmpty);
+    await db.removeLocalHouseholdMember('person');
+    expect((await db.getLocalHouseholdMembers()).single.id, 'owner');
+    expect(await db.select(db.transactions).get(), hasLength(3));
+  });
+
 
   test(
     'valuation includes open investments only when requested and priced',

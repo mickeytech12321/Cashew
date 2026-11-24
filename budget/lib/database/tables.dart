@@ -5111,13 +5111,46 @@ class FinanceDatabase extends _$FinanceDatabase {
         !{'owner','editor','viewer'}.contains(role)) {
       throw ArgumentError('Invalid household member');
     }
-    await customStatement(
-      'INSERT INTO household_members (member_pk,display_name,role,local_only,created_at) '
-      'VALUES (?,?,?,?,?) ON CONFLICT(member_pk) DO UPDATE SET '
-      'display_name=excluded.display_name,role=excluded.role,local_only=excluded.local_only',
-      [memberPk,displayName.trim(),role,localOnly ? 1 : 0,
-       DateTime.now().millisecondsSinceEpoch],
-    );
+    await transaction(() async {
+      await customStatement(
+        'INSERT INTO household_members (member_pk,display_name,role,local_only,created_at) '
+        'VALUES (?,?,?,?,?) ON CONFLICT(member_pk) DO UPDATE SET '
+        'display_name=excluded.display_name,role=excluded.role,local_only=excluded.local_only',
+        [memberPk,displayName.trim(),role,localOnly ? 1 : 0,
+         DateTime.now().millisecondsSinceEpoch],
+      );
+      if (role == 'viewer' && localOnly) {
+        await customStatement(
+          'UPDATE household_account_access SET can_edit = 0 WHERE member_fk = ?',
+          [memberPk],
+        );
+      }
+    });
+  }
+
+  Future<List<({String id, String name, String role})>> getLocalHouseholdMembers() async {
+    final rows = await customSelect(
+      'SELECT member_pk, display_name, role FROM household_members '
+      'WHERE local_only = 1 ORDER BY display_name COLLATE NOCASE, member_pk',
+    ).get();
+    return rows.map((row) => (
+      id: row.read<String>('member_pk'),
+      name: row.read<String>('display_name'),
+      role: row.read<String>('role'),
+    )).toList();
+  }
+
+  Future<void> removeLocalHouseholdMember(String memberPk) async {
+    await transaction(() async {
+      await customStatement(
+        'DELETE FROM household_account_access WHERE member_fk = ? AND EXISTS '
+        '(SELECT 1 FROM household_members WHERE member_pk = ? AND local_only = 1)',
+        [memberPk, memberPk],
+      );
+      await customStatement(
+        'DELETE FROM household_members WHERE member_pk = ? AND local_only = 1', [memberPk],
+      );
+    });
   }
 
   Future<void> setHouseholdAccountAccess({
@@ -5129,13 +5162,74 @@ class FinanceDatabase extends _$FinanceDatabase {
     if (canEdit && !canView) {
       throw ArgumentError('Edit access requires view access');
     }
-    await customStatement(
-      'INSERT INTO household_account_access '
-      '(member_fk,wallet_fk,can_view,can_edit) VALUES (?,?,?,?) '
-      'ON CONFLICT(member_fk,wallet_fk) DO UPDATE SET '
-      'can_view=excluded.can_view,can_edit=excluded.can_edit',
-      [memberPk,walletPk,canView ? 1 : 0,canEdit ? 1 : 0],
-    );
+    await transaction(() async {
+      final person = await customSelect(
+        'SELECT role FROM household_members WHERE member_pk = ? AND local_only = 1',
+        variables: [Variable<String>(memberPk)],
+      ).getSingleOrNull();
+      if (person == null || await getWalletInstanceOrNull(walletPk) == null) {
+        throw StateError('Local member or account not found');
+      }
+      final role = person.read<String>('role');
+      if (canEdit && role == 'viewer') throw ArgumentError('Viewer cannot edit');
+      if (!canView) {
+        await customStatement(
+          'DELETE FROM household_account_access WHERE member_fk = ? AND wallet_fk = ?',
+          [memberPk, walletPk],
+        );
+      } else {
+        await customStatement(
+          'INSERT INTO household_account_access '
+          '(member_fk,wallet_fk,can_view,can_edit) VALUES (?,?,?,?) '
+          'ON CONFLICT(member_fk,wallet_fk) DO UPDATE SET '
+          'can_view=excluded.can_view,can_edit=excluded.can_edit',
+          [memberPk, walletPk, 1, canEdit ? 1 : 0],
+        );
+      }
+    });
+  }
+
+  Future<List<({String id, String name, String? currency, bool canView, bool canEdit})>>
+      getLocalHouseholdAccountAccess(String memberPk) async {
+    final rows = await customSelect(
+      'SELECT w.wallet_pk, w.name, w.currency, '
+      "CASE WHEN m.role = 'owner' THEN 1 ELSE COALESCE(a.can_view, 0) END AS can_view, "
+      "CASE WHEN m.role = 'owner' THEN 1 "
+      "WHEN m.role = 'editor' AND a.can_view = 1 THEN COALESCE(a.can_edit, 0) "
+      'ELSE 0 END AS can_edit '
+      'FROM wallets w JOIN household_members m ON m.member_pk = ? AND m.local_only = 1 '
+      'LEFT JOIN household_account_access a ON a.wallet_fk = w.wallet_pk AND a.member_fk = m.member_pk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'WHERE COALESCE(d.archived, 0) = 0 ORDER BY w."order", w.wallet_pk',
+      variables: [Variable<String>(memberPk)],
+    ).get();
+    return rows.map((row) => (
+      id: row.read<String>('wallet_pk'),
+      name: row.read<String>('name'),
+      currency: row.readNullable<String>('currency'),
+      canView: row.read<int>('can_view') == 1,
+      canEdit: row.read<int>('can_edit') == 1,
+    )).toList();
+  }
+
+  Future<List<({String name, String? currency, double balance})>>
+      previewLocalHouseholdBalances(String memberPk, DateTime asOf) async {
+    final rows = await customSelect(
+      'SELECT w.name, w.currency, COALESCE(SUM(t.amount), 0) AS balance '
+      'FROM wallets w JOIN household_members m ON m.member_pk = ? AND m.local_only = 1 '
+      'LEFT JOIN household_account_access a ON a.wallet_fk = w.wallet_pk AND a.member_fk = m.member_pk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk AND t.paid = 1 '
+      'AND t.skip_paid = 0 AND t.date_created <= ? '
+      "WHERE COALESCE(d.archived, 0) = 0 AND (m.role = 'owner' OR a.can_view = 1) "
+      'GROUP BY w.wallet_pk, w.name, w.currency ORDER BY w."order", w.wallet_pk',
+      variables: [Variable<String>(memberPk), Variable<DateTime>(asOf)],
+    ).get();
+    return rows.map((row) => (
+      name: row.read<String>('name'),
+      currency: row.readNullable<String>('currency'),
+      balance: row.read<double>('balance'),
+    )).toList();
   }
 
   Future<void> recordSyncConflict({

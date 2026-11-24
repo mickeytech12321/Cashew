@@ -1,3 +1,4 @@
+import 'package:budget/pages/householdPage.dart';
 import 'package:budget/pages/investmentsPage.dart';
 import 'package:budget/pages/transferHistoryPage.dart';
 import 'package:budget/pages/financialInsightsPage.dart';
@@ -566,6 +567,14 @@ class SettingsPageContent extends StatelessWidget {
               ? 'سيناريوهات التدفق النقدي'
               : 'Cash-flow scenarios',
           icon: Icons.timeline_outlined,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const HouseholdPage(),
+          title: Localizations.localeOf(context).languageCode == 'ar'
+              ? 'ملفات أفراد الأسرة'
+              : 'Household profiles',
+          icon: Icons.groups_outlined,
         ),
 
         SettingsContainerOpenPage(

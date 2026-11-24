@@ -48,8 +48,8 @@
 - Constraint: no mandatory AI subscription.
 
 ## Phase 07 — Household & Sync
-- PARTIAL: local household roles/account permissions and explicit sync-conflict ledger.
-- TODO: household UI, remote membership transport, conflict resolution UI and integration into existing sync.
+- PARTIAL: local household profiles can be added, edited and removed. The owner can configure per-account access for viewers and editors and preview visible balances. Archived accounts and remote profiles are excluded locally. The sync-conflict ledger remains separate.
+- TODO: authenticated remote membership, device invitations and access enforcement, conflict resolution UI and integration into existing sync.
 
 ## Phase 08 — UI / Analytics / Widgets
 - PARTIAL: bilingual financial screens are accessible from Settings. English/LTR and Arabic/RTL label rendering have widget tests. Financial insights show monthly paid income, expenses, net cash flow and category spending for each currency. Widgets and device RTL review remain.
