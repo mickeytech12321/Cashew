@@ -2,6 +2,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:budget/struct/financialAssistant.dart';
 
 void main() {
+
+  test('distinguishes transfer commands from expense descriptions', () {
+    const assistant = FinancialAssistant();
+    expect(assistant.parse('Please transfer EGP 20').type,
+        FinancialAssistantIntentType.transfer);
+    expect(assistant.parse('حولت ٢٠ جنيه').type,
+        FinancialAssistantIntentType.transfer);
+    expect(assistant.parse('I paid EGP 20 for an airport transfer').type,
+        FinancialAssistantIntentType.addExpense);
+    expect(assistant.parse('حولين المحطة').type,
+        FinancialAssistantIntentType.unknown);
+  });
+
   test('understands spending periods in Arabic and English', () {
     const assistant = FinancialAssistant();
     final arabic = assistant.parse('صرفت كام الشهر اللي فات؟');
