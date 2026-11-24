@@ -871,6 +871,31 @@ class FinanceDatabase extends _$FinanceDatabase {
       breakdown_json TEXT NOT NULL
     )''');
     await customStatement('CREATE INDEX IF NOT EXISTS wealth_snapshots_date_idx ON wealth_snapshots(captured_at)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS household_members (
+      member_pk TEXT PRIMARY KEY NOT NULL,
+      display_name TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('owner','editor','viewer')),
+      local_only INTEGER NOT NULL DEFAULT 1 CHECK (local_only IN (0,1)),
+      created_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS household_account_access (
+      member_fk TEXT NOT NULL REFERENCES household_members(member_pk) ON DELETE CASCADE,
+      wallet_fk TEXT NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      can_view INTEGER NOT NULL DEFAULT 1 CHECK (can_view IN (0,1)),
+      can_edit INTEGER NOT NULL DEFAULT 0 CHECK (can_edit IN (0,1)),
+      PRIMARY KEY(member_fk, wallet_fk)
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS sync_conflicts (
+      conflict_pk TEXT PRIMARY KEY NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_pk TEXT NOT NULL,
+      local_json TEXT NOT NULL,
+      remote_json TEXT NOT NULL,
+      detected_at INTEGER NOT NULL,
+      resolved_at INTEGER,
+      resolution TEXT CHECK (resolution IS NULL OR resolution IN ('local','remote','manual'))
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS sync_conflicts_open_idx ON sync_conflicts(resolved_at, detected_at)');
   }
 
   @override
@@ -8327,6 +8352,71 @@ class TransactionAssociatedTitleWithCategory {
   Future<List<Map<String, dynamic>>> getWealthAssets() async {
     final rows = await customSelect(
       'SELECT * FROM wealth_assets ORDER BY liability, name COLLATE NOCASE').get();
+    return rows.map((r) => r.data).toList();
+  }
+
+  Future<void> saveHouseholdMember({
+    required String memberPk,
+    required String displayName,
+    required String role,
+    bool localOnly = true,
+  }) async {
+    if (memberPk.trim().isEmpty || displayName.trim().isEmpty ||
+        !{'owner','editor','viewer'}.contains(role)) {
+      throw ArgumentError('Invalid household member');
+    }
+    await customStatement(
+      'INSERT INTO household_members (member_pk,display_name,role,local_only,created_at) '
+      'VALUES (?,?,?,?,?) ON CONFLICT(member_pk) DO UPDATE SET '
+      'display_name=excluded.display_name,role=excluded.role,local_only=excluded.local_only',
+      [memberPk,displayName.trim(),role,localOnly ? 1 : 0,
+       DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  Future<void> setHouseholdAccountAccess({
+    required String memberPk,
+    required String walletPk,
+    required bool canView,
+    required bool canEdit,
+  }) async {
+    if (canEdit && !canView) {
+      throw ArgumentError('Edit access requires view access');
+    }
+    await customStatement(
+      'INSERT INTO household_account_access '
+      '(member_fk,wallet_fk,can_view,can_edit) VALUES (?,?,?,?) '
+      'ON CONFLICT(member_fk,wallet_fk) DO UPDATE SET '
+      'can_view=excluded.can_view,can_edit=excluded.can_edit',
+      [memberPk,walletPk,canView ? 1 : 0,canEdit ? 1 : 0],
+    );
+  }
+
+  Future<void> recordSyncConflict({
+    required String conflictPk,
+    required String entityType,
+    required String entityPk,
+    required String localJson,
+    required String remoteJson,
+  }) async {
+    if (conflictPk.trim().isEmpty || entityType.trim().isEmpty ||
+        entityPk.trim().isEmpty || localJson == remoteJson) {
+      throw ArgumentError('Invalid sync conflict');
+    }
+    jsonDecode(localJson);
+    jsonDecode(remoteJson);
+    await customStatement(
+      'INSERT OR IGNORE INTO sync_conflicts '
+      '(conflict_pk,entity_type,entity_pk,local_json,remote_json,detected_at) '
+      'VALUES (?,?,?,?,?,?)',
+      [conflictPk,entityType,entityPk,localJson,remoteJson,
+       DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  Future<List<Map<String,dynamic>>> getOpenSyncConflicts() async {
+    final rows = await customSelect(
+      'SELECT * FROM sync_conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC').get();
     return rows.map((r) => r.data).toList();
   }
 
