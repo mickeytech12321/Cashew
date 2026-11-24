@@ -29,6 +29,35 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('import history pages deterministically and only restores ignored entries',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final date = DateTime(2026, 11, 24);
+    for (final id in ['a', 'b', 'c']) {
+      await db.stageImportedFinancialEvent(
+        eventPk: id, sourceType: id == 'b' ? 'notification' : 'manual',
+        rawText: 'message $id', occurredAt: date, amount: 5,
+        currency: 'egp', direction: id == 'c' ? 'credit' : 'debit',
+      );
+    }
+    expect((await db.getImportedFinancialEvents(limit: 1, offset: 1))
+        .single['event_pk'], 'b');
+    expect((await db.getImportedFinancialEvents(
+        direction: 'debit', sourceType: 'notification')).single['event_pk'], 'b');
+    await db.setImportedFinancialEventStatus('a', 'ignored');
+    await db.setImportedFinancialEventStatus('b', 'approved', transactionFk: 'saved');
+    expect(await db.restoreIgnoredFinancialEvent('b'), isFalse);
+    expect(await db.restoreIgnoredFinancialEvent('a'), isTrue);
+    expect(await db.restoreIgnoredFinancialEvent('a'), isFalse);
+    final restored = (await db.getImportedFinancialEvents(
+        direction: 'debit', sourceType: 'manual')).single;
+    expect(restored['event_pk'], 'a');
+    expect(restored['raw_text'], '');
+    expect((await db.getImportedFinancialEvents(status: 'approved'))
+        .single['transaction_fk'], 'saved');
+  });
+
   test('investment quote export keeps latest prices by date and round trips', () {
     final quotes = [
       (date: DateTime(2026, 1, 1), price: 10.0),

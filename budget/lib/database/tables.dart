@@ -4615,16 +4615,40 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Future<List<Map<String, dynamic>>> getImportedFinancialEvents({
     String status = 'review',
+    String? direction,
+    String? sourceType,
     int limit = 100,
+    int offset = 0,
   }) async {
     if (!{'review', 'approved', 'ignored', 'duplicate'}.contains(status) ||
-        limit < 1 || limit > 500) throw ArgumentError('Invalid import query');
+        (direction != null && !{'debit', 'credit'}.contains(direction)) ||
+        (sourceType != null && !{'manual', 'notification'}.contains(sourceType)) ||
+        limit < 1 || limit > 500 || offset < 0) {
+      throw ArgumentError('Invalid import query');
+    }
     final rows = await customSelect(
       'SELECT * FROM imported_financial_events WHERE status = ? '
-      'ORDER BY occurred_at DESC LIMIT ?',
-      variables: [Variable<String>(status), Variable<int>(limit)],
+      '${direction == null ? '' : 'AND direction = ? '}'
+      '${sourceType == null ? '' : 'AND source_type = ? '}'
+      'ORDER BY occurred_at DESC, event_pk DESC LIMIT ? OFFSET ?',
+      variables: [
+        Variable<String>(status),
+        if (direction != null) Variable<String>(direction),
+        if (sourceType != null) Variable<String>(sourceType),
+        Variable<int>(limit),
+        Variable<int>(offset),
+      ],
     ).get();
     return rows.map((row) => row.data).toList();
+  }
+
+  Future<bool> restoreIgnoredFinancialEvent(String eventPk) async {
+    final changed = await customUpdate(
+      "UPDATE imported_financial_events SET status = 'review' "
+      "WHERE event_pk = ? AND status = 'ignored' AND transaction_fk IS NULL",
+      variables: [Variable<String>(eventPk)],
+    );
+    return changed == 1;
   }
 
   Future<void> setImportedFinancialEventStatus(
@@ -4666,7 +4690,10 @@ class FinanceDatabase extends _$FinanceDatabase {
         throw StateError('Imported event needs manual details');
       }
       final wallet = await getWalletInstanceOrNull(resolvedWallet);
-      if (wallet == null) throw StateError('Wallet not found');
+      if (wallet == null ||
+          (await getAccountDetails(resolvedWallet))?['archived'] == 1) {
+        throw StateError('Select an active account');
+      }
       if (event['currency'] == null ||
           event['currency'] != wallet.currency?.toLowerCase()) {
         throw StateError('Import currency must match the wallet currency');
