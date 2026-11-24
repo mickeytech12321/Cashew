@@ -310,7 +310,7 @@ void main() {
           name: 'Shopping',
           order: 0,
         ));
-    final occurredAt = DateTime(2026, 11, 24);
+    final occurredAt = DateTime(2026, 11, 24, 9, 45);
     Future<bool> stage(String id) => database.stageImportedFinancialEvent(
           eventPk: id,
           sourceType: 'manual',
@@ -338,6 +338,7 @@ void main() {
     await expectLater(approve('egp'), throwsStateError);
     final saved = (await database.select(database.transactions).get()).single;
     expect(saved.amount, -100);
+    expect(saved.dateCreated, occurredAt);
     expect(saved.note, isEmpty);
     final approved =
         await database.getImportedFinancialEvents(status: 'approved');

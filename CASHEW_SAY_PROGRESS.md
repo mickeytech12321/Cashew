@@ -61,7 +61,7 @@
 
 - Flutter 3.50.1 tests run with the existing CI `value_layout_builder` compatibility patch and a native SQLite library. Static analysis reported no compile errors in the preceding run; lint diagnostics remain.
 - Validate upgrade from real v46 and early v47 backups, fresh install, reopen, restore and data preservation.
-- Exercise bank-message review and assistant drafts in Arabic RTL and English. Confirm no writes before approval, retry behavior, currency mismatches, and duplicate handling. Pasted messages currently use the paste time. Review the retention of pending imports and existing backups before release.
+- Exercise bank-message review and assistant drafts in Arabic RTL and English. Confirm no writes before approval, retry behavior, currency mismatches, and duplicate handling. Manual import accepts a transaction date and time, defaults to the current time, and displays the saved timestamp during review. Review the retention of pending imports and existing backups before release.
 - Exercise original Cashew transaction, transfer, account, budget, backup and sync paths before a release.
 
 ## Non-negotiable invariants
