@@ -58,10 +58,14 @@
 ## Phase 08 — UI / Analytics / Widgets
 - PARTIAL: bilingual financial screens are accessible from Settings. English/LTR and Arabic/RTL label rendering have widget tests. Financial insights show monthly paid income, expenses, net cash flow and category spending for each currency, across all active accounts or for one selected account. An Android launcher widget shows current-month spending in the selected account’s currency after explicit opt-in. It opens Financial insights and hides snapshots from previous months at refresh. Android build and RTL device review remain.
 
-- CODED: Financial insights can copy the visible month and account scope as a CSV report with category, currency, income, expenses and net cash flow. Spreadsheet formula prefixes are escaped in text fields. Flutter clipboard verification remains.
+- CODED: Financial insights can copy the visible month and account scope as a CSV report with category, currency, income, expenses and net cash flow. Spreadsheet formula prefixes are escaped in text fields. CSV serialization tests cover Arabic labels, commas, account and month scope, formula escaping and negative cash flow. Clipboard behavior still requires device verification.
 
 ## Phase 09 — Security / Release
 - PARTIAL: bank message review strips staged raw text on future approval/ignore/duplicate transitions. New Drive backups and sync snapshots omit raw import message bodies from an isolated database copy while retaining parsed review metadata. Earlier backups can retain the old data. Drive replacement uploads complete before pruning old backups, and sync cancellation waits for the active read to stop before restore. Restore validates the SQLite header, schema version, integrity and expected tables in an isolated copy. Native restores are staged for restart and applied through the SQLite backup API before the main connection opens. Migration and financial regression tests are in the suite. Android Google sign-in takes an owned Web OAuth client ID via a build variable. Drive backups request only the app data scope. See [Google setup](GOOGLE_DRIVE_SETUP.md) for credentials and live verification. The branch changelog summarizes this release. Broader privacy/security review and APK validation remain.
+
+## Latest verification
+
+- All 60 Flutter tests passed with Flutter 3.50.1, the existing layout compatibility patch, a reconstructed local dependency cache and native SQLite. The test process used a network-isolated environment with loopback only. No APK was built. Android device checks remain.
 
 ## Verification still required
 

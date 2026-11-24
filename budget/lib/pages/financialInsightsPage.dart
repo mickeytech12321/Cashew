@@ -1,4 +1,4 @@
-import 'package:csv/csv.dart';
+import 'package:budget/struct/financialInsightsCsv.dart';
 import 'package:flutter/services.dart';
 import 'package:budget/widgets/util/monthlySpendingWidget.dart';
 import 'package:budget/struct/databaseGlobal.dart';
@@ -16,6 +16,7 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
   int _monthsBack = 0;
   String? _account;
   late final _accounts = database.getFinancialInsightsAccounts();
+  late DateTime _reportMonth;
   late var _insights = _load();
 
   String _label(String english, String arabic) =>
@@ -33,8 +34,9 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
             double expenses
           })>> _load() {
     final today = DateTime.now();
+    _reportMonth = _month(today, _monthsBack);
     return database.getFinancialInsights(
-      _month(today, _monthsBack),
+      _reportMonth,
       _monthsBack == 0
           ? DateTime(today.year, today.month, today.day + 1)
           : _month(today, _monthsBack - 1),
@@ -45,31 +47,15 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
   String _amount(double value, String code) =>
       '${value.toStringAsFixed(2)} ${code.toUpperCase()}'.trim();
 
-  String _csvText(String value) =>
-      RegExp(r'^[\s\x00-\x1f]*[=+@-]|^[\t\r\n]').hasMatch(value)
-          ? "'$value"
-          : value;
-
   Future<void> _copyReport(
     List<({String currency, String? category, double income, double expenses})>
         rows,
   ) async {
-    final month = _month(DateTime.now(), _monthsBack);
-    final period =
-        '${month.year}-${month.month.toString().padLeft(2, '0')}';
-    final csv = const ListToCsvConverter().convert(<List<dynamic>>[
-      ['month', 'account_id', 'currency', 'category', 'income', 'expenses', 'net'],
-      for (final row in rows)
-        [
-          period,
-          _csvText(_account ?? ''),
-          _csvText(row.currency.toUpperCase()),
-          _csvText(row.category ?? ''),
-          row.income,
-          row.expenses,
-          row.income - row.expenses,
-        ],
-    ]);
+    final csv = exportFinancialInsightsCsv(
+      month: _reportMonth,
+      account: _account,
+      rows: rows,
+    );
     try {
       await Clipboard.setData(ClipboardData(text: csv));
       if (!mounted) return;
