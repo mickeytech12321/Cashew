@@ -53,6 +53,7 @@
 ## Phase 07 — Household & Sync
 - PARTIAL: publisher-owned Google Drive API, OAuth consent screen, owner test account, `drive.appdata` scope, and Web client are configured. GitHub Actions has the Web client ID. Android OAuth registration needs the intended signer's certificate SHA-1. Sign-in, backup, restore and two-device sync still require verification on Android.
 - PARTIAL: local household profiles can be added, edited and removed. The owner can configure per-account access for viewers and editors and preview visible balances. Archived accounts and remote profiles are excluded locally. Incoming transaction updates that would overwrite a newer local edit are staged in the sync-conflict ledger. The Settings review screen can retain the current row or apply an eligible incoming version after rechecking the saved local snapshot.
+- CODED: stale incoming deletes of locally edited transactions enter the bilingual conflict review. Repeated delivery is deduplicated. Explicit approval of an ordinary transaction delete verifies the local snapshot and records a newer tombstone atomically. Linked transactions require manual review. Flutter regression coverage passed.
 - TODO: authenticated remote membership, device invitations and access enforcement, plus reconciliation for linked transfers and other synced record types.
 
 ## Phase 08 — UI / Analytics / Widgets
@@ -65,7 +66,7 @@
 
 ## Latest verification
 
-- All 60 Flutter tests passed with Flutter 3.50.1, the existing layout compatibility patch, a reconstructed local dependency cache and native SQLite. The test process used a network-isolated environment with loopback only. No APK was built. Android device checks remain.
+- All 61 Flutter tests passed with Flutter 3.50.1, the existing layout compatibility patch, a reconstructed local dependency cache and native SQLite. The test process used a network-isolated environment with loopback only. No APK was built. Android device checks remain.
 
 ## Verification still required
 

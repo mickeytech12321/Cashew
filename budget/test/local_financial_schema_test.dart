@@ -224,6 +224,36 @@ void main() {
     expect(await db.getOpenSyncConflicts(), isEmpty);
   });
 
+  test('a stale remote deletion is reviewed once and only deletes on approval',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final before = DateTime(2026, 11, 24, 10);
+    final after = DateTime(2026, 11, 24, 11);
+    final row = Transaction(
+      transactionPk: 'row', name: 'Edited', amount: -20, note: '',
+      categoryFk: 'daily', walletFk: 'wallet', dateCreated: before,
+      dateTimeModified: after, income: false, paid: true, skipPaid: false,
+    );
+    await db.into(db.transactions).insert(row);
+    final deletion = SyncLog(deleteLogType: DeleteLogType.Transaction,
+        pk: 'row', transactionDateTime: before);
+    await db.processSyncLogs([deletion]);
+    await db.processSyncLogs([deletion]);
+    expect((await db.select(db.transactions).get()).single.name, 'Edited');
+    final conflict = (await db.getOpenSyncConflicts()).single;
+    expect(conflict['entity_type'], 'transaction_delete');
+    final conflictPk = conflict['conflict_pk'] as String;
+    expect(await db.resolveTransactionSyncConflict(conflictPk, useRemote: true),
+        isTrue);
+    expect(await db.select(db.transactions).get(), isEmpty);
+    expect(await db.resolveTransactionSyncConflict(conflictPk, useRemote: true),
+        isFalse);
+    await db.processSyncLogs([SyncLog(updateLogType: UpdateLogType.Transaction,
+        pk: 'row', transactionDateTime: after, itemToUpdate: row)]);
+    expect(await db.select(db.transactions).get(), isEmpty);
+  });
+
   test('a synced transaction deletion blocks stale recreation in a later pull', () async {
     final db = FinanceDatabase(NativeDatabase.memory());
     addTearDown(db.close);

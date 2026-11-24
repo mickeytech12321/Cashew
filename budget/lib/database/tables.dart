@@ -5525,7 +5525,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       transaction(() async {
     final conflict = await customSelect(
       'SELECT * FROM sync_conflicts WHERE conflict_pk = ? AND resolved_at IS NULL '
-      "AND entity_type = 'transaction'",
+      "AND entity_type IN ('transaction', 'transaction_delete')",
       variables: [Variable<String>(conflictPk)],
     ).getSingleOrNull();
     if (conflict == null) return false;
@@ -5537,28 +5537,42 @@ class FinanceDatabase extends _$FinanceDatabase {
       if (local == null || jsonEncode(local.toJson()) != conflict.read<String>('local_json')) {
         throw StateError('Local transaction changed after this conflict');
       }
-      final remote = Transaction.fromJson(
-        jsonDecode(conflict.read<String>('remote_json')) as Map<String, dynamic>,
-      );
       bool isOrdinary(Transaction row) => row.pairedTransactionFk == null &&
           row.sharedKey == null && row.sharedReferenceBudgetPk == null &&
-          row.objectiveLoanFk == null && row.categoryFk != '0' &&
-          row.type == null;
-      if (remote.transactionPk != id || !isOrdinary(remote) || !isOrdinary(local) ||
-          !remote.amount.isFinite || remote.amount.abs() > 999999999999 ||
-          await getWalletInstanceOrNull(remote.walletFk) == null ||
-          await getCategoryInstanceOrNull(remote.categoryFk) == null ||
-          (remote.subCategoryFk != null &&
-              await getCategoryInstanceOrNull(remote.subCategoryFk!) == null)) {
-        throw StateError('Remote version cannot be applied safely');
-      }
+          row.objectiveLoanFk == null && row.objectiveFk == null &&
+          row.categoryFk != '0' && row.type == null;
       final lastEdit = local.dateTimeModified;
       final nextEdit = lastEdit != null && !now.isAfter(lastEdit.add(const Duration(seconds: 1)))
           ? lastEdit.add(const Duration(seconds: 1)) : now;
-      final updated = await (update(transactions)
-            ..where((row) => row.transactionPk.equals(id)))
-          .write(remote.copyWith(dateTimeModified: Value(nextEdit)).toCompanion(true));
-      if (updated != 1) throw StateError('Transaction changed during resolution');
+      if (conflict.read<String>('entity_type') == 'transaction_delete') {
+        if (!isOrdinary(local)) {
+          throw StateError('Linked transactions require manual review');
+        }
+        final deleted = await (delete(transactions)
+              ..where((row) => row.transactionPk.equals(id))).go();
+        if (deleted != 1) throw StateError('Transaction changed during resolution');
+        await into(deleteLogs).insert(DeleteLogsCompanion.insert(
+          entryPk: id,
+          type: DeleteLogType.Transaction,
+          dateTimeModified: Value(nextEdit),
+        ));
+      } else {
+        final remote = Transaction.fromJson(
+          jsonDecode(conflict.read<String>('remote_json')) as Map<String, dynamic>,
+        );
+        if (remote.transactionPk != id || !isOrdinary(remote) || !isOrdinary(local) ||
+            !remote.amount.isFinite || remote.amount.abs() > 999999999999 ||
+            await getWalletInstanceOrNull(remote.walletFk) == null ||
+            await getCategoryInstanceOrNull(remote.categoryFk) == null ||
+            (remote.subCategoryFk != null &&
+                await getCategoryInstanceOrNull(remote.subCategoryFk!) == null)) {
+          throw StateError('Remote version cannot be applied safely');
+        }
+        final updated = await (update(transactions)
+              ..where((row) => row.transactionPk.equals(id)))
+            .write(remote.copyWith(dateTimeModified: Value(nextEdit)).toCompanion(true));
+        if (updated != 1) throw StateError('Transaction changed during resolution');
+      }
     }
     await customStatement(
       'UPDATE sync_conflicts SET resolved_at = ?, resolution = ? WHERE conflict_pk = ?',
@@ -5636,11 +5650,27 @@ class FinanceDatabase extends _$FinanceDatabase {
             );
           } else if (syncLog.deleteLogType == DeleteLogType.Transaction) {
             final local = current[syncLog.pk];
-            if (local != null && !(local.dateTimeModified ?? DateTime(0)).isAfter(date)) {
+            final previous = tombstones[syncLog.pk];
+            if (local != null && (local.dateTimeModified ?? DateTime(0)).isAfter(date)) {
+              if (previous == null || date.isAfter(previous)) {
+                final localJson = jsonEncode(local.toJson());
+                await recordSyncConflict(
+                  conflictPk: financialImportFingerprint(
+                    sourceType: 'sync-transaction-delete', sender: syncLog.pk,
+                    rawText: localJson, occurredAt: date,
+                  ),
+                  entityType: 'transaction_delete',
+                  entityPk: syncLog.pk,
+                  localJson: localJson,
+                  remoteJson: 'null',
+                );
+              }
+              continue;
+            }
+            if (local != null) {
               batch.deleteWhere(transactions, (row) => row.transactionPk.equals(syncLog.pk));
               current.remove(syncLog.pk);
             }
-            final previous = tombstones[syncLog.pk];
             if (previous == null || date.isAfter(previous)) {
               tombstones[syncLog.pk] = date;
               batch.insert(deleteLogs, DeleteLogsCompanion.insert(

@@ -44,7 +44,8 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
       final local = Transaction.fromJson(
         jsonDecode(conflict['local_json'] as String) as Map<String, dynamic>,
       );
-      final remote = Transaction.fromJson(
+      final isDeletion = conflict['entity_type'] == 'transaction_delete';
+      final remote = isDeletion ? null : Transaction.fromJson(
         jsonDecode(conflict['remote_json'] as String) as Map<String, dynamic>,
       );
       final accounts = {
@@ -68,8 +69,12 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
                 _label('Local version at detection',
                     'النسخة المحلية وقت اكتشاف التعارض'),
                 accounts[local.walletFk], categories[local.categoryFk]),
-            _version(remote, _label('Incoming version', 'النسخة الواردة'),
-                accounts[remote.walletFk], categories[remote.categoryFk]),
+            if (remote == null)
+              Text(_label('Another device deleted this transaction.',
+                  'جهاز آخر حذف هذه المعاملة.'))
+            else
+              _version(remote, _label('Incoming version', 'النسخة الواردة'),
+                  accounts[remote.walletFk], categories[remote.categoryFk]),
           ]),
           actions: [
             TextButton(
@@ -80,7 +85,8 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
                 child: Text(_label('Keep current', 'الاحتفاظ بالحالي'))),
             FilledButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: Text(_label('Use incoming', 'استخدام الوارد'))),
+                child: Text(isDeletion ? _label('Delete transaction', 'حذف المعاملة')
+                    : _label('Use incoming', 'استخدام الوارد'))),
           ],
         ),
       );
@@ -119,7 +125,8 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
                   _label('Could not load conflicts.', 'تعذّر تحميل التعارضات.'),
                 ));
               final conflicts = snapshot.data!
-                  .where((row) => row['entity_type'] == 'transaction')
+                  .where((row) => const {'transaction', 'transaction_delete'}
+                      .contains(row['entity_type']))
                   .toList();
               if (conflicts.isEmpty)
                 return ListTile(
@@ -130,7 +137,9 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
               return Column(children: [
                 for (final conflict in conflicts)
                   ListTile(
-                    title: Text(_label('Transaction conflict', 'تعارض معاملة')),
+                    title: Text(conflict['entity_type'] == 'transaction_delete'
+                        ? _label('Deletion conflict', 'تعارض حذف')
+                        : _label('Transaction conflict', 'تعارض معاملة')),
                     subtitle:
                         Text(MaterialLocalizations.of(context).formatMediumDate(
                       DateTime.fromMillisecondsSinceEpoch(
