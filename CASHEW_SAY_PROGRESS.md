@@ -65,6 +65,8 @@
 
 ## Verification still required
 
+- Run `bash scripts/test_free_edition.sh` with Flutter 3.50.1, Bash, Python 3 and native SQLite. This runs the Flutter suite using a temporary dependency cache and does not package Android. The script remains unverified in the current environment.
+
 - Flutter 3.50.1 tests run with the existing CI `value_layout_builder` compatibility patch and a native SQLite library. Static analysis reported no compile errors in the preceding run; lint diagnostics remain.
 - Synthetic v46 upgrade, partial-v47 reopen, and restore format/integrity checks run locally. Verify real backups and the restart path on device.
 - Exercise bank-message review and assistant drafts in Arabic RTL and English. Confirm no writes before approval, retry behavior, currency mismatches, and duplicate handling. Manual import accepts a transaction date and time, defaults to the current time, and displays the saved timestamp during review. Review the retention of pending imports and existing backups before release.
