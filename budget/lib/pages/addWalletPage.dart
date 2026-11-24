@@ -5,6 +5,7 @@ import 'package:budget/pages/editWalletsPage.dart';
 import 'package:budget/pages/settingsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/financialMessageParser.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
 import 'package:budget/widgets/button.dart';
@@ -75,6 +76,109 @@ class _AddWalletPageState extends State<AddWalletPage> {
   double? minimumPayment;
   double? aprPercent;
   String? cardLastFour;
+  String? linkedBankWalletPk;
+  late final _linkableWallets = database.getAllWallets();
+  Future<Map<String, dynamic>>? _creditSummary;
+  final _accountForm = GlobalKey<FormState>();
+  int _accountFieldsRevision = 0;
+
+  String _accountLabel(String english, String arabic) =>
+      Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
+
+  String? _validateCreditNumber(String? value, {bool day = false}) {
+    if (value == null || value.trim().isEmpty) return null;
+    final normalized = FinancialMessageParser.normalize(value.trim());
+    final number = day ? int.tryParse(normalized) : double.tryParse(normalized);
+    if (number != null && number.isFinite &&
+        (day ? number >= 1 && number <= 31 : number >= 0)) {
+      return null;
+    }
+    return _accountLabel('Enter a valid number', 'أدخل رقمًا صالحًا');
+  }
+
+  Widget _creditAccountDetails() {
+    return FutureBuilder<List<TransactionWallet>>(
+      future: _linkableWallets,
+      builder: (context, snapshot) {
+        final wallets = snapshot.data
+            ?.where((wallet) => wallet.walletPk != widget.wallet?.walletPk)
+            .toList() ?? [];
+        final linkedWallet = wallets
+            .where((wallet) => wallet.walletPk == linkedBankWalletPk)
+            .firstOrNull;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DropdownButton<String>(
+              isExpanded: true,
+              value: linkedWallet?.walletPk ?? '',
+              items: [
+                DropdownMenuItem(
+                  value: '',
+                  child: Text(_accountLabel('No repayment account', 'بدون حساب للسداد')),
+                ),
+                for (final wallet in wallets)
+                  DropdownMenuItem(value: wallet.walletPk, child: Text(wallet.name)),
+              ],
+              onChanged: snapshot.hasData ? (value) {
+                setState(() => linkedBankWalletPk = value == '' ? null : value);
+              } : null,
+            ),
+            if (_creditSummary != null)
+              FutureBuilder<Map<String, dynamic>>(
+                future: _creditSummary,
+                builder: (context, snapshot) {
+                  final outstanding = snapshot.data?['outstanding'] as num?;
+                  final available = snapshot.data?['available_credit'] as num?;
+                  if (outstanding == null) return const SizedBox.shrink();
+                  final currency = widget.wallet?.currency?.toUpperCase() ?? '';
+                  final statement = snapshot.data?['next_statement_date'] as DateTime?;
+                  final due = snapshot.data?['next_due_date'] as DateTime?;
+                  final dates = MaterialLocalizations.of(context);
+                  final summary = [
+                    '${outstanding.toStringAsFixed(selectedDecimals)} $currency',
+                    if (available != null)
+                      '${_accountLabel('Available', 'المتاح')} '
+                      '${available.toStringAsFixed(selectedDecimals)} $currency',
+                    if (statement != null)
+                      '${_accountLabel('Next statement', 'كشف الحساب القادم')} '
+                      '${dates.formatMediumDate(statement)}',
+                    if (due != null)
+                      '${_accountLabel('Next due date', 'تاريخ الاستحقاق القادم')} '
+                      '${dates.formatMediumDate(due)}',
+                  ];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(_accountLabel('Outstanding balance', 'الرصيد المستحق')),
+                    subtitle: Text(summary.join('\n')),
+                  );
+                },
+              ),
+            if (linkedWallet != null && widget.wallet != null && _creditSummary != null)
+              OutlinedButton(
+                onPressed: () async {
+                  final result = await openBottomSheet(
+                    context,
+                    TransferBalancePopup(
+                      wallet: linkedWallet,
+                      initialTarget: widget.wallet,
+                      initialTitle: _accountLabel('Credit card repayment', 'سداد بطاقة ائتمان'),
+                      allowEditWallet: false,
+                    ),
+                  );
+                  if (mounted && result == true) {
+                    setState(() => _creditSummary =
+                        database.getCreditCardSummary(widget.wallet!.walletPk));
+                  }
+                },
+                child: Text(_accountLabel('Record repayment', 'تسجيل سداد')),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   FocusNode _titleFocusNode = FocusNode();
 
   void setSelectedTitle(String title) {
@@ -100,7 +204,7 @@ class _AddWalletPageState extends State<AddWalletPage> {
   }
 
   Future addWallet({bool popContext = true}) async {
-    print("Added wallet");
+    if (_accountForm.currentState?.validate() == false) return;
     final int? rowId = await database.createOrUpdateWallet(
         insert: widget.wallet == null, await createTransactionWallet());
 
@@ -134,6 +238,7 @@ class _AddWalletPageState extends State<AddWalletPage> {
           minimumPayment: minimumPayment,
           aprPercent: aprPercent,
           lastFour: cardLastFour,
+          linkedBankWalletFk: linkedBankWalletPk,
         );
       }
     }
@@ -211,6 +316,7 @@ class _AddWalletPageState extends State<AddWalletPage> {
             selectedAccountType =
                 (details['account_type'] as String?) ?? 'unspecified';
             institutionName = details['institution_name'] as String?;
+            _accountFieldsRevision++;
             accountArchived = ((details['archived'] as int?) ?? 0) == 1;
             excludeFromNetWorth =
                 ((details['exclude_from_net_worth'] as int?) ?? 0) == 1;
@@ -227,6 +333,9 @@ class _AddWalletPageState extends State<AddWalletPage> {
                     (credit['minimum_payment'] as num?)?.toDouble();
                 aprPercent = (credit['apr_percent'] as num?)?.toDouble();
                 cardLastFour = credit['last_four'] as String?;
+                linkedBankWalletPk = credit['linked_bank_wallet_fk'] as String?;
+                _creditSummary = database.getCreditCardSummary(widget.wallet!.walletPk);
+                _accountFieldsRevision++;
               });
             }
           }
@@ -532,21 +641,24 @@ class _AddWalletPageState extends State<AddWalletPage> {
             child: Padding(
               padding: const EdgeInsetsDirectional.only(
                   start: 24, end: 24, bottom: 10),
-              child: Column(
-                children: [
+              child: Form(
+                key: _accountForm,
+                child: Column(
+                  key: ValueKey(_accountFieldsRevision),
+                  children: [
                   DropdownButtonFormField<String>(
                     value: selectedAccountType,
-                    decoration: const InputDecoration(labelText: 'Account type'),
-                    items: const [
-                      DropdownMenuItem(value: 'unspecified', child: Text('General')),
-                      DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                      DropdownMenuItem(value: 'bank', child: Text('Bank account')),
-                      DropdownMenuItem(value: 'debit', child: Text('Debit card')),
-                      DropdownMenuItem(value: 'prepaid', child: Text('Prepaid card')),
-                      DropdownMenuItem(value: 'ewallet', child: Text('E-wallet')),
-                      DropdownMenuItem(value: 'credit', child: Text('Credit card')),
-                      DropdownMenuItem(value: 'savings', child: Text('Savings')),
-                      DropdownMenuItem(value: 'investment', child: Text('Investment')),
+                    decoration: InputDecoration(labelText: _accountLabel('Account type', 'نوع الحساب')),
+                    items: [
+                      DropdownMenuItem(value: 'unspecified', child: Text(_accountLabel('General', 'عام'))),
+                      DropdownMenuItem(value: 'cash', child: Text(_accountLabel('Cash', 'نقدي'))),
+                      DropdownMenuItem(value: 'bank', child: Text(_accountLabel('Bank account', 'حساب بنكي'))),
+                      DropdownMenuItem(value: 'debit', child: Text(_accountLabel('Debit card', 'بطاقة خصم'))),
+                      DropdownMenuItem(value: 'prepaid', child: Text(_accountLabel('Prepaid card', 'بطاقة مسبقة الدفع'))),
+                      DropdownMenuItem(value: 'ewallet', child: Text(_accountLabel('E-wallet', 'محفظة إلكترونية'))),
+                      DropdownMenuItem(value: 'credit', child: Text(_accountLabel('Credit card', 'بطاقة ائتمان'))),
+                      DropdownMenuItem(value: 'savings', child: Text(_accountLabel('Savings', 'مدخرات'))),
+                      DropdownMenuItem(value: 'investment', child: Text(_accountLabel('Investment', 'استثمار'))),
                     ],
                     onChanged: (value) {
                       if (value != null) setState(() => selectedAccountType = value);
@@ -554,8 +666,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
                   ),
                   TextFormField(
                     initialValue: institutionName,
-                    decoration: const InputDecoration(
-                        labelText: 'Bank / institution (optional)'),
+                    decoration: InputDecoration(
+                        labelText: _accountLabel('Bank / institution (optional)', 'البنك أو المؤسسة (اختياري)')),
                     onChanged: (value) => institutionName = value.trim().isEmpty
                         ? null
                         : value.trim(),
@@ -564,57 +676,69 @@ class _AddWalletPageState extends State<AddWalletPage> {
                     TextFormField(
                       initialValue: creditLimit?.toString(),
                       keyboardType: TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Credit limit'),
-                      onChanged: (v) => creditLimit = double.tryParse(v),
+                      decoration: InputDecoration(labelText: _accountLabel('Credit limit', 'الحد الائتماني')),
+                      validator: _validateCreditNumber,
+                      onChanged: (v) => creditLimit = double.tryParse(FinancialMessageParser.normalize(v.trim())),
                     ),
                     TextFormField(
                       initialValue: statementDay?.toString(),
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(labelText: 'Statement day (1-31)'),
-                      onChanged: (v) => statementDay = int.tryParse(v),
+                      decoration: InputDecoration(labelText: _accountLabel('Statement day (1-31)', 'يوم كشف الحساب (1–31)')),
+                      validator: (value) => _validateCreditNumber(value, day: true),
+                      onChanged: (v) => statementDay = int.tryParse(FinancialMessageParser.normalize(v.trim())),
                     ),
                     TextFormField(
                       initialValue: dueDay?.toString(),
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(labelText: 'Due day (1-31)'),
-                      onChanged: (v) => dueDay = int.tryParse(v),
+                      decoration: InputDecoration(labelText: _accountLabel('Due day (1-31)', 'يوم الاستحقاق (1–31)')),
+                      validator: (value) => _validateCreditNumber(value, day: true),
+                      onChanged: (v) => dueDay = int.tryParse(FinancialMessageParser.normalize(v.trim())),
                     ),
                     TextFormField(
                       initialValue: minimumPayment?.toString(),
                       keyboardType: TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Minimum payment'),
-                      onChanged: (v) => minimumPayment = double.tryParse(v),
+                      decoration: InputDecoration(labelText: _accountLabel('Minimum payment', 'الحد الأدنى للسداد')),
+                      validator: _validateCreditNumber,
+                      onChanged: (v) => minimumPayment = double.tryParse(FinancialMessageParser.normalize(v.trim())),
                     ),
                     TextFormField(
                       initialValue: aprPercent?.toString(),
                       keyboardType: TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'APR %'),
-                      onChanged: (v) => aprPercent = double.tryParse(v),
+                      decoration: InputDecoration(labelText: _accountLabel('APR %', 'معدل الفائدة السنوي %')),
+                      validator: _validateCreditNumber,
+                      onChanged: (v) => aprPercent = double.tryParse(FinancialMessageParser.normalize(v.trim())),
                     ),
                     TextFormField(
                       initialValue: cardLastFour,
                       keyboardType: TextInputType.number,
                       maxLength: 4,
-                      decoration: const InputDecoration(labelText: 'Card last 4 digits'),
-                      onChanged: (v) => cardLastFour =
-                          v.trim().isEmpty ? null : v.trim(),
+                      decoration: InputDecoration(labelText: _accountLabel('Card last 4 digits', 'آخر ٤ أرقام من البطاقة')),
+                      validator: (value) {
+                        final normalized = FinancialMessageParser.normalize(value?.trim() ?? '');
+                        return normalized.isEmpty || RegExp(r'^\d{4}$').hasMatch(normalized)
+                            ? null : _accountLabel('Use four digits', 'أدخل أربعة أرقام');
+                      },
+                      onChanged: (v) => cardLastFour = v.trim().isEmpty
+                          ? null : FinancialMessageParser.normalize(v.trim()),
                     ),
+                    _creditAccountDetails(),
                   ],
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Exclude from net worth'),
+                    title: Text(_accountLabel('Exclude from net worth', 'استبعاد من صافي الثروة')),
                     value: excludeFromNetWorth,
                     onChanged: (value) =>
                         setState(() => excludeFromNetWorth = value),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Archive account'),
+                    title: Text(_accountLabel('Archive account', 'أرشفة الحساب')),
                     value: accountArchived,
                     onChanged: (value) =>
                         setState(() => accountArchived = value),
                   ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -1177,6 +1301,7 @@ class TransferBalancePopup extends StatefulWidget {
     required this.allowEditWallet,
     this.showAllEditDetails = false,
     this.initialAmount,
+    this.initialTarget,
     this.initialDate,
     this.initialTitle,
     this.initialObjectiveLoanPk,
@@ -1187,6 +1312,7 @@ class TransferBalancePopup extends StatefulWidget {
   final bool allowEditWallet;
   final bool showAllEditDetails;
   final double? initialAmount;
+  final TransactionWallet? initialTarget;
   final DateTime? initialDate;
   final String? initialTitle;
   final String? initialObjectiveLoanPk;
@@ -1201,7 +1327,7 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
   late double enteredAmount = widget.initialAmount ?? 0;
   late bool isNegative = widget.initialIsNegative ?? false;
   late TransactionWallet? walletFrom = widget.wallet;
-  TransactionWallet? walletTo;
+  late TransactionWallet? walletTo = widget.initialTarget;
   late TimeOfDay? selectedTime = widget.initialDate != null
       ? TimeOfDay(
           hour: widget.initialDate!.hour, minute: widget.initialDate!.minute)
@@ -1281,7 +1407,26 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
     );
   }
 
+  bool _transferInProgress = false;
+
   Future<void> transferBalance() async {
+    if (_transferInProgress) return;
+    _transferInProgress = true;
+    try {
+      await _saveTransfer();
+    } catch (_) {
+      if (!mounted) return;
+      final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+      openSnackbar(SnackbarMessage(
+        title: isArabic ? 'تعذّر حفظ التحويل' : 'Could not save transfer',
+        icon: Icons.warning_outlined,
+      ));
+    } finally {
+      _transferInProgress = false;
+    }
+  }
+
+  Future<void> _saveTransfer() async {
     final allWallets = Provider.of<AllWallets>(context, listen: false);
     final source = walletFrom ??
         allWallets.indexedByPk[appStateSettings["selectedWalletPk"]]!;
@@ -1292,7 +1437,9 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
         selectedWallet: walletTo,
         allowEditWallet: widget.allowEditWallet,
       );
-      if (result is TransactionWallet) setState(() => walletTo = result);
+      if (mounted && result is TransactionWallet) {
+        setState(() => walletTo = result);
+      }
       return;
     }
     final target = walletTo!;
@@ -1306,15 +1453,24 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
       return;
     }
 
-    final amountInPrimary = walletForCurrency == null
-        ? enteredAmount
-        : enteredAmount *
-            amountRatioToPrimaryCurrencyGivenPk(
-                allWallets, walletForCurrency!.walletPk);
-    final targetAmount = amountInPrimary *
-        getAmountRatioWalletTransferTo(allWallets, target.walletPk);
-    final sourceAmount = amountInPrimary *
-        getAmountRatioWalletTransferFrom(allWallets, source.walletPk);
+    final enteredCurrency = walletForCurrency?.currency;
+    double? ratioTo(TransactionWallet wallet) {
+      if (enteredCurrency == wallet.currency) return 1;
+      return strictCurrencyRatio(enteredCurrency, wallet.currency);
+    }
+
+    final sourceRatio = ratioTo(source);
+    final targetRatio = ratioTo(target);
+    if (sourceRatio == null || targetRatio == null) {
+      final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+      openSnackbar(SnackbarMessage(
+        icon: Icons.warning_outlined,
+        title: isArabic ? 'سعر الصرف غير متاح' : 'Exchange rate unavailable',
+      ));
+      return;
+    }
+    final sourceAmount = enteredAmount * sourceRatio;
+    final targetAmount = enteredAmount * targetRatio;
     if (!targetAmount.isFinite || !sourceAmount.isFinite ||
         targetAmount == 0 || sourceAmount == 0) {
       openSnackbar(SnackbarMessage(
@@ -1383,9 +1539,10 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
       incomingAmount.toStringAsPrecision(15),
     ].join(':');
 
+    await initializeBalanceCorrectionCategory();
     final saved = await database.saveAtomicLocalTransfer(
       outgoing, incoming, idempotencyKey: idempotencyKey);
-    if (!saved) return;
+    if (!saved || !mounted) return;
 
     openSnackbar(SnackbarMessage(
       title: "transferred-balance".tr(),

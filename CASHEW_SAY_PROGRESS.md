@@ -18,15 +18,15 @@
 - CODED: journal-backed redo for unchanged, previously undone local transfers.
 - PARTIAL: generalized duplicate detection beyond idempotency keys.
 - CODED: recurring calendar boundary logic plus regression tests for short months/leap years (tests not run yet).
-- CODED: existing transfer UI routes through the atomic journaled API.
+- CODED: transfer UI routes through the atomic journaled API, restores creation of the balancing category on first use, requires known cross-currency rates, and guards against overlapping save taps.
 - TODO: integration tests after the batch.
 
 ## Phase 02 — Advanced Accounts & Credit
 - CODED: local account metadata table/API: account type, institution, archive, exclude from net worth.
-- CODED: account-type UI integration in add/edit account screen (localization pass still required).
+- CODED: account editor localizes account types and credit metadata in English and Arabic and validates credit fields before saving.
 - PARTIAL: debit/prepaid/e-wallet account types and reusable automation identifiers; richer card metadata still required.
-- PARTIAL: credit-card model supports linked bank wallet; repayment/linking UI and double-count prevention still required.
-- PARTIAL: credit-card details UI/model plus computed outstanding/available credit and next statement/due dates; statement engine, repayments/refunds/fees still required.
+- PARTIAL: account editor supports linking a repayment account and recording a repayment as a paired balance transfer. Verify balances and double-count behavior across all reports.
+- PARTIAL: saved cards expose outstanding balance, available credit and next configured statement and due dates. Statement lifecycle, minimum due calculation, refunds and fees remain.
 - PARTIAL: homepage Net Worth now excludes archived / exclude-from-net-worth accounts; remaining reports still need the same policy.
 
 ## Phase 03 — Bank Automation / Egypt
