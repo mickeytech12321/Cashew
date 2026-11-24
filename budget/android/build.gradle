@@ -44,3 +44,14 @@ subprojects { subproject ->
         }
     }
 }
+
+// Align legacy Android library compile SDKs before AGP finalizes the DSL.
+subprojects { subproject ->
+    subproject.plugins.withId('com.android.library') {
+        subproject.androidComponents.finalizeDsl { androidDsl ->
+            if (androidDsl.compileSdk == null || androidDsl.compileSdk < 36) {
+                androidDsl.compileSdk = 36
+            }
+        }
+    }
+}
