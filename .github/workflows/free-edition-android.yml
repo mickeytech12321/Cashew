@@ -2,13 +2,6 @@ name: Android free-edition build check
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feature/free-edition
-  pull_request:
-    paths:
-      - 'budget/**'
-      - '.github/workflows/free-edition-android.yml'
 
 jobs:
   android-debug:
@@ -170,15 +163,4 @@ jobs:
         with:
           name: cashew-free-edition-debug
           path: budget/build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: error
-      - name: Build optimized Android release test APK
-        working-directory: budget
-        env:
-          CASHEW_TEST_RELEASE: 'true'
-        run: flutter build apk --release --no-tree-shake-icons
-      - name: Upload release test APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: cashew-free-edition-release-test
-          path: budget/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
