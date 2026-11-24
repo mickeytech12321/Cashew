@@ -619,6 +619,37 @@ void main() {
           'cachedCurrencyExchange': {'egp': 50}
         });
     expect(result.map((row) => row['balance']), [1000, 500]);
+    await db.into(db.wallets).insert(WalletsCompanion.insert(
+          walletPk: const Value('egp'),
+          name: 'Pounds',
+          order: 1,
+          currency: const Value('egp'),
+        ));
+    await db.into(db.transactions).insert(Transaction(
+          transactionPk: 'local-bill',
+          name: 'Bill',
+          amount: -80,
+          note: '',
+          categoryFk: 'category',
+          walletFk: 'egp',
+          dateCreated: date.add(const Duration(days: 1)),
+          income: false,
+          paid: false,
+          skipPaid: false,
+          type: TransactionSpecialType.upcoming,
+        ));
+    final combined = await db.calculatePlanningScenario('plan',
+        scheduledWalletPk: 'usd',
+        scheduledWalletPks: {'usd', 'egp'},
+        rateSettings: {
+          'cachedCurrencyExchange': {'egp': 50}
+        });
+    expect(combined.map((row) => row['balance']), [1000, 500, 420]);
+    await expectLater(
+        db.calculatePlanningScenario('plan',
+            scheduledWalletPks: {'usd', 'egp'}, rateSettings: {}),
+        throwsA(isA<PlanningRateUnavailable>()));
+
     await expectLater(
         db.savePlanningScenario(
             scenarioPk: 'plan',
@@ -640,6 +671,11 @@ void main() {
     final legacy = await db.calculatePlanningScenario('plan',
         scheduledWalletPk: 'usd', rateSettings: {});
     expect(legacy.last['balance'], 90);
+    await expectLater(
+        db.calculatePlanningScenario('plan',
+            scheduledWalletPks: {'usd', 'egp'}, rateSettings: {}),
+        throwsArgumentError);
+
   });
 
   test('insights group settled cash flow by month, category and currency',

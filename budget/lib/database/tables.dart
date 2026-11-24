@@ -4821,7 +4821,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Future<List<Map<String, dynamic>>> calculatePlanningScenario(
-      String scenarioPk, {String? scheduledWalletPk, bool projectRecurrences = false, String? goalPk,
+      String scenarioPk, {String? scheduledWalletPk, Set<String> scheduledWalletPks = const {}, bool projectRecurrences = false, String? goalPk,
         Map<String, dynamic>? rateSettings}) async {
     final scenario = await customSelect(
       'SELECT p.*, c.currency FROM planning_scenarios p '
@@ -4874,10 +4874,18 @@ class FinanceDatabase extends _$FinanceDatabase {
         date = advanceDays(date, recurrence);
       }
     }
-    if (scheduledWalletPk != null) {
+    final scheduledAccounts = {
+      ...scheduledWalletPks,
+      if (scheduledWalletPk != null) scheduledWalletPk,
+    };
+    final target = scenario.readNullable<String>('currency');
+    if (target == null && scheduledAccounts.length > 1) {
+      throw ArgumentError('Multiple scheduled accounts require a scenario currency');
+    }
+    if (scheduledAccounts.isNotEmpty) {
       final scheduled = await (select(transactions)
             ..where((row) =>
-                row.walletFk.equals(scheduledWalletPk) &
+                row.walletFk.isIn(scheduledAccounts) &
                 row.paid.equals(false) &
                 row.skipPaid.equals(false) &
                 row.dateCreated.isBetweenValues(base, horizon) &
@@ -4887,13 +4895,15 @@ class FinanceDatabase extends _$FinanceDatabase {
                   TransactionSpecialType.repetitive,
                 ])))
           .get();
-      final target = scenario.readNullable<String>('currency');
-      var ratio = 1.0;
-      if (target != null && scheduled.isNotEmpty) {
-        final source = (await getWalletInstanceOrNull(scheduledWalletPk))?.currency;
-        final known = strictCurrencyRatio(source, target, appStateSettingsPassed: rateSettings);
-        if (known == null) throw PlanningRateUnavailable(source, target);
-        ratio = known;
+      final ratios = <String, double>{};
+      if (target != null) {
+        for (final walletPk in scheduled.map((entry) => entry.walletFk).toSet()) {
+          final source = (await getWalletInstanceOrNull(walletPk))?.currency;
+          final ratio = strictCurrencyRatio(source, target,
+              appStateSettingsPassed: rateSettings);
+          if (ratio == null) throw PlanningRateUnavailable(source, target);
+          ratios[walletPk] = ratio;
+        }
       }
       final lastScheduledBySeries = <String, DateTime>{};
       String seriesKey(String id) => id.replaceFirst(RegExp(r'::predict::[0-9]+$'), '');
@@ -4910,7 +4920,7 @@ class FinanceDatabase extends _$FinanceDatabase {
             'date': date,
             'item_pk': entry.transactionPk,
             'name': entry.name,
-            'amount': entry.amount * ratio,
+            'amount': entry.amount * (ratios[entry.walletFk] ?? 1),
             'scheduled': true,
             'projected': projected,
             'goal_pk': entry.objectiveFk,

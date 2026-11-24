@@ -1,3 +1,7 @@
+import 'package:budget/pages/objectivesListPage.dart';
+import 'package:budget/pages/subscriptionsPage.dart';
+import 'package:budget/pages/upcomingOverdueTransactionsPage.dart';
+import 'package:budget/functions.dart' show pushRoute;
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
@@ -18,8 +22,8 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   Map<String, dynamic>? _selected;
   bool _busy = false;
   late final _wallets = database.getAllWallets();
-  String? _scheduledWalletPk;
-  late final _goals = database.getAllObjectives(
+  Set<String> _scheduledAccounts = {};
+  late var _goals = database.getAllObjectives(
       objectiveType: ObjectiveType.goal, isArchived: false);
   bool _projectRecurrences = false;
 
@@ -97,16 +101,80 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
     });
   }
 
+  Future<void> _chooseAccounts(
+    List<TransactionWallet> accounts,
+    bool allowMultiple,
+  ) async {
+    final selected = {..._scheduledAccounts};
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          scrollable: true,
+          title: Text(_label('Include scheduled transactions',
+              'تضمين المعاملات المجدولة')),
+          content: Column(
+            children: [
+              if (!allowMultiple)
+                Text(_label('Set a scenario currency to include multiple accounts.',
+                    'حدّد عملة السيناريو لتضمين أكثر من حساب.')),
+              for (final account in accounts)
+                CheckboxListTile(
+                  title: Text(account.name),
+                  subtitle: Text(account.currency?.toUpperCase() ?? ''),
+                  value: selected.contains(account.walletPk),
+                  onChanged: (checked) => update(() {
+                    if (checked == true) {
+                      if (!allowMultiple) selected.clear();
+                      selected.add(account.walletPk);
+                    } else {
+                      selected.remove(account.walletPk);
+                    }
+                  }),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(_label('Cancel', 'إلغاء')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, selected),
+              child: Text(_label('Apply', 'تطبيق')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    _scheduledAccounts = result;
+    _select(_selected!);
+  }
+
+  Future<void> _openPlanningPage(Widget page) async {
+    await pushRoute(context, page);
+    if (!mounted) return;
+    setState(() {
+      _goals = database.getAllObjectives(
+          objectiveType: ObjectiveType.goal, isArchived: false);
+    });
+    if (_selected case final scenario?) _select(scenario);
+  }
+
   void _select(Map<String, dynamic> scenario) {
     setState(() {
       if (_selected?['scenario_pk'] != scenario['scenario_pk']) {
-        _scheduledWalletPk = null;
+        _scheduledAccounts = {};
         _projectRecurrences = false;
+      }
+      if (scenario['currency'] == null && _scheduledAccounts.length > 1) {
+        _scheduledAccounts = {};
       }
       _selected = scenario;
       final id = scenario['scenario_pk'] as String;
       _forecast = database.calculatePlanningScenario(id,
-          scheduledWalletPk: _scheduledWalletPk,
+          scheduledWalletPks: _scheduledAccounts,
           projectRecurrences: _projectRecurrences);
       _items = database.getPlanningScenarioItems(id);
     });
@@ -247,6 +315,28 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                 onPressed: _busy ? null : () => _editScenario(),
                 child: Text(_label('New scenario', 'سيناريو جديد')),
               ),
+              Wrap(
+                children: [
+                  TextButton(
+                    onPressed: _busy ? null : () => _openPlanningPage(
+                      const UpcomingOverdueTransactions(overdueTransactions: null),
+                    ),
+                    child: Text(_label('Bills', 'الفواتير')),
+                  ),
+                  TextButton(
+                    onPressed: _busy ? null : () => _openPlanningPage(
+                      const SubscriptionsPage(),
+                    ),
+                    child: Text(_label('Subscriptions', 'الاشتراكات')),
+                  ),
+                  TextButton(
+                    onPressed: _busy ? null : () => _openPlanningPage(
+                      const ObjectivesListPage(backButton: true),
+                    ),
+                    child: Text(_label('Goals', 'الأهداف')),
+                  ),
+                ],
+              ),
               FutureBuilder<List<Map<String, dynamic>>>(
                 future: _scenarios,
                 builder: (context, snapshot) {
@@ -300,32 +390,16 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                     }
                     if (!snapshot.hasData)
                       return const LinearProgressIndicator();
-                    return DropdownButton<String>(
-                      isExpanded: true,
-                      value: _scheduledWalletPk ?? '',
-                      items: [
-                        DropdownMenuItem(
-                          value: '',
-                          child: Text(_label('Exclude scheduled transactions',
-                              'استبعاد المعاملات المجدولة')),
-                        ),
-                        for (final wallet in snapshot.data!)
-                          DropdownMenuItem(
-                            value: wallet.walletPk,
-                            child: Text(
-                                _label(
-                                  'Include scheduled from ${wallet.name} (${wallet.currency?.toUpperCase() ?? ''})',
-                                  'تضمين المعاملات المجدولة من ${wallet.name} (${wallet.currency?.toUpperCase() ?? ''})',
-                                ),
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                      ],
-                      onChanged: _busy
+                    final accounts = snapshot.data!;
+                    if (accounts.isEmpty) return const SizedBox.shrink();
+                    return OutlinedButton(
+                      onPressed: _busy
                           ? null
-                          : (value) {
-                              _scheduledWalletPk = value == '' ? null : value;
-                              _select(_selected!);
-                            },
+                          : () => _chooseAccounts(accounts, currency != null),
+                      child: Text(_label(
+                        'Scheduled accounts (${_scheduledAccounts.length})',
+                        'الحسابات المجدولة (${_scheduledAccounts.length})',
+                      )),
                     );
                   },
                 ),
@@ -362,7 +436,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                     );
                   },
                 ),
-              if (_selected != null && _scheduledWalletPk != null)
+              if (_selected != null && _scheduledAccounts.isNotEmpty)
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(_label('Project future recurring entries',
@@ -444,6 +518,13 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
               }
               if (!snapshot.hasData) return const LinearProgressIndicator();
               final points = snapshot.data!;
+              final lowest = points.reduce((a, b) =>
+                  (a['balance'] as num) <= (b['balance'] as num) ? a : b);
+              final shortfall = points.where((point) =>
+                  (point['balance'] as num) < 0).firstOrNull;
+              String balanceAt(Map<String, dynamic> point) =>
+                  '${(point['balance'] as num).toStringAsFixed(2)} ${currency ?? ''}'
+                      .trim();
               // Render a bounded preview while keeping the calculation horizon intact.
               const visibleCount = 100;
               return Column(
@@ -451,10 +532,21 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                   ListTile(
                     title: Text(_label('Projected ending balance',
                         'الرصيد المتوقع في نهاية الفترة')),
-                    trailing: Text(
-                        '${(points.last['balance'] as num).toStringAsFixed(2)} ${currency ?? ''}'
-                            .trim()),
+                    trailing: Text(balanceAt(points.last)),
                   ),
+                  ListTile(
+                    title: Text(_label('Lowest projected balance',
+                        'أقل رصيد متوقع')),
+                    subtitle: Text(dates.formatMediumDate(lowest['date'] as DateTime)),
+                    trailing: Text(balanceAt(lowest)),
+                  ),
+                  if (shortfall != null)
+                    ListTile(
+                      title: Text(_label('First projected shortfall',
+                          'أول عجز متوقع')),
+                      subtitle: Text(dates.formatMediumDate(shortfall['date'] as DateTime)),
+                      trailing: Text(balanceAt(shortfall)),
+                    ),
                   for (final point in points.take(visibleCount))
                     ListTile(
                       title: Text(point['name'] as String? ??
