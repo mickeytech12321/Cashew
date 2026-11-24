@@ -26,7 +26,7 @@ import 'package:budget/pages/activityPage.dart';
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 
-int schemaVersionGlobal = 46;
+int schemaVersionGlobal = 47;
 
 // To update and migrate the database, check the README
 
@@ -697,11 +697,40 @@ class FinanceDatabase extends _$FinanceDatabase {
   @override
   int get schemaVersion => schemaVersionGlobal;
 
+  // Local extension tables are deliberately outside the legacy generated schema.
+  // They are not included in cloud sync until a compatible protocol exists.
+  Future<void> createLocalFinancialSchema47() async {
+    await customStatement('''CREATE TABLE IF NOT EXISTS account_details (
+      wallet_fk TEXT PRIMARY KEY NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      account_type TEXT NOT NULL DEFAULT 'unspecified',
+      institution_name TEXT,
+      archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
+      exclude_from_net_worth INTEGER NOT NULL DEFAULT 0 CHECK (exclude_from_net_worth IN (0,1))
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS financial_actions (
+      action_pk TEXT PRIMARY KEY NOT NULL,
+      action_type TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      idempotency_key TEXT UNIQUE,
+      undone_at INTEGER
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS financial_action_changes (
+      change_pk TEXT PRIMARY KEY NOT NULL,
+      action_fk TEXT NOT NULL REFERENCES financial_actions(action_pk) ON DELETE CASCADE,
+      entity_type TEXT NOT NULL,
+      entity_pk TEXT NOT NULL,
+      before_json TEXT,
+      after_json TEXT
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS financial_action_changes_action_idx ON financial_action_changes(action_fk)');
+  }
+
   @override
   MigrationStrategy get migration {
     return MigrationStrategy(
       onCreate: (Migrator m) async {
         await m.createAll();
+        await createLocalFinancialSchema47();
       },
       // import 'package:drift_dev/api/migrations.dart';
       // beforeOpen: (details) async {
@@ -863,9 +892,9 @@ class FinanceDatabase extends _$FinanceDatabase {
           await migrator.alterTable(TableMigration(transactions));
           await migrator.deleteTable("Labels");
         }
-        await migrator.runMigrationSteps(
+        if (from < 46) await migrator.runMigrationSteps(
           from: from,
-          to: to,
+          to: to > 46 ? 46 : to,
           steps: migrationSteps(
             from33To34: (m, schema) async {
               await m.addColumn(schema.wallets, schema.wallets.decimals);
@@ -1166,6 +1195,9 @@ class FinanceDatabase extends _$FinanceDatabase {
             },
           ),
         );
+        if (from < 47 && to >= 47) {
+          await transaction(() async { await createLocalFinancialSchema47(); });
+        }
       },
       beforeOpen: (details) async {
         // This code exists because migration 42to43 may have not run correctly...
