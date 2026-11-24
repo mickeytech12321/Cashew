@@ -1,5 +1,6 @@
 import 'package:budget/struct/creditStatementCsv.dart' show BankStatementLine;
 import 'package:budget/struct/investmentLedger.dart';
+import 'package:budget/struct/investmentQuoteCsv.dart' show InvestmentQuote;
 import 'package:budget/struct/upcomingTransactionsFunctions.dart' show nextRecurringDate;
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
@@ -5107,7 +5108,45 @@ class FinanceDatabase extends _$FinanceDatabase {
     });
   }
 
-  Future<List<({DateTime date, double price})>> getInvestmentPriceHistory(String id) async {
+  Future<int> importInvestmentQuotes(String id, List<InvestmentQuote> quotes) {
+    final batch = List<InvestmentQuote>.of(quotes);
+    if (batch.isEmpty || batch.length > 365 ||
+        batch.any((quote) => !quote.price.isFinite || quote.price < 0)) {
+      throw ArgumentError('Invalid quote batch');
+    }
+    return transaction(() async {
+      if ((await customSelect(
+        'SELECT holding_pk FROM investment_holdings WHERE holding_pk = ?',
+        variables: [Variable<String>(id)],
+      ).getSingleOrNull()) == null) throw StateError('Holding not found');
+      var inserted = 0;
+      InvestmentQuote? latest;
+      for (final quote in batch) {
+        final changed = await customUpdate(
+          'INSERT INTO investment_quotes (holding_fk, quoted_at, price) '
+          'VALUES (?, ?, ?) ON CONFLICT(holding_fk, quoted_at) DO NOTHING',
+          variables: [Variable<String>(id),
+            Variable<int>(quote.date.millisecondsSinceEpoch),
+            Variable<double>(quote.price)],
+        );
+        inserted += changed;
+        if (changed > 0 && (latest == null || quote.date.isAfter(latest.date))) {
+          latest = quote;
+        }
+      }
+      if (latest != null) {
+        final timestamp = latest.date.millisecondsSinceEpoch;
+        await customStatement(
+          'UPDATE investment_holdings SET market_price = ?, market_price_at = ? '
+          'WHERE holding_pk = ? AND (market_price_at IS NULL OR market_price_at <= ?)',
+          [latest.price, timestamp, id, timestamp],
+        );
+      }
+      return inserted;
+    });
+  }
+
+  Future<List<InvestmentQuote>> getInvestmentPriceHistory(String id) async {
     final rows = await customSelect(
       'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
       'ORDER BY quoted_at DESC LIMIT 100',

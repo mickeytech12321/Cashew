@@ -1,3 +1,4 @@
+import 'package:budget/struct/investmentQuoteCsv.dart';
 import 'package:budget/database/platform/stagedNativeRestore.dart';
 import 'package:budget/struct/creditStatementCsv.dart';
 import 'package:budget/database/backupValidation.dart';
@@ -28,6 +29,24 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('investment quote imports skip retries and retain the latest price', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.createInvestmentHolding(id: 'fund', name: 'Fund', currency: 'egp');
+    await db.setInvestmentMarketPrice('fund', 100, DateTime(2026, 1, 20));
+    final quotes = parseInvestmentQuoteCsv(
+      'date,price\n2026-01-20,1\n2026-01-25,١٢٣٫٥\n2026-01-05,90',
+      DateTime(2026, 1, 25),
+    );
+    expect(await db.importInvestmentQuotes('fund', quotes), 2);
+    expect(await db.importInvestmentQuotes('fund', quotes), 0);
+    expect((await db.getInvestmentHoldings()).single.price, 123.5);
+    expect((await db.getInvestmentPriceHistory('fund')).map((q) => q.price),
+        [123.5, 100, 90]);
+    expect(() => parseInvestmentQuoteCsv(
+        'date,price\n2026-02-30,10', DateTime(2026, 3, 5)), throwsFormatException);
+  });
+
   test('staged restore leaves the live database intact until the next opening', () async {
     final folder = await Directory.systemTemp.createTemp('cashew-staged-test-');
     addTearDown(() => folder.delete(recursive: true));

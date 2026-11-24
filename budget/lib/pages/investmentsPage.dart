@@ -2,6 +2,7 @@ import 'package:budget/database/tables.dart' show NAME_LIMIT;
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
 import 'package:budget/struct/investmentLedger.dart';
+import 'package:budget/struct/investmentQuoteCsv.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:flutter/material.dart';
 
@@ -130,6 +131,85 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
   String _money(double value, String currency) =>
       '${value.toStringAsFixed(2)} ${currency.toUpperCase()}';
 
+  Future<void> _importQuotes(_Holding holding) async {
+    var input = '';
+    String? error;
+    List<InvestmentQuote>? preview;
+    final quotes = await showDialog<List<InvestmentQuote>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          scrollable: true,
+          title: Text(_label('Import market prices', 'استيراد أسعار السوق')),
+          content: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(holding.name),
+              if (preview == null)
+                TextField(
+                  minLines: 4,
+                  maxLines: 8,
+                  onChanged: (value) => input = value,
+                  decoration: InputDecoration(
+                    labelText: _label('Paste CSV in ${holding.currency.toUpperCase()}',
+                        'الصق CSV بعملة ${holding.currency.toUpperCase()}'),
+                    hintText: 'date,price\n2026-01-20,123.45',
+                    errorText: error,
+                  ),
+                )
+              else ...[
+                Text(_label('${preview!.length} quotes. Saved dates are skipped.',
+                    '${preview!.length} سعرًا. يتم تخطي التواريخ المحفوظة.')),
+                for (final quote in preview!.take(5))
+                  ListTile(
+                    title: Text(MaterialLocalizations.of(context)
+                        .formatMediumDate(quote.date)),
+                    trailing: Text(_money(quote.price, holding.currency)),
+                  ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(_label('Cancel', 'إلغاء')),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (preview != null) {
+                  Navigator.pop(context, preview);
+                  return;
+                }
+                try {
+                  final parsed = parseInvestmentQuoteCsv(input, DateTime.now());
+                  update(() => preview = parsed);
+                } on FormatException catch (failure) {
+                  final row = RegExp(r'([0-9]+)$').firstMatch(failure.message.toString())?.group(1);
+                  update(() => error = row == null
+                      ? _label('Check the CSV header and row count.',
+                          'راجع عنوان CSV وعدد الصفوف.')
+                      : _label('Check row $row.', 'راجع الصف $row.'));
+                }
+              },
+              child: Text(preview == null
+                  ? _label('Preview', 'معاينة')
+                  : _label('Import', 'استيراد')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (quotes == null || !mounted) return;
+    await _write(() async {
+      final added = await database.importInvestmentQuotes(holding.id, quotes);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_label(
+        'Imported $added of ${quotes.length} quotes.',
+        'تم استيراد $added من ${quotes.length} سعرًا.',
+      ))));
+    });
+  }
+
   Widget _detail(_Holding holding) => FutureBuilder<List<InvestmentTrade>>(
         key: ValueKey(holding.id),
         future: _trades,
@@ -228,6 +308,9 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
               TextButton(
                   onPressed: _busy ? null : () => _edit(_InvestmentMode.price),
                   child: Text(_label('Set market price', 'تحديد سعر السوق'))),
+              TextButton(
+                  onPressed: _busy ? null : () => _importQuotes(holding),
+                  child: Text(_label('Import prices', 'استيراد الأسعار'))),
             ]),
             FutureBuilder(
               key: ValueKey(('prices', holding.id)),
@@ -244,7 +327,7 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
                   return const SizedBox.shrink();
                 return ExpansionTile(
                   title: Text(
-                      _label('Manual price history', 'سجل الأسعار اليدوية')),
+                      _label('Price history', 'سجل الأسعار')),
                   children: [
                     for (final quote in prices)
                       ListTile(
