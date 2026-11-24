@@ -17,7 +17,7 @@
 - CODED: conflict-checked undo for journaled local transfers.
 - CODED: journal-backed redo for unchanged, previously undone local transfers.
 - PARTIAL: generalized duplicate detection beyond idempotency keys.
-- PARTIAL: recurring transaction correctness and due-day edge cases.
+- CODED: recurring calendar boundary logic plus regression tests for short months/leap years (tests not run yet).
 - CODED: existing transfer UI routes through the atomic journaled API.
 - TODO: integration tests after the batch.
 
@@ -25,12 +25,12 @@
 - CODED: local account metadata table/API: account type, institution, archive, exclude from net worth.
 - CODED: account-type UI integration in add/edit account screen (localization pass still required).
 - PARTIAL: debit/prepaid/e-wallet account types and reusable automation identifiers; richer card metadata still required.
-- TODO: bank-account/card linking without double-counting balances.
-- PARTIAL: credit-card details UI/model: limit, statement day, due day, minimum payment, APR, last four; statement engine, repayments/refunds/fees still required.
-- TODO: net-worth filtering in all reports.
+- PARTIAL: credit-card model supports linked bank wallet; repayment/linking UI and double-count prevention still required.
+- PARTIAL: credit-card details UI/model plus computed outstanding/available credit and next statement/due dates; statement engine, repayments/refunds/fees still required.
+- PARTIAL: homepage Net Worth now excludes archived / exclude-from-net-worth accounts; remaining reports still need the same policy.
 
 ## Phase 03 — Bank Automation / Egypt
-- PARTIAL: local import staging/review pipeline; Android permission/notification ingestion not wired yet.
+- PARTIAL: local import staging/review pipeline plus explicit approval-to-transaction flow with near-duplicate protection; Android permission/notification ingestion not wired yet.
 - PARTIAL: conservative Arabic/English parser added; provider-specific adapters not yet implemented.
 - CODED: deterministic fingerprint dedupe, confidence and review/approved/ignored/duplicate states.
 - TODO: Egyptian bank/e-wallet rules.
