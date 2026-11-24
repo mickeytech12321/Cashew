@@ -1,3 +1,5 @@
+import 'package:budget/pages/planningScenariosPage.dart';
+import 'package:budget/pages/wealthAssetsPage.dart';
 import 'package:budget/pages/financialAssistantPage.dart';
 import 'package:budget/pages/financialImportPage.dart';
 import 'package:budget/colors.dart';
@@ -521,6 +523,22 @@ class SettingsPageContent extends StatelessWidget {
               ? 'المساعد دون اتصال'
               : 'Offline assistant',
           icon: Icons.edit_note_outlined,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const WealthAssetsPage(),
+          title: Localizations.localeOf(context).languageCode == 'ar'
+              ? 'الأصول والالتزامات'
+              : 'Assets and liabilities',
+          icon: Icons.account_balance_outlined,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const PlanningScenariosPage(),
+          title: Localizations.localeOf(context).languageCode == 'ar'
+              ? 'سيناريوهات التدفق النقدي'
+              : 'Cash-flow scenarios',
+          icon: Icons.timeline_outlined,
         ),
 
         SettingsContainerOpenPage(

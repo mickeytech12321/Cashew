@@ -3927,7 +3927,17 @@ class FinanceDatabase extends _$FinanceDatabase {
         ..where((t) => t.pairedTransactionFk.isIn(ids) &
             t.transactionPk.isNotIn(ids))).get();
       if (externalLinks.isNotEmpty) throw StateError('Transfer has dependent entries');
-      await createDeleteLogs(DeleteLogType.Transaction, ids);
+      final deletedAt = DateTime.now();
+      await batch((batch) {
+        batch.insertAll(deleteLogs, [
+          for (final id in ids)
+            DeleteLogsCompanion.insert(
+              type: DeleteLogType.Transaction,
+              entryPk: id,
+              dateTimeModified: Value(deletedAt),
+            ),
+        ]);
+      });
       await (delete(transactions)..where((t) => t.transactionPk.isIn(ids))).go();
       await customStatement(
         'UPDATE financial_actions SET undone_at = ? WHERE action_pk = ?',
@@ -3979,6 +3989,14 @@ class FinanceDatabase extends _$FinanceDatabase {
         final saved = await createOrUpdateTransaction(
           leg, updateSharedEntry: false);
         if (saved == null) throw StateError('Transfer restore failed');
+        final persisted = await (select(transactions)
+              ..where((row) => row.transactionPk.equals(leg.transactionPk)))
+            .getSingle();
+        await customStatement(
+          'UPDATE financial_action_changes SET after_json = ? '
+          'WHERE action_fk = ? AND entity_pk = ?',
+          [jsonEncode(persisted.toJson()), actionPk, leg.transactionPk],
+        );
         await (delete(deleteLogs)
           ..where((d) => d.type.equalsValue(DeleteLogType.Transaction) &
               d.entryPk.equals(leg.transactionPk))).go();
@@ -4207,8 +4225,10 @@ class FinanceDatabase extends _$FinanceDatabase {
       throw ArgumentError.value(status, 'status');
     }
     await customStatement(
-      'UPDATE imported_financial_events SET status = ?, transaction_fk = ? WHERE event_pk = ?',
-      [status, transactionFk, eventPk],
+      'UPDATE imported_financial_events SET status = ?, transaction_fk = ?, '
+      "raw_text = CASE WHEN ? = 'review' THEN raw_text ELSE '' END "
+      'WHERE event_pk = ?',
+      [status, transactionFk, status, eventPk],
     );
   }
 
@@ -4279,6 +4299,7 @@ class FinanceDatabase extends _$FinanceDatabase {
                       ? (event['merchant'] as String).trim()
                       : 'Imported transaction'),
           amount: signedAmount,
+          note: '',
           categoryFk: categoryFk,
           walletFk: resolvedWallet,
           dateCreated: occurredAt,
@@ -4317,6 +4338,13 @@ class FinanceDatabase extends _$FinanceDatabase {
       [scenarioPk, name.trim(), baseDate.millisecondsSinceEpoch, horizonDays,
        startingBalance, now, now],
     );
+  }
+
+  Future<List<Map<String, dynamic>>> getPlanningScenarios() async {
+    final rows = await customSelect(
+      'SELECT * FROM planning_scenarios ORDER BY updated_at DESC, scenario_pk',
+    ).get();
+    return rows.map((row) => row.data).toList();
   }
 
   Future<void> savePlanningScenarioItem({
@@ -4360,7 +4388,11 @@ class FinanceDatabase extends _$FinanceDatabase {
       variables: [Variable<String>(scenarioPk)]).get();
     final base = DateTime.fromMillisecondsSinceEpoch(
         scenario.data['base_date'] as int);
-    final horizon = base.add(Duration(days: scenario.data['horizon_days'] as int));
+    DateTime advanceDays(DateTime date, int days) => DateTime(
+      date.year, date.month, date.day + days, date.hour, date.minute,
+      date.second, date.millisecond, date.microsecond,
+    );
+    final horizon = advanceDays(base, scenario.data['horizon_days'] as int);
     final startingBalance = (scenario.data['starting_balance'] as num).toDouble();
     var balance = startingBalance;
     final points = <Map<String, dynamic>>[];
@@ -4376,11 +4408,11 @@ class FinanceDatabase extends _$FinanceDatabase {
       }
       if (date.isBefore(base)) {
         if (recurrence == null) continue;
-        final interval = Duration(days: recurrence);
-        final elapsed = base.difference(date).inMilliseconds;
-        final intervals = (elapsed + interval.inMilliseconds - 1) ~/
-            interval.inMilliseconds;
-        date = date.add(interval * intervals);
+        final baseDay = DateTime.utc(base.year, base.month, base.day);
+        final itemDay = DateTime.utc(date.year, date.month, date.day);
+        final elapsed = baseDay.difference(itemDay).inDays;
+        date = advanceDays(date, ((elapsed + recurrence - 1) ~/ recurrence) * recurrence);
+        if (date.isBefore(base)) date = advanceDays(date, recurrence);
       }
       final signed = (data['amount'] as num).toDouble() *
           (data['direction'] == 'income' ? 1 : -1);
@@ -4392,7 +4424,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           'name': data['name'],
         });
         if (recurrence == null) break;
-        date = date.add(Duration(days: recurrence));
+        date = advanceDays(date, recurrence);
       }
     }
     points.sort((a, b) {
@@ -4422,7 +4454,9 @@ class FinanceDatabase extends _$FinanceDatabase {
     if (assetPk.trim().isEmpty || name.trim().isEmpty ||
         assetType.trim().isEmpty || currency.trim().isEmpty ||
         !quantity.isFinite || quantity < 0 || !unitValue.isFinite ||
-        unitValue < 0) throw ArgumentError('Invalid wealth asset');
+        unitValue < 0 || !(quantity * unitValue).isFinite) {
+      throw ArgumentError('Invalid wealth asset');
+    }
     await customStatement(
       'INSERT INTO wealth_assets '
       '(asset_pk,name,asset_type,currency,quantity,unit_value,liability,institution_name,notes,updated_at) '
@@ -4440,6 +4474,12 @@ class FinanceDatabase extends _$FinanceDatabase {
     final rows = await customSelect(
       'SELECT * FROM wealth_assets ORDER BY liability, name COLLATE NOCASE').get();
     return rows.map((r) => r.data).toList();
+  }
+
+  Future<void> deleteWealthAsset(String assetPk) async {
+    await customStatement(
+      'DELETE FROM wealth_assets WHERE asset_pk = ?', [assetPk],
+    );
   }
 
   Future<void> saveHouseholdMember({
