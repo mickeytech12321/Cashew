@@ -31,7 +31,8 @@ class FinancialMessageParser {
 
   static ParsedFinancialMessage parse(String raw) {
     final message = normalize(raw)
-        .replaceAll(RegExp(r'[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]'), '')
+        .replaceAll(
+            RegExp(r'[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     if (message.isEmpty) return const ParsedFinancialMessage(confidence: 0);
@@ -49,12 +50,12 @@ class FinancialMessageParser {
         balance == null ? message : message.substring(0, balance.start);
     final lower = text.toLowerCase();
     const currencyPattern =
-        r'(?:\b(?:egp|le)\b|l\.\s*e\.|e£|جنيه(?:ًا|ا)?|ج\.?\s*م\.?|\busd\b|دولار)';
+        r'(?:\b(?:egp|le|usd|eur|gbp|sar|aed|kwd|qar|bhd|omr|jod)\b|l\.\s*e\.|e£|جنيه(?:ًا|ا)?|ج\.?\s*م\.?|دولار)';
     const numberPattern =
-        r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,2})?';
+        r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,3})?';
     final amountPattern = RegExp(
       '($currencyPattern)\\s*($numberPattern)(?![0-9]|[.,][0-9])|'
-      '(?<![0-9.,+−-])($numberPattern)\\s*($currencyPattern)',
+      '(?<![0-9.,+−-])($numberPattern)(?![0-9]|[.,][0-9])\\s*($currencyPattern)',
       caseSensitive: false,
     );
     final matches = amountPattern.allMatches(text).toList();
@@ -66,7 +67,27 @@ class FinancialMessageParser {
       final token = (match[1] ?? match[4]!).toLowerCase();
       amount = double.tryParse(number.replaceAll(',', ''));
       if (amount != null && amount.isFinite && amount > 0) {
-        currency = token == 'usd' || token == 'دولار' ? 'usd' : 'egp';
+        currency = switch (token) {
+          'usd' || 'دولار' => 'usd',
+          'eur' ||
+          'gbp' ||
+          'sar' ||
+          'aed' ||
+          'kwd' ||
+          'qar' ||
+          'bhd' ||
+          'omr' ||
+          'jod' =>
+            token,
+          _ => 'egp',
+        };
+        final decimals = number.split('.').last.length;
+        if (number.contains('.') &&
+            decimals == 3 &&
+            !const {'kwd', 'bhd', 'omr', 'jod'}.contains(currency)) {
+          amount = null;
+          currency = null;
+        }
       } else {
         amount = null;
       }

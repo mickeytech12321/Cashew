@@ -3,6 +3,17 @@ import 'package:budget/struct/financialMessageParser.dart';
 
 void main() {
   group('FinancialMessageParser', () {
+    test('recognizes foreign card amounts and refuses ambiguous currencies',
+        () {
+      final euro = FinancialMessageParser.parse('Purchase EUR 25.70 at Shop');
+      expect((euro.amount, euro.currency, euro.direction),
+          (25.70, 'eur', 'debit'));
+      final dinar = FinancialMessageParser.parse('تم خصم ١٢٫٣٤٥ KWD');
+      expect((dinar.amount, dinar.currency), (12.345, 'kwd'));
+      expect(FinancialMessageParser.parse('Paid EGP 12.345').amount, isNull);
+      expect(FinancialMessageParser.parse('Purchase AED 25 or EGP 300').amount,
+          isNull);
+    });
     test('parses English EGP debit', () {
       final p = FinancialMessageParser.parse(
         'Purchase EGP 1,250.50 at Carrefour card ending 1234',
@@ -87,7 +98,8 @@ void main() {
       final parsed = FinancialMessageParser.parse(
         'Purchase L.E. 650.50 at Shop card ending 9932 avail. balance LE 900',
       );
-      expect((parsed.amount, parsed.currency, parsed.direction, parsed.lastFour),
+      expect(
+          (parsed.amount, parsed.currency, parsed.direction, parsed.lastFour),
           (650.50, 'egp', 'debit', '9932'));
     });
     test('reads wallet alerts with bidi marks and Eastern Arabic digits', () {
@@ -96,8 +108,7 @@ void main() {
       );
       expect((parsed.amount, parsed.currency, parsed.direction),
           (250.50, 'egp', 'credit'));
-      final sent =
-          FinancialMessageParser.parse('تم تحويل ٢٥٠ جنيه لرقم آخر');
+      final sent = FinancialMessageParser.parse('تم تحويل ٢٥٠ جنيه لرقم آخر');
       expect((sent.amount, sent.direction), (250.0, 'debit'));
     });
     test('rejects Arabic activation codes and unsuccessful transfers', () {
