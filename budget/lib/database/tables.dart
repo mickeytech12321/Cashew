@@ -3665,6 +3665,68 @@ class FinanceDatabase extends _$FinanceDatabase {
   // These are also not logged into the Delete log!
   // ************************************************************
 
+  // Local-only atomic transfer writer. Callers must provide stable unique IDs
+  // and explicit amounts in each wallet's currency.
+  Future<bool> saveAtomicLocalTransfer(
+    Transaction outgoing,
+    Transaction incoming, {
+    required String idempotencyKey,
+  }) async {
+    if (idempotencyKey.trim().isEmpty ||
+        outgoing.transactionPk.isEmpty || incoming.transactionPk.isEmpty ||
+        outgoing.transactionPk == incoming.transactionPk ||
+        outgoing.walletFk == incoming.walletFk ||
+        outgoing.categoryFk != '0' || incoming.categoryFk != '0' ||
+        outgoing.income || !incoming.income ||
+        !outgoing.paid || !incoming.paid ||
+        outgoing.type != null || incoming.type != null ||
+        outgoing.sharedReferenceBudgetPk != null ||
+        incoming.sharedReferenceBudgetPk != null ||
+        outgoing.sharedKey != null || incoming.sharedKey != null ||
+        !outgoing.amount.isFinite || !incoming.amount.isFinite ||
+        outgoing.amount >= 0 || incoming.amount <= 0 ||
+        outgoing.amount.abs() > 999999999999 ||
+        incoming.amount > 999999999999) {
+      throw ArgumentError('Invalid local transfer');
+    }
+    return transaction(() async {
+      final previous = await customSelect(
+        'SELECT action_pk FROM financial_actions WHERE idempotency_key = ?',
+        variables: [Variable<String>(idempotencyKey)],
+      ).getSingleOrNull();
+      if (previous != null) return false;
+      final source = await getWalletInstanceOrNull(outgoing.walletFk);
+      final target = await getWalletInstanceOrNull(incoming.walletFk);
+      if (source == null || target == null) throw StateError('Missing wallet');
+      if (source.currency == target.currency &&
+          (outgoing.amount.abs() - incoming.amount).abs() > 0.00000001) {
+        throw ArgumentError('Same-currency transfer amounts differ');
+      }
+      final existing = await (select(transactions)
+        ..where((t) => t.transactionPk.isIn(
+          [outgoing.transactionPk, incoming.transactionPk]))).get();
+      if (existing.isNotEmpty) throw StateError('Transfer ID already exists');
+      final debit = outgoing.copyWith(
+        pairedTransactionFk: Value(incoming.transactionPk));
+      final credit = incoming.copyWith(
+        pairedTransactionFk: Value(outgoing.transactionPk));
+      final first = await createOrUpdateTransaction(debit, updateSharedEntry: false);
+      final second = await createOrUpdateTransaction(credit, updateSharedEntry: false);
+      if (first == null || second == null) throw StateError('Transfer write failed');
+      await customStatement(
+        'INSERT INTO financial_actions (action_pk, action_type, created_at, idempotency_key) VALUES (?, ?, ?, ?)',
+        [outgoing.transactionPk, 'transfer', DateTime.now().millisecondsSinceEpoch, idempotencyKey],
+      );
+      for (final leg in [debit, credit]) {
+        await customStatement(
+          'INSERT INTO financial_action_changes (change_pk, action_fk, entity_type, entity_pk, after_json) VALUES (?, ?, ?, ?, ?)',
+          [leg.transactionPk, outgoing.transactionPk, 'transaction', leg.transactionPk, jsonEncode(leg.toJson())],
+        );
+      }
+      return true;
+    });
+  }
+
   Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
     // We want InsertMode.insertOrReplace because
     // if null values are inserted we want to overwrite it with a null
