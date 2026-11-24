@@ -1301,6 +1301,7 @@ class TransferBalancePopup extends StatefulWidget {
     required this.allowEditWallet,
     this.showAllEditDetails = false,
     this.initialAmount,
+    this.initialAmountWallet,
     this.initialTarget,
     this.initialDate,
     this.initialTitle,
@@ -1312,6 +1313,7 @@ class TransferBalancePopup extends StatefulWidget {
   final bool allowEditWallet;
   final bool showAllEditDetails;
   final double? initialAmount;
+  final TransactionWallet? initialAmountWallet;
   final TransactionWallet? initialTarget;
   final DateTime? initialDate;
   final String? initialTitle;
@@ -1334,14 +1336,14 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
       : null;
   late DateTime? selectedDateTime = widget.initialDate ?? null;
   late String selectedTitle = widget.initialTitle ?? "";
-  late TransactionWallet? walletForCurrency =
+  late TransactionWallet? walletForCurrency = widget.initialAmountWallet ?? (
       Provider.of<AllWallets>(context, listen: false)
                   .indexedByPk[appStateSettings["selectedWalletPk"]]
                   ?.currency ==
               widget.wallet?.currency
           ? widget.wallet
           : Provider.of<AllWallets>(context, listen: false)
-              .indexedByPk[appStateSettings["selectedWalletPk"]];
+              .indexedByPk[appStateSettings["selectedWalletPk"]]);
 
   // double transferFee = 0;
 

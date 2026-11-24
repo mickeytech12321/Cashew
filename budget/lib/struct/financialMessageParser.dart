@@ -30,14 +30,21 @@ class FinancialMessageParser {
   }
 
   static ParsedFinancialMessage parse(String raw) {
-    final text = normalize(raw).replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (text.isEmpty) return const ParsedFinancialMessage(confidence: 0);
-    final lower = text.toLowerCase();
+    final message = normalize(raw).replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (message.isEmpty) return const ParsedFinancialMessage(confidence: 0);
     if (RegExp(
       r'\b(?:otp|declined|unsuccessful|failed|verification code|one[- ]time password)\b|رمز التحقق|رمز التأكيد|تم رفض|لم تتم',
-    ).hasMatch(lower)) {
+    ).hasMatch(message.toLowerCase())) {
       return const ParsedFinancialMessage(confidence: 0);
     }
+    // A separately labelled trailing balance is not a transaction amount.
+    final balance = RegExp(
+      r'(?:^|[.;،|]\s*)(?:(?:new|available|remaining|current)\s+balance\b|(?:الرصيد|رصيدك)\s+(?:المتاح|الحالي|الجديد|المتبقي))',
+      caseSensitive: false,
+    ).firstMatch(message);
+    final text =
+        balance == null ? message : message.substring(0, balance.start);
+    final lower = text.toLowerCase();
     const currencyPattern =
         r'(?:\begp\b|جنيه(?:ًا|ا)?|ج\.?\s*م\.?|\busd\b|دولار)';
     const numberPattern =

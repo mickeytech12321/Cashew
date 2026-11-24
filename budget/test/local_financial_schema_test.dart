@@ -19,6 +19,99 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('wealth snapshots require known rates and preserve capture values',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.saveWealthAsset(
+        assetPk: 'cash',
+        name: 'Cash',
+        assetType: 'Cash',
+        currency: 'USD',
+        quantity: 2,
+        unitValue: 10);
+    await db.saveWealthAsset(
+        assetPk: 'debt',
+        name: 'Debt',
+        assetType: 'Debt',
+        currency: 'EGP',
+        unitValue: 50,
+        liability: true);
+    final settings = <String, dynamic>{};
+    final date = DateTime(2026, 11, 24);
+    Future<bool> capture() => db.captureWealthSnapshot(
+        snapshotPk: 'snapshot',
+        capturedAt: date,
+        currency: 'EGP',
+        rateSettings: settings);
+    expect(
+        (await db.getWealthValuation('egp', rateSettings: settings))
+            .missingCurrencies,
+        ['usd']);
+    expect(await capture(), isFalse);
+    expect(await db.getWealthSnapshotHistory(), isEmpty);
+    settings['cachedCurrencyExchange'] = {'egp': 50};
+    expect(await capture(), isTrue);
+    settings['cachedCurrencyExchange'] = {'egp': 60};
+    expect(await capture(), isTrue);
+    expect((await db.getWealthValuation('egp', rateSettings: settings)).total,
+        1150);
+    final history = await db.getWealthSnapshotHistory();
+    expect(history.single.total, 950);
+    expect(history.single.currency, 'egp');
+    expect(history.single.capturedAt, date);
+  });
+
+  test(
+      'scenario previews only eligible scheduled entries from the selected account',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final date = DateTime(2026, 11, 24);
+    await db.savePlanningScenario(
+        scenarioPk: 'plan',
+        name: 'Plan',
+        baseDate: date,
+        horizonDays: 7,
+        startingBalance: 100);
+    Future<void> entry(
+      String id,
+      DateTime due, {
+      String wallet = 'account',
+      bool paid = false,
+      bool skip = false,
+      TransactionSpecialType? type = TransactionSpecialType.upcoming,
+    }) async {
+      await db.into(db.transactions).insert(Transaction(
+            transactionPk: id,
+            name: id,
+            amount: -20,
+            note: '',
+            categoryFk: 'category',
+            walletFk: wallet,
+            dateCreated: due,
+            income: false,
+            paid: paid,
+            skipPaid: skip,
+            type: type,
+          ));
+    }
+
+    await entry('start', date);
+    await entry('end', date.add(const Duration(days: 7)),
+        type: TransactionSpecialType.subscription);
+    await entry('later', date.add(const Duration(days: 8)));
+    await entry('paid', date, paid: true);
+    await entry('skipped', date, skip: true);
+    await entry('ordinary', date, type: null);
+    await entry('other-wallet', date, wallet: 'other');
+    expect((await db.calculatePlanningScenario('plan')).single['balance'], 100);
+    final forecast = await db.calculatePlanningScenario('plan',
+        scheduledWalletPk: 'account');
+    expect(forecast.map((row) => row['balance']), [100, 80, 60]);
+    expect(forecast.skip(1).every((row) => row['scheduled'] == true), isTrue);
+  });
+
   test('scenario edits recompute forecasts and deletions stay scoped',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());

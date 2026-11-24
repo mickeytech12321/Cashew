@@ -13,6 +13,9 @@ class WealthAssetsPage extends StatefulWidget {
 class _WealthAssetsPageState extends State<WealthAssetsPage> {
   late var _assets = database.getWealthAssets();
   bool _busy = false;
+  String _valuationCurrency = 'egp';
+  late var _valuation = database.getWealthValuation(_valuationCurrency);
+  late var _history = database.getWealthSnapshotHistory();
 
   String _label(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
@@ -21,7 +24,12 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
     setState(() => _busy = true);
     try {
       await action();
-      if (mounted) setState(() => _assets = database.getWealthAssets());
+      if (mounted)
+        setState(() {
+          _assets = database.getWealthAssets();
+          _valuation = database.getWealthValuation(_valuationCurrency);
+          _history = database.getWealthSnapshotHistory();
+        });
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -78,6 +86,60 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
     }
   }
 
+  Future<void> _captureSnapshot() => _write(() async {
+        final captured = await database.captureWealthSnapshot(
+          snapshotPk: uuid.v4(),
+          capturedAt: DateTime.now(),
+          currency: _valuationCurrency,
+        );
+        if (!captured && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_label(
+                'A complete valuation is required.', 'يلزم توفر تقييم كامل.')),
+          ));
+        }
+      });
+
+  Widget _valuationPanel(Set<String> currencies) {
+    final options = {'egp', 'usd', _valuationCurrency, ...currencies}.toList()
+      ..sort();
+    return FutureBuilder(
+      key: ValueKey(_valuationCurrency),
+      future: _valuation,
+      builder: (context, snapshot) {
+        final value = snapshot.data;
+        return ListTile(
+          title: Text(
+              _label('Consolidated recorded value', 'إجمالي القيمة المسجّلة')),
+          subtitle: snapshot.connectionState != ConnectionState.done
+              ? const LinearProgressIndicator()
+              : Text(value?.total != null
+                  ? _amount(value!.total!, _valuationCurrency)
+                  : value != null && value.missingCurrencies.isNotEmpty
+                      ? '${_label('Missing exchange rates', 'أسعار الصرف غير المتاحة')} '
+                          '${value.missingCurrencies.join(', ').toUpperCase()}'
+                      : _label('Valuation unavailable', 'التقييم غير متاح')),
+          trailing: DropdownButton<String>(
+            value: _valuationCurrency,
+            items: [
+              for (final code in options)
+                DropdownMenuItem(value: code, child: Text(code.toUpperCase())),
+            ],
+            onChanged: _busy
+                ? null
+                : (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _valuationCurrency = value;
+                      _valuation = database.getWealthValuation(value);
+                    });
+                  },
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) => PageFramework(
         title: _label('Assets and liabilities', 'الأصول والالتزامات'),
@@ -115,6 +177,15 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
                     ListTile(
                         title: Text(
                             _label('No entries yet.', 'لا توجد بنود بعد.'))),
+                  if (assets.isNotEmpty)
+                    _valuationPanel(
+                        balances.keys.map((key) => key.toLowerCase()).toSet()),
+                  if (assets.isNotEmpty)
+                    OutlinedButton(
+                      onPressed: _busy ? null : _captureSnapshot,
+                      child: Text(_label(
+                          'Save valuation snapshot', 'حفظ لقطة للتقييم')),
+                    ),
                   for (final balance in balances.entries)
                     ListTile(
                       title: Text(
@@ -135,6 +206,33 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
                         onPressed: _busy ? null : () => _delete(asset),
                         icon: const Icon(Icons.delete_outline),
                       ),
+                    ),
+                ],
+              );
+            },
+          ),
+          FutureBuilder(
+            future: _history,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return ListTile(
+                    title: Text(_label('Could not load snapshot history.',
+                        'تعذّر تحميل سجل التقييمات.')));
+              }
+              final history = snapshot.data;
+              if (history == null || history.isEmpty)
+                return const SizedBox.shrink();
+              final dates = MaterialLocalizations.of(context);
+              return Column(
+                children: [
+                  ListTile(
+                      title:
+                          Text(_label('Valuation history', 'سجل التقييمات'))),
+                  for (final entry in history)
+                    ListTile(
+                      title: Text(dates.formatMediumDate(entry.capturedAt)),
+                      trailing:
+                          Text(_amount(entry.total, entry.currency ?? '')),
                     ),
                 ],
               );

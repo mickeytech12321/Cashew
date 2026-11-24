@@ -34,7 +34,7 @@ void main() {
       'leaves ambiguous amounts and verification messages for manual entry',
       () {
         expect(
-          FinancialMessageParser.parse('Purchase EGP 300. New balance EGP 900.')
+          FinancialMessageParser.parse('Purchase EGP 300 plus a fee of EGP 5.')
               .amount,
           isNull,
         );
@@ -50,6 +50,21 @@ void main() {
         );
       },
     );
+    test('excludes explicitly labelled trailing balances', () {
+      final english = FinancialMessageParser.parse(
+        'Purchase EGP 300 at Shop. Available balance EGP 900.',
+      );
+      expect(english.amount, 300);
+      expect(english.direction, 'debit');
+      expect(english.merchant, 'Shop');
+      final arabic = FinancialMessageParser.parse(
+        'تم خصم ٢٥٠ جنيه، الرصيد المتاح ٤٠٠٠ جنيه',
+      );
+      expect(arabic.amount, 250);
+      expect(arabic.direction, 'debit');
+      expect(FinancialMessageParser.parse('Available balance EGP 900.').amount,
+          isNull);
+    });
     test('unknown text stays low confidence', () {
       final p = FinancialMessageParser.parse('Welcome to our service');
       expect(p.amount, isNull);

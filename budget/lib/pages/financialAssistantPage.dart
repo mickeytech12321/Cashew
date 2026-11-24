@@ -1,9 +1,11 @@
 import 'package:budget/database/tables.dart';
 import 'package:budget/pages/addTransactionPage.dart';
+import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialAssistant.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/openPopup.dart';
+import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:flutter/material.dart';
 
 class FinancialAssistantPage extends StatefulWidget {
@@ -123,8 +125,11 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
 
   Widget _draft(FinancialAssistantIntent intent) {
     final income = intent.type == FinancialAssistantIntentType.addIncome;
+    final transfer = intent.type == FinancialAssistantIntentType.transfer;
     final amount = intent.amount;
-    if ((!income && intent.type != FinancialAssistantIntentType.addExpense) ||
+    if ((!income &&
+            !transfer &&
+            intent.type != FinancialAssistantIntentType.addExpense) ||
         amount == null ||
         !amount.isFinite ||
         amount <= 0 ||
@@ -132,8 +137,8 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
         intent.currency == null) {
       return Text(
         _label(
-          'Enter an income or expense with an amount and currency.',
-          'أدخل دخلاً أو مصروفًا مع المبلغ والعملة.',
+          'Enter an income, expense, or transfer with an amount and currency.',
+          'أدخل دخلاً أو مصروفًا أو تحويلاً مع المبلغ والعملة.',
         ),
       );
     }
@@ -162,11 +167,13 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '${income ? '+' : '−'}$amount ${intent.currency!.toUpperCase()}',
+              '${transfer ? '' : income ? '+' : '−'}$amount ${intent.currency!.toUpperCase()}',
             ),
             DropdownButton<TransactionWallet>(
               isExpanded: true,
-              hint: Text(_label('Account', 'الحساب')),
+              hint: Text(transfer
+                  ? _label('Source account', 'الحساب المصدر')
+                  : _label('Account', 'الحساب')),
               value: _wallet,
               items: [
                 for (final wallet in wallets)
@@ -177,18 +184,32 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
             OutlinedButton(
               onPressed: _wallet == null
                   ? null
-                  : () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => AddTransactionPage(
-                            selectedIncome: income,
-                            selectedAmount: income ? amount : -amount,
-                            selectedWallet: _wallet,
-                            startInitialAddTransactionSequence: false,
-                            routesToPopAfterDelete: RoutesToPopAfterDelete.None,
-                          ),
+                  : () {
+                      final wallet = _wallet!;
+                      if (transfer) {
+                        openBottomSheet(
+                            context,
+                            TransferBalancePopup(
+                              wallet: wallet,
+                              allowEditWallet: false,
+                              initialAmount: amount,
+                              initialAmountWallet: wallet,
+                            ));
+                        return;
+                      }
+                      Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder: (_) => AddTransactionPage(
+                          selectedIncome: income,
+                          selectedAmount: income ? amount : -amount,
+                          selectedWallet: wallet,
+                          startInitialAddTransactionSequence: false,
+                          routesToPopAfterDelete: RoutesToPopAfterDelete.None,
                         ),
-                      ),
-              child: Text(_label('Review transaction', 'مراجعة المعاملة')),
+                      ));
+                    },
+              child: Text(transfer
+                  ? _label('Review transfer', 'مراجعة التحويل')
+                  : _label('Review transaction', 'مراجعة المعاملة')),
             ),
           ],
         );

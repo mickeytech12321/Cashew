@@ -31,20 +31,20 @@
 
 ## Phase 03 — Bank Automation / Egypt
 - PARTIAL: Settings → Bank message import supports paste, review, account/category selection, ignore, and explicit approval in Arabic and English. Approval checks currency and will not overwrite existing transaction IDs or copy raw messages to transaction notes. Android notification ingestion, provider routing and device tests remain.
-- PARTIAL: standalone Dart parser checks pass for Arabic-Indic digits, EGP, ambiguous amounts and rejected/verification messages. Provider-specific adapters, additional currencies, and messages that contain both transaction and balance amounts remain.
+- PARTIAL: standalone Dart parser checks pass for Arabic-Indic digits, EGP, ambiguous amounts and rejected/verification messages. Explicitly labelled trailing balances are excluded from amount selection. Provider-specific adapters, additional currencies and other multi-amount templates remain.
 - CODED: deterministic fingerprint dedupe, confidence and review/approved/ignored/duplicate states.
 - TODO: Egyptian bank/e-wallet rules.
 
 ## Phase 04 — Financial Planning
-- PARTIAL: offline scenario calculations skip occurrences before the forecast base date and order simultaneous entries consistently. Settings → Cash-flow scenarios can create and reopen single-currency scenarios, add one-off or fixed-day recurring events and show a chronological running balance. Saved scenarios and entries can be edited or deleted with confirmation. Direct recurring/bill integration remains.
+- PARTIAL: offline scenario calculations skip occurrences before the forecast base date and order simultaneous entries consistently. Settings → Cash-flow scenarios can create and reopen single-currency scenarios, add one-off or fixed-day recurring events and show a chronological running balance. Saved scenarios and entries can be edited or deleted with confirmation. Forecasts can include already-scheduled unpaid bills and recurring entries for a chosen account. Generated future recurrences, currency conversion inside scenarios, and goal integration remain.
 - TODO: bills/subscriptions planning UI and goals improvements.
 
 ## Phase 05 — Wealth
-- PARTIAL: Settings → Assets and liabilities supports local entry creation, editing, deletion, quantity × unit value and a net recorded value per currency. Rate-based consolidated valuation, price history, snapshots, investment lots and allocation analytics remain.
+- PARTIAL: Settings → Assets and liabilities supports local entry creation, editing, deletion, quantity × unit value and a net recorded value per currency. Consolidated valuation uses known rates only, and offline snapshots preserve the value and currency at capture time. Price history, investment lots and allocation analytics remain.
 
 ## Phase 06 — AI & Voice
 - PARTIAL: deterministic Arabic/English local intent parser plus optional provider abstraction; write intents are marked confirmation-required.
-- PARTIAL: Settings → Offline assistant prepares Arabic/English income and expense drafts in the existing transaction editor after account selection. The user saves from that editor. Balance and current-month paid expense queries show separate account totals and exclude internal transfers from expenses. Transfer drafts, optional provider implementation, and speech-to-text remain.
+- PARTIAL: Settings → Offline assistant prepares Arabic/English income and expense drafts in the existing transaction editor after account selection. The user saves from that editor. Balance and current-month paid expense queries show separate account totals and exclude internal transfers from expenses. Transfer drafts open the existing review flow with the selected matching-currency source and amount. Optional provider implementation and speech-to-text remain.
 - Constraint: no mandatory AI subscription.
 
 ## Phase 07 — Household & Sync

@@ -4429,7 +4429,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Future<List<Map<String, dynamic>>> calculatePlanningScenario(
-      String scenarioPk) async {
+      String scenarioPk, {String? scheduledWalletPk}) async {
     final scenario = await customSelect(
       'SELECT * FROM planning_scenarios WHERE scenario_pk = ?',
       variables: [Variable<String>(scenarioPk)]).getSingleOrNull();
@@ -4479,10 +4479,37 @@ class FinanceDatabase extends _$FinanceDatabase {
         date = advanceDays(date, recurrence);
       }
     }
+    if (scheduledWalletPk != null) {
+      final scheduled = await (select(transactions)
+            ..where((row) =>
+                row.walletFk.equals(scheduledWalletPk) &
+                row.paid.equals(false) &
+                row.skipPaid.equals(false) &
+                row.dateCreated.isBetweenValues(base, horizon) &
+                row.type.isInValues([
+                  TransactionSpecialType.upcoming,
+                  TransactionSpecialType.subscription,
+                  TransactionSpecialType.repetitive,
+                ])))
+          .get();
+      for (final entry in scheduled) {
+        points.add({
+          'date': entry.dateCreated,
+          'item_pk': entry.transactionPk,
+          'name': entry.name,
+          'amount': entry.amount,
+          'scheduled': true,
+        });
+      }
+    }
     points.sort((a, b) {
       final byDate = (a['date'] as DateTime).compareTo(b['date'] as DateTime);
       if (byDate != 0) return byDate;
-      return (a['item_pk'] as String).compareTo(b['item_pk'] as String);
+      final bySource = (a['scheduled'] == true ? 1 : 0)
+          .compareTo(b['scheduled'] == true ? 1 : 0);
+      return bySource != 0
+          ? bySource
+          : (a['item_pk'] as String).compareTo(b['item_pk'] as String);
     });
     for (final point in points) {
       balance += point['amount'] as double;
@@ -4526,6 +4553,82 @@ class FinanceDatabase extends _$FinanceDatabase {
     final rows = await customSelect(
       'SELECT * FROM wealth_assets ORDER BY liability, name COLLATE NOCASE').get();
     return rows.map((r) => r.data).toList();
+  }
+
+  Future<({double? total, List<String> missingCurrencies})> getWealthValuation(
+    String currency, {
+    Map<String, dynamic>? rateSettings,
+  }) async {
+    final balances = await customSelect(
+      'SELECT LOWER(TRIM(currency)) AS currency, '
+      'SUM(quantity * unit_value * CASE WHEN liability = 1 THEN -1 ELSE 1 END) '
+      'AS total FROM wealth_assets GROUP BY LOWER(TRIM(currency))',
+    ).get();
+    var total = 0.0;
+    final missing = <String>[];
+    for (final row in balances) {
+      final source = row.read<String>('currency');
+      final ratio = strictCurrencyRatio(source, currency,
+          appStateSettingsPassed: rateSettings);
+      if (ratio == null) {
+        missing.add(source);
+      } else {
+        total += row.read<double>('total') * ratio;
+      }
+    }
+    missing.sort();
+    return (
+      total: balances.isNotEmpty && missing.isEmpty && total.isFinite ? total : null,
+      missingCurrencies: missing,
+    );
+  }
+
+  Future<bool> captureWealthSnapshot({
+    required String snapshotPk,
+    required DateTime capturedAt,
+    required String currency,
+    Map<String, dynamic>? rateSettings,
+  }) async {
+    final code = currency.trim().toLowerCase();
+    if (!RegExp(r'^[a-z]{3}$').hasMatch(code) || snapshotPk.trim().isEmpty) {
+      throw ArgumentError('Invalid snapshot identity or currency');
+    }
+    return transaction(() async {
+      final value = await getWealthValuation(code, rateSettings: rateSettings);
+      if (value.total == null) return false;
+      await customStatement(
+        'INSERT INTO wealth_snapshots '
+        '(snapshot_pk, captured_at, net_worth_primary, breakdown_json) '
+        'VALUES (?, ?, ?, ?) ON CONFLICT(snapshot_pk) DO NOTHING',
+        [snapshotPk, capturedAt.millisecondsSinceEpoch, value.total,
+         jsonEncode({'currency': code})],
+      );
+      return true;
+    });
+  }
+
+  Future<List<({DateTime capturedAt, double total, String? currency})>>
+      getWealthSnapshotHistory() async {
+    final rows = await customSelect(
+      'SELECT captured_at, net_worth_primary, breakdown_json '
+      'FROM wealth_snapshots ORDER BY captured_at DESC, snapshot_pk LIMIT 100',
+    ).get();
+    return rows.map((row) {
+      String? currency;
+      try {
+        final details = jsonDecode(row.read<String>('breakdown_json'));
+        if (details is Map && details['currency'] is String) {
+          currency = details['currency'] as String;
+        }
+      } on FormatException {
+        // Older snapshots can still be displayed without a currency code.
+      }
+      return (
+        capturedAt: DateTime.fromMillisecondsSinceEpoch(row.read<int>('captured_at')),
+        total: row.read<double>('net_worth_primary'),
+        currency: currency,
+      );
+    }).toList();
   }
 
   Future<void> deleteWealthAsset(String assetPk) async {

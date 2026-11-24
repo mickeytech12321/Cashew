@@ -1,3 +1,4 @@
+import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
@@ -16,6 +17,8 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   Future<List<Map<String, dynamic>>>? _items;
   Map<String, dynamic>? _selected;
   bool _busy = false;
+  late final _wallets = database.getAllWallets();
+  String? _scheduledWalletPk;
 
   String _label(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
@@ -41,9 +44,13 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
 
   void _select(Map<String, dynamic> scenario) {
     setState(() {
+      if (_selected?['scenario_pk'] != scenario['scenario_pk']) {
+        _scheduledWalletPk = null;
+      }
       _selected = scenario;
       final id = scenario['scenario_pk'] as String;
-      _forecast = database.calculatePlanningScenario(id);
+      _forecast = database.calculatePlanningScenario(id,
+          scheduledWalletPk: _scheduledWalletPk);
       _items = database.getPlanningScenarioItems(id);
     });
   }
@@ -219,6 +226,45 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                   'استخدم عملة واحدة لجميع المبالغ في هذا السيناريو.',
                 )),
               if (_selected != null)
+                FutureBuilder<List<TransactionWallet>>(
+                  future: _wallets,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Text(_label(
+                          'Could not load accounts.', 'تعذّر تحميل الحسابات.'));
+                    }
+                    if (!snapshot.hasData)
+                      return const LinearProgressIndicator();
+                    return DropdownButton<String>(
+                      isExpanded: true,
+                      value: _scheduledWalletPk ?? '',
+                      items: [
+                        DropdownMenuItem(
+                          value: '',
+                          child: Text(_label('Exclude scheduled transactions',
+                              'استبعاد المعاملات المجدولة')),
+                        ),
+                        for (final wallet in snapshot.data!)
+                          DropdownMenuItem(
+                            value: wallet.walletPk,
+                            child: Text(
+                                _label(
+                                  'Include scheduled from ${wallet.name} (${wallet.currency?.toUpperCase() ?? ''})',
+                                  'تضمين المعاملات المجدولة من ${wallet.name} (${wallet.currency?.toUpperCase() ?? ''})',
+                                ),
+                                overflow: TextOverflow.ellipsis),
+                          ),
+                      ],
+                      onChanged: _busy
+                          ? null
+                          : (value) {
+                              _scheduledWalletPk = value == '' ? null : value;
+                              _select(_selected!);
+                            },
+                    );
+                  },
+                ),
+              if (_selected != null)
                 Wrap(children: [
                   TextButton(
                     onPressed: _busy ? null : () => _editScenario(_selected),
@@ -291,8 +337,11 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                     ListTile(
                       title: Text(point['name'] as String? ??
                           _label('Starting balance', 'الرصيد الافتتاحي')),
-                      subtitle: Text(
-                          dates.formatMediumDate(point['date'] as DateTime)),
+                      subtitle: Text([
+                        dates.formatMediumDate(point['date'] as DateTime),
+                        if (point['scheduled'] == true)
+                          _label('Scheduled', 'مجدولة'),
+                      ].join(' · ')),
                       trailing:
                           Text((point['balance'] as num).toStringAsFixed(2)),
                     ),
