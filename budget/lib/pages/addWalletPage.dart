@@ -65,6 +65,10 @@ class _AddWalletPageState extends State<AddWalletPage> {
   String selectedCurrency =
       getDevicesDefaultCurrencyCode(); //if no currency selected use empty string
   int selectedDecimals = 2;
+  String selectedAccountType = 'unspecified';
+  String? institutionName;
+  bool accountArchived = false;
+  bool excludeFromNetWorth = false;
   FocusNode _titleFocusNode = FocusNode();
 
   void setSelectedTitle(String title) {
@@ -102,6 +106,19 @@ class _AddWalletPageState extends State<AddWalletPage> {
         await correctWalletBalance(context, initialBalance, initialBalance,
             walletJustAdded, DateTime.now(), "");
       }
+    }
+
+    final walletSaved = rowId != null
+        ? await database.getWalletFromRowId(rowId)
+        : widget.wallet;
+    if (walletSaved != null) {
+      await database.saveAccountDetails(
+        walletPk: walletSaved.walletPk,
+        accountType: selectedAccountType,
+        institutionName: institutionName,
+        archived: accountArchived,
+        excludeFromNetWorth: excludeFromNetWorth,
+      );
     }
 
     if (popContext) {
@@ -170,6 +187,19 @@ class _AddWalletPageState extends State<AddWalletPage> {
     populateCurrencies();
     Future.delayed(Duration.zero, () async {
       if (widget.runWhenOpen != null) widget.runWhenOpen!();
+      if (widget.wallet != null) {
+        final details = await database.getAccountDetails(widget.wallet!.walletPk);
+        if (details != null && mounted) {
+          setState(() {
+            selectedAccountType =
+                (details['account_type'] as String?) ?? 'unspecified';
+            institutionName = details['institution_name'] as String?;
+            accountArchived = ((details['archived'] as int?) ?? 0) == 1;
+            excludeFromNetWorth =
+                ((details['exclude_from_net_worth'] as int?) ?? 0) == 1;
+          });
+        }
+      }
       walletInitial = await createTransactionWallet();
     });
   }
@@ -463,6 +493,56 @@ class _AddWalletPageState extends State<AddWalletPage> {
                 horizontalList: true,
                 selectedColor: selectedColor,
                 setSelectedColor: setSelectedColor,
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(
+                  start: 24, end: 24, bottom: 10),
+              child: Column(
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: selectedAccountType,
+                    decoration: const InputDecoration(labelText: 'Account type'),
+                    items: const [
+                      DropdownMenuItem(value: 'unspecified', child: Text('General')),
+                      DropdownMenuItem(value: 'cash', child: Text('Cash')),
+                      DropdownMenuItem(value: 'bank', child: Text('Bank account')),
+                      DropdownMenuItem(value: 'debit', child: Text('Debit card')),
+                      DropdownMenuItem(value: 'prepaid', child: Text('Prepaid card')),
+                      DropdownMenuItem(value: 'ewallet', child: Text('E-wallet')),
+                      DropdownMenuItem(value: 'credit', child: Text('Credit card')),
+                      DropdownMenuItem(value: 'savings', child: Text('Savings')),
+                      DropdownMenuItem(value: 'investment', child: Text('Investment')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => selectedAccountType = value);
+                    },
+                  ),
+                  TextFormField(
+                    initialValue: institutionName,
+                    decoration: const InputDecoration(
+                        labelText: 'Bank / institution (optional)'),
+                    onChanged: (value) => institutionName = value.trim().isEmpty
+                        ? null
+                        : value.trim(),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Exclude from net worth'),
+                    value: excludeFromNetWorth,
+                    onChanged: (value) =>
+                        setState(() => excludeFromNetWorth = value),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Archive account'),
+                    value: accountArchived,
+                    onChanged: (value) =>
+                        setState(() => accountArchived = value),
+                  ),
+                ],
               ),
             ),
           ),
