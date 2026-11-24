@@ -3755,6 +3755,45 @@ class FinanceDatabase extends _$FinanceDatabase {
     return rows.map((row) => row.data).toList();
   }
 
+  // Undo only locally journaled transfers whose persisted legs are unchanged.
+  Future<bool> undoLocalTransfer(String actionPk) async {
+    return transaction(() async {
+      final action = await customSelect(
+        'SELECT * FROM financial_actions WHERE action_pk = ?',
+        variables: [Variable<String>(actionPk)],
+      ).getSingleOrNull();
+      if (action == null || action.data['action_type'] != 'transfer' ||
+          action.data['undone_at'] != null) return false;
+      final changes = await getLocalFinancialActionChanges(actionPk);
+      if (changes.length != 2) throw StateError('Invalid transfer journal');
+      final ids = <String>[];
+      for (final change in changes) {
+        final id = change['entity_pk'];
+        if (id is! String || change['entity_type'] != 'transaction' ||
+            change['before_json'] != null || ids.contains(id)) {
+          throw StateError('Invalid transfer change');
+        }
+        final current = await (select(transactions)
+          ..where((t) => t.transactionPk.equals(id))).getSingleOrNull();
+        if (current == null || jsonEncode(current.toJson()) != change['after_json']) {
+          throw StateError('Transfer has changed; undo refused');
+        }
+        ids.add(id);
+      }
+      final externalLinks = await (select(transactions)
+        ..where((t) => t.pairedTransactionFk.isIn(ids) &
+            t.transactionPk.isNotIn(ids))).get();
+      if (externalLinks.isNotEmpty) throw StateError('Transfer has dependent entries');
+      await createDeleteLogs(DeleteLogType.Transaction, ids);
+      await (delete(transactions)..where((t) => t.transactionPk.isIn(ids))).go();
+      await customStatement(
+        'UPDATE financial_actions SET undone_at = ? WHERE action_pk = ?',
+        [DateTime.now().millisecondsSinceEpoch, actionPk],
+      );
+      return true;
+    });
+  }
+
   Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
     // We want InsertMode.insertOrReplace because
     // if null values are inserted we want to overwrite it with a null
