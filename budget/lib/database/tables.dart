@@ -697,6 +697,45 @@ class FinanceDatabase extends _$FinanceDatabase {
   @override
   int get schemaVersion => schemaVersionGlobal;
 
+  static const supportedAccountTypes = <String>{
+    'unspecified', 'cash', 'bank', 'debit', 'prepaid', 'ewallet',
+    'credit', 'savings', 'investment',
+  };
+
+  Future<Map<String, dynamic>?> getAccountDetails(String walletPk) async {
+    final row = await customSelect(
+      'SELECT * FROM account_details WHERE wallet_fk = ?',
+      variables: [Variable<String>(walletPk)],
+    ).getSingleOrNull();
+    return row?.data;
+  }
+
+  Future<void> saveAccountDetails({
+    required String walletPk,
+    required String accountType,
+    String? institutionName,
+    bool archived = false,
+    bool excludeFromNetWorth = false,
+  }) async {
+    if (!supportedAccountTypes.contains(accountType)) {
+      throw ArgumentError.value(accountType, 'accountType');
+    }
+    await transaction(() async {
+      if (await getWalletInstanceOrNull(walletPk) == null) {
+        throw StateError('Wallet does not exist');
+      }
+      await customStatement(
+        'INSERT INTO account_details '
+        '(wallet_fk, account_type, institution_name, archived, exclude_from_net_worth) '
+        'VALUES (?, ?, ?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
+        'account_type = excluded.account_type, institution_name = excluded.institution_name, '
+        'archived = excluded.archived, exclude_from_net_worth = excluded.exclude_from_net_worth',
+        [walletPk, accountType, institutionName?.trim(), archived ? 1 : 0,
+          excludeFromNetWorth ? 1 : 0],
+      );
+    });
+  }
+
   // Local extension tables are deliberately outside the legacy generated schema.
   // They are not included in cloud sync until a compatible protocol exists.
   Future<void> createLocalFinancialSchema47() async {
