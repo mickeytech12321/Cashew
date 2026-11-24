@@ -65,6 +65,19 @@ void main() {
       expect(FinancialMessageParser.parse('Available balance EGP 900.').amount,
           isNull);
     });
+    test('recognizes explicit Egyptian wallet transfers in English and Arabic',
+        () {
+      final sent =
+          FinancialMessageParser.parse('You sent LE 200.00 to a wallet');
+      expect((sent.amount, sent.currency, sent.direction),
+          (200.0, 'egp', 'debit'));
+      final received =
+          FinancialMessageParser.parse('تم استلام ٢٠٠ جنيه من محفظة');
+      expect((received.amount, received.currency, received.direction),
+          (200.0, 'egp', 'credit'));
+      final unknown = FinancialMessageParser.parse('Transfer EGP 200');
+      expect(unknown.direction, isNull);
+    });
     test('unknown text stays low confidence', () {
       final p = FinancialMessageParser.parse('Welcome to our service');
       expect(p.amount, isNull);

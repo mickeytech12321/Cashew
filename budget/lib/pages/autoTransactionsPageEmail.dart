@@ -1,3 +1,4 @@
+import 'package:budget/struct/bankNotificationInbox.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:budget/colors.dart';
@@ -78,7 +79,9 @@ class _InitializeNotificationServiceState
   void initState() {
     super.initState();
     Future.delayed(Duration.zero, () async {
+      if (!mounted) return;
       initNotificationScanning();
+      bankNotificationInbox.refresh();
     });
   }
 

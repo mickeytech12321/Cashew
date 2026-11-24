@@ -1,3 +1,4 @@
+import 'package:budget/struct/bankNotificationInbox.dart';
 import 'dart:io';
 
 import 'package:budget/database/schema_versions.dart';
@@ -19,6 +20,56 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test(
+      'notification inbox filters sources and stages only parsed transaction fields',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final inbox = BankNotificationInbox();
+    final now = DateTime(2027, 2, 1, 10);
+    const allowed = {'eg.test.bank'};
+    Future<bool> stage(
+      String content, {
+      String package = 'eg.test.bank',
+      DateTime? time,
+    }) =>
+        inbox.stageNotification(
+          db,
+          BankNotification(
+              id: 'test',
+              packageName: package,
+              content: content,
+              postedAt: time ?? now),
+          allowed,
+          time ?? now,
+        );
+    const message = 'Purchase EGP 100 at Private Shop card ending 1234';
+    expect(await stage(message, package: 'eg.other.app'), isFalse);
+    expect(await stage('OTP 987654 for purchase EGP 100'), isFalse);
+    expect(await stage(message), isTrue);
+    expect(await stage(message, time: now.add(const Duration(seconds: 4))),
+        isFalse);
+    final event = (await db.getImportedFinancialEvents()).single;
+    expect(event['source_sender'], 'eg.test.bank');
+    expect(event['raw_text'], 'eg.test.bank');
+    expect(event['merchant'], isNull);
+    expect(event['amount'], 100);
+    expect(event['identifier_last4'], '1234');
+    expect(await db.select(db.transactions).get(), isEmpty);
+    expect(await stage(message, time: now.add(const Duration(minutes: 3))),
+        isTrue);
+    expect(await db.getImportedFinancialEvents(), hasLength(2));
+  });
+
+  test('notification app list allows exact package names only', () {
+    expect(
+        BankNotificationInbox.parsePackages(
+            'eg.bank.app, eg.other.app eg.bank.app'),
+        ['eg.bank.app', 'eg.other.app']);
+    expect(() => BankNotificationInbox.parsePackages('eg.bank.*'),
+        throwsFormatException);
+  });
+
   test('converts scheduled amounts only with a known scenario currency rate',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());

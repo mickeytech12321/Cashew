@@ -7,6 +7,8 @@ import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 class FinancialAssistantPage extends StatefulWidget {
   const FinancialAssistantPage({super.key});
@@ -21,6 +23,65 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
   FinancialAssistantIntent? _intent;
   TransactionWallet? _wallet;
   Future<List<Map<String, dynamic>>>? _accountTotals;
+
+  static const _speech = MethodChannel('cashew/assistant_speech');
+  late final Future<bool> _voiceAvailable = _supportsVoice();
+  bool _listening = false;
+
+  Future<bool> _supportsVoice() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
+    try {
+      return await _speech.invokeMethod<bool>('available') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _cancelVoice() async {
+    try {
+      await _speech.invokeMethod<void>('cancel');
+    } catch (_) {
+      // The screen may already have closed with the platform session.
+    }
+  }
+
+  Future<void> _dictate() async {
+    if (_listening) {
+      await _cancelVoice();
+      return;
+    }
+    setState(() => _listening = true);
+    try {
+      final text = await _speech.invokeMethod<String>('listen', {
+        'language': Localizations.localeOf(context).languageCode,
+      });
+      if (!mounted || text == null) return;
+      final limited = String.fromCharCodes(text.runes.take(250));
+      setState(() {
+        _input.text = limited;
+        _input.selection = TextSelection.collapsed(offset: limited.length);
+        _intent = null;
+        _wallet = null;
+        _accountTotals = null;
+      });
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      final message = switch (error.code) {
+        'permission' => _label('Allow microphone access to dictate.',
+            'اسمح بالميكروفون للإملاء الصوتي.'),
+        'language' => _label(
+            'Offline recognition is unavailable for this language.',
+            'التعرّف دون اتصال غير متاح لهذه اللغة.'),
+        _ => _label(
+            'Could not recognize speech. Try again or type your request.',
+            'تعذّر التعرّف على الكلام. حاول مرة أخرى أو اكتب طلبك.'),
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) setState(() => _listening = false);
+    }
+  }
 
   void _interpret() {
     final intent = const FinancialAssistant().parse(_input.text);
@@ -75,6 +136,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
 
   @override
   void dispose() {
+    if (_listening) _cancelVoice();
     _input.dispose();
     super.dispose();
   }
@@ -107,8 +169,20 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
                   _accountTotals = null;
                 }),
               ),
+              FutureBuilder<bool>(
+                future: _voiceAvailable,
+                builder: (context, snapshot) => snapshot.data == true
+                    ? OutlinedButton.icon(
+                        onPressed: _dictate,
+                        icon: Icon(_listening ? Icons.stop : Icons.mic_none),
+                        label: Text(_listening
+                            ? _label('Cancel dictation', 'إلغاء الإملاء')
+                            : _label('Dictate offline', 'الإملاء دون اتصال')),
+                      )
+                    : const SizedBox.shrink(),
+              ),
               FilledButton(
-                onPressed: _interpret,
+                onPressed: _listening ? null : _interpret,
                 child: Text(_label('Continue', 'متابعة')),
               ),
               if (_accountTotals != null)

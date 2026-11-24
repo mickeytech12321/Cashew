@@ -30,8 +30,8 @@
 - PARTIAL: homepage Net Worth now excludes archived / exclude-from-net-worth accounts; remaining reports still need the same policy.
 
 ## Phase 03 — Bank Automation / Egypt
-- PARTIAL: Settings → Bank message import supports paste, review, account/category selection, ignore, and explicit approval in Arabic and English. Approval checks currency and will not overwrite existing transaction IDs or copy raw messages to transaction notes. Review suggests an active account when card digits and currency identify a unique match. Manage card links in Bank message import can add and remove four-digit card identifiers without overwriting another account’s existing link. Android notification ingestion, provider routing and device tests remain.
-- PARTIAL: standalone Dart parser checks pass for Arabic-Indic digits, EGP, ambiguous amounts and rejected/verification messages. Explicitly labelled trailing balances are excluded from amount selection. Provider-specific adapters, additional currencies and other multi-amount templates remain.
+- PARTIAL: Settings → Bank message import supports paste, review, account/category selection, ignore, and explicit approval in Arabic and English. Approval checks currency and will not overwrite existing transaction IDs or copy raw messages to transaction notes. Review suggests an active account when card digits and currency identify a unique match. Manage card links in Bank message import can add and remove four-digit card identifiers without overwriting another account’s existing link. Opt-in Android notification ingestion accepts exact user-allowlisted packages, selectable from installed Android apps, while the app runtime is active and stages parsed amounts for approval. Repeated updates are filtered within the current session, and source notification bodies are not persisted. A separate Android notification listener supplies package identity directly. Confirm permission and delivery on an Android device before release. Closed-app intake and provider-specific templates remain.
+- PARTIAL: standalone Dart parser checks pass for Arabic-Indic digits, EGP, ambiguous amounts and rejected/verification messages. Explicitly labelled trailing balances are excluded from amount selection. Explicit incoming and outgoing wallet-transfer wording and LE/EGP are supported. Provider-specific adapters, additional currencies and other multi-amount templates remain.
 - CODED: deterministic fingerprint dedupe, confidence and review/approved/ignored/duplicate states.
 - TODO: Egyptian bank/e-wallet rules.
 
@@ -44,7 +44,7 @@
 
 ## Phase 06 — AI & Voice
 - PARTIAL: deterministic Arabic/English local intent parser plus optional provider abstraction; write intents are marked confirmation-required.
-- PARTIAL: Settings → Offline assistant prepares Arabic/English income and expense drafts in the existing transaction editor after account selection. The user saves from that editor. Balance and current-month paid expense queries show separate account totals and exclude internal transfers from expenses. Transfer drafts open the existing review flow with the selected matching-currency source and amount. Optional provider implementation and speech-to-text remain.
+- PARTIAL: Settings → Offline assistant prepares Arabic/English income and expense drafts in the existing transaction editor after account selection. The user saves from that editor. Balance and current-month paid expense queries show separate account totals and exclude internal transfers from expenses. Transfer drafts open the existing review flow with the selected matching-currency source and amount. Android offers optional on-device dictation for Arabic and English where the system recognizer supports them. The transcript opens in the editable assistant field and requires the user to continue. Device verification and optional provider implementation remain.
 - Constraint: no mandatory AI subscription.
 
 ## Phase 07 — Household & Sync

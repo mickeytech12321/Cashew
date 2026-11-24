@@ -1,3 +1,4 @@
+import 'package:budget/struct/bankNotificationInbox.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
@@ -24,7 +25,19 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
       FinancialImportPage.label(context, english, arabic);
 
   @override
+  void initState() {
+    super.initState();
+    bankNotificationInbox.revision.addListener(_refreshInbox);
+  }
+
+  void _refreshInbox() {
+    if (mounted)
+      setState(() => _imports = database.getImportedFinancialEvents());
+  }
+
+  @override
   void dispose() {
+    bankNotificationInbox.revision.removeListener(_refreshInbox);
     _message.dispose();
     super.dispose();
   }
@@ -257,6 +270,17 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                         ),
                 child: Text(label('Manage card links', 'إدارة ربط البطاقات')),
               ),
+              if (BankNotificationInbox.supported)
+                OutlinedButton(
+                  onPressed: _busy
+                      ? null
+                      : () => showDialog<void>(
+                            context: context,
+                            builder: (_) => const _BankNotificationSettings(),
+                          ),
+                  child: Text(label('Android notification import',
+                      'استيراد إشعارات أندرويد')),
+                ),
               TextField(
                 controller: _message,
                 minLines: 2,
@@ -325,7 +349,9 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                 for (final event in snapshot.data!)
                   ListTile(
                     title: Text(_amountLabel(event)),
-                    subtitle: Text(event['raw_text'] as String),
+                    subtitle: Text(event['source_type'] == 'notification'
+                        ? '${label('Android notification', 'إشعار أندرويد')} · ${event['source_sender']}'
+                        : event['raw_text'] as String),
                     onTap: _busy ? null : () => _review(event),
                     trailing: IconButton(
                       tooltip: label('Ignore message', 'تجاهل الرسالة'),
@@ -488,6 +514,173 @@ class _ImportCardLinksState extends State<_ImportCardLinks> {
             onPressed: _busy ? null : () => Navigator.pop(context),
             child: Text(_label('Done', 'تم')),
           ),
+        ],
+      );
+}
+
+class _BankNotificationSettings extends StatefulWidget {
+  const _BankNotificationSettings();
+
+  @override
+  State<_BankNotificationSettings> createState() =>
+      _BankNotificationSettingsState();
+}
+
+class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
+  late final _packages =
+      TextEditingController(text: bankNotificationInbox.packages.join('\n'));
+  late bool _enabled = bankNotificationInbox.enabled;
+  bool _busy = false;
+  String? _error;
+
+  String _label(String english, String arabic) =>
+      FinancialImportPage.label(context, english, arabic);
+
+  @override
+  void dispose() {
+    _packages.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final packages = BankNotificationInbox.parsePackages(_packages.text);
+      if (_enabled && packages.isEmpty) throw const FormatException();
+      if (_enabled && !await bankNotificationInbox.hasAccess()) {
+        if (mounted)
+          setState(() => _error = _label(
+                'Allow notification access in Android settings.',
+                'اسمح بالوصول إلى الإشعارات من إعدادات أندرويد.',
+              ));
+        return;
+      }
+      if (!mounted) return;
+      await bankNotificationInbox.configure(
+          enabled: _enabled, packages: packages);
+      if (mounted) Navigator.pop(context);
+    } on FormatException {
+      if (mounted)
+        setState(() => _error = _label(
+              'Enter up to 20 valid Android app package names.',
+              'أدخل أسماء حزم صالحة لما يصل إلى ٢٠ تطبيقًا.',
+            ));
+    } catch (_) {
+      if (mounted)
+        setState(() => _error = _label(
+              'Could not save notification import settings.',
+              'تعذّر حفظ إعدادات استيراد الإشعارات.',
+            ));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _chooseApp() async {
+    setState(() => _busy = true);
+    try {
+      final apps = await bankNotificationInbox.listApps();
+      if (!mounted) return;
+      final selected = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: Text(_label('Choose an installed app', 'اختر تطبيقًا مثبتًا')),
+          children: [
+            if (apps.isEmpty) const SizedBox(height: 16),
+            for (final app in apps)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, app.package),
+                child: Text('${app.label}\n${app.package}'),
+              ),
+          ],
+        ),
+      );
+      if (selected == null || !mounted) return;
+      final packages =
+          BankNotificationInbox.parsePackages('${_packages.text} $selected');
+      _packages.text = packages.join('\n');
+    } catch (_) {
+      if (mounted)
+        setState(() => _error = _label(
+              'Could not add the app. Check the package list.',
+              'تعذّرت إضافة التطبيق. تحقّق من قائمة الحزم.',
+            ));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openAccessSettings() async {
+    try {
+      await bankNotificationInbox.openAccessSettings();
+    } catch (_) {
+      if (mounted)
+        setState(() => _error = _label(
+              'Could not open Android notification access settings.',
+              'تعذّر فتح إعدادات الوصول إلى الإشعارات.',
+            ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(
+            _label('Android notification import', 'استيراد إشعارات أندرويد')),
+        scrollable: true,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_label(
+              'While Cashew is running, matching transaction notifications from the apps below appear for review. Cashew stores the parsed amount and card suffix locally.',
+              'أثناء تشغيل Cashew، تظهر معاملات التطبيقات التالية للمراجعة. يحفظ Cashew المبلغ المستخرج وآخر أرقام البطاقة محليًا.',
+            )),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_label('Import from selected apps',
+                  'الاستيراد من التطبيقات المحددة')),
+              value: _enabled,
+              onChanged:
+                  _busy ? null : (value) => setState(() => _enabled = value),
+            ),
+            TextField(
+              controller: _packages,
+              enabled: !_busy,
+              minLines: 2,
+              maxLines: 5,
+              autocorrect: false,
+              textDirection: TextDirection.ltr,
+              decoration: InputDecoration(
+                labelText: _label('App package names', 'أسماء حزم التطبيقات'),
+                helperText: _label(
+                    'One package per line. Find it after id= in the Play Store link.',
+                    'حزمة واحدة لكل سطر. تجد الاسم بعد id= في رابط متجر Play.'),
+                helperMaxLines: 3,
+              ),
+            ),
+            OutlinedButton(
+              onPressed: _busy ? null : _chooseApp,
+              child:
+                  Text(_label('Choose installed app', 'اختر تطبيقًا مثبتًا')),
+            ),
+            if (_enabled)
+              OutlinedButton(
+                onPressed: _busy ? null : _openAccessSettings,
+                child: Text(_label('Open Android notification access',
+                    'فتح إعدادات الوصول إلى الإشعارات')),
+              ),
+            if (_error != null) Text(_error!),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: _busy ? null : () => Navigator.pop(context),
+              child: Text(_label('Cancel', 'إلغاء'))),
+          FilledButton(
+              onPressed: _busy ? null : _save,
+              child: Text(_label('Save', 'حفظ'))),
         ],
       );
 }

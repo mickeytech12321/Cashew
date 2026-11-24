@@ -46,7 +46,7 @@ class FinancialMessageParser {
         balance == null ? message : message.substring(0, balance.start);
     final lower = text.toLowerCase();
     const currencyPattern =
-        r'(?:\begp\b|جنيه(?:ًا|ا)?|ج\.?\s*م\.?|\busd\b|دولار)';
+        r'(?:\b(?:egp|le)\b|e£|جنيه(?:ًا|ا)?|ج\.?\s*م\.?|\busd\b|دولار)';
     const numberPattern =
         r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,2})?';
     final amountPattern = RegExp(
@@ -69,10 +69,10 @@ class FinancialMessageParser {
       }
     }
     final debit = RegExp(
-      r'\b(?:purchase[ds]?|paid|withdraw(?:al|n)?|debited)\b|خصم|شراء|سحب|دفعت',
+      r'\b(?:purchase[ds]?|paid|withdraw(?:al|n)?|debited|sent|outgoing transfer)\b|خصم|شراء|سحب|دفعت|تم إرسال|تم تحويل.+(?:إلى|الى)',
     ).hasMatch(lower);
     final credit = RegExp(
-      r'\b(?:received|credited|deposit(?:ed)?|refund(?:ed)?)\b|استلام|[إا]يداع|رد مبلغ',
+      r'\b(?:received|credited|deposit(?:ed)?|refund(?:ed)?|incoming transfer)\b|استلام|استلمت|[إا]يداع|رد مبلغ|تم إضافة',
     ).hasMatch(lower);
     final direction = debit == credit ? null : (debit ? 'debit' : 'credit');
     final last4 = RegExp(
