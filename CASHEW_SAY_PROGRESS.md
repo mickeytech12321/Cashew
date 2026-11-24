@@ -30,7 +30,7 @@
 - PARTIAL: homepage Net Worth now excludes archived / exclude-from-net-worth accounts; remaining reports still need the same policy.
 
 ## Phase 03 — Bank Automation / Egypt
-- PARTIAL: Settings → Bank message import supports paste, review, account/category selection, ignore, and explicit approval in Arabic and English. Approval checks currency and will not overwrite existing transaction IDs or copy raw messages to transaction notes. Android notification ingestion, provider routing and device tests remain.
+- PARTIAL: Settings → Bank message import supports paste, review, account/category selection, ignore, and explicit approval in Arabic and English. Approval checks currency and will not overwrite existing transaction IDs or copy raw messages to transaction notes. Review suggests an active account when card digits and currency identify a unique match. Android notification ingestion, provider routing and device tests remain.
 - PARTIAL: standalone Dart parser checks pass for Arabic-Indic digits, EGP, ambiguous amounts and rejected/verification messages. Explicitly labelled trailing balances are excluded from amount selection. Provider-specific adapters, additional currencies and other multi-amount templates remain.
 - CODED: deterministic fingerprint dedupe, confidence and review/approved/ignored/duplicate states.
 - TODO: Egyptian bank/e-wallet rules.

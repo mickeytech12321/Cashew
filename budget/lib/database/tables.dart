@@ -4034,7 +4034,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         (aprPercent != null && (!aprPercent.isFinite || aprPercent < 0)) ||
         (statementDay != null && (statementDay < 1 || statementDay > 31)) ||
         (dueDay != null && (dueDay < 1 || dueDay > 31)) ||
-        (lastFour != null && !RegExp(r'^\\d{4}$').hasMatch(lastFour))) {
+        (lastFour != null && !RegExp(r'^[0-9]{4}$').hasMatch(lastFour))) {
       throw ArgumentError('Invalid credit card details');
     }
     final account = await getAccountDetails(walletPk);
@@ -4164,6 +4164,28 @@ class FinanceDatabase extends _$FinanceDatabase {
       ],
     ).getSingleOrNull();
     return row?.data['wallet_fk'] as String?;
+  }
+
+  Future<String?> suggestImportedCardWallet(String? lastFour, String? currency) async {
+    if (lastFour == null || !RegExp(r'^[0-9]{4}$').hasMatch(lastFour) ||
+        currency == null || currency.trim().isEmpty) return null;
+
+    final matches = await customSelect(
+      'SELECT w.wallet_pk FROM wallets w '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'WHERE LOWER(w.currency) = ? AND COALESCE(d.archived, 0) = 0 '
+      'AND (EXISTS (SELECT 1 FROM account_identifiers i '
+      "WHERE i.wallet_fk = w.wallet_pk AND i.identifier_type = 'card_last4' "
+      'AND i.identifier_value = ?) OR EXISTS (SELECT 1 FROM credit_card_details c '
+      "WHERE c.wallet_fk = w.wallet_pk AND d.account_type = 'credit' "
+      'AND c.last_four = ?)) LIMIT 2',
+      variables: [
+        Variable<String>(currency.trim().toLowerCase()),
+        Variable<String>(lastFour),
+        Variable<String>(lastFour),
+      ],
+    ).get();
+    return matches.length == 1 ? matches.single.read<String>('wallet_pk') : null;
   }
 
   String financialImportFingerprint({

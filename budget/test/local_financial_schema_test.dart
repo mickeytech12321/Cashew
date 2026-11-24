@@ -19,6 +19,35 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('bank import suggests only a unique active card in the same currency',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    for (final id in ['credit', 'debit', 'foreign']) {
+      await db.into(db.wallets).insert(WalletsCompanion.insert(
+            walletPk: Value(id),
+            name: id,
+            order: 0,
+            currency: Value(id == 'foreign' ? 'usd' : 'egp'),
+          ));
+    }
+    await db.saveAccountDetails(walletPk: 'credit', accountType: 'credit');
+    await db.saveCreditCardDetails(walletPk: 'credit', lastFour: '1234');
+    await db.saveAccountDetails(walletPk: 'foreign', accountType: 'credit');
+    await db.saveCreditCardDetails(walletPk: 'foreign', lastFour: '1234');
+    expect(await db.suggestImportedCardWallet('1234', 'EGP'), 'credit');
+    await db.saveAccountIdentifier(
+        identifierPk: 'debit-id',
+        walletPk: 'debit',
+        identifierType: 'card_last4',
+        identifierValue: '1234');
+    expect(await db.suggestImportedCardWallet('1234', 'egp'), isNull);
+    await db.saveAccountDetails(
+        walletPk: 'credit', accountType: 'credit', archived: true);
+    expect(await db.suggestImportedCardWallet('1234', 'egp'), 'debit');
+    expect(await db.suggestImportedCardWallet('123', 'egp'), isNull);
+  });
+
   test('projects calendar recurrences once per series through its end date',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());

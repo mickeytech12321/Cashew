@@ -133,13 +133,22 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
           );
           return;
         }
-        String? walletPk;
+        final suggestedWallet = await database.suggestImportedCardWallet(
+          event['identifier_last4'] as String?,
+          event['currency'] as String?,
+        );
+        if (!mounted) return;
+        String? walletPk =
+            wallets.any((wallet) => wallet.walletPk == suggestedWallet)
+                ? suggestedWallet
+                : null;
         String? categoryPk;
         final approved = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => StatefulBuilder(
             builder: (context, update) => AlertDialog(
               title: Text(label('Approve transaction', 'اعتماد المعاملة')),
+              scrollable: true,
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -148,6 +157,9 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                   Text(_formatTimestamp(DateTime.fromMillisecondsSinceEpoch(
                     event['occurred_at'] as int,
                   ))),
+                  if (suggestedWallet != null && walletPk == suggestedWallet)
+                    Text(label('Account suggested from card digits.',
+                        'تم اقتراح الحساب بناءً على آخر أربعة أرقام من البطاقة.')),
                   DropdownButton<String>(
                     isExpanded: true,
                     hint: Text(label('Account', 'الحساب')),
