@@ -36,7 +36,18 @@ class HomePageNetWorth extends StatelessWidget {
               if (walletPks.length <= 0 ||
                   appStateSettings["netWorthAllWallets"] == true)
                 walletPks = null;
-              return Padding(
+              return FutureBuilder<Set<String>>(
+                future: database.getWalletPksExcludedFromNetWorth(),
+                builder: (context, excludedSnapshot) {
+                  final excluded = excludedSnapshot.data ?? <String>{};
+                  final includedWalletPks = (walletPks ??
+                          Provider.of<AllWallets>(context, listen: false)
+                              .list
+                              .map((w) => w.walletPk)
+                              .toList())
+                      .where((pk) => !excluded.contains(pk))
+                      .toList();
+                  return Padding(
                 padding: const EdgeInsetsDirectional.only(
                     bottom: 13, start: 13, end: 13),
                 child: Row(
@@ -84,7 +95,7 @@ class HomePageNetWorth extends StatelessWidget {
                           followCustomPeriodCycle: true,
                           cycleSettingsExtension: "NetWorth",
                           searchFilters:
-                              SearchFilters(walletPks: walletPks ?? []),
+                              SearchFilters(walletPks: includedWalletPks),
                         ),
                         // getTextColor: (amount) => amount == 0
                         //     ? getColor(context, "black")
@@ -105,6 +116,8 @@ class HomePageNetWorth extends StatelessWidget {
                     ),
                   ],
                 ),
+              );
+                },
               );
             }
             return SizedBox.shrink();
