@@ -25,110 +25,127 @@ class HomePageNetWorth extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return KeepAliveClientMixin(
-      child: StreamBuilder<List<TransactionWallet>>(
-          stream:
-              database.getAllPinnedWallets(HomePageWidgetDisplay.NetWorth).$1,
-          builder: (context, snapshot) {
-            if (snapshot.hasData ||
-                appStateSettings["netWorthAllWallets"] == true) {
-              List<String>? walletPks =
-                  (snapshot.data ?? []).map((item) => item.walletPk).toList();
-              if (walletPks.length <= 0 ||
-                  appStateSettings["netWorthAllWallets"] == true)
-                walletPks = null;
-              return FutureBuilder<Set<String>>(
-                future: database.getWalletPksExcludedFromNetWorth(),
-                builder: (context, excludedSnapshot) {
-                  final excluded = excludedSnapshot.data ?? <String>{};
-                  final includedWalletPks = (walletPks ??
-                          Provider.of<AllWallets>(context, listen: false)
-                              .list
-                              .map((w) => w.walletPk)
-                              .toList())
-                      .where((pk) => !excluded.contains(pk))
-                      .toList();
-                  // Empty wallet filters mean "all" in Cashew. Use an
-                  // impossible key when every account is excluded.
-                  if (includedWalletPks.isEmpty && excluded.isNotEmpty) {
-                    includedWalletPks.add('__excluded_all_wallets__');
-                  }
-                  return Padding(
-                padding: const EdgeInsetsDirectional.only(
-                    bottom: 13, start: 13, end: 13),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: TransactionsAmountBox(
-                        onLongPress: () async {
-                          await openNetWorthSettings(context);
-                          homePageStateKey.currentState?.refreshState();
-                        },
-                        label: "net-worth".tr(),
-                        getTextColor: appStateSettings["netTotalsColorful"] !=
-                                true
-                            ? null
-                            : (double amount) {
-                                double? roundedWalletWithTotal =
-                                    (double.tryParse(absoluteZero(amount)
-                                        .toStringAsFixed(
-                                            Provider.of<AllWallets>(context)
-                                                    .indexedByPk[
-                                                        appStateSettings[
-                                                            "selectedWalletPk"]]
-                                                    ?.decimals ??
-                                                2)));
-                                return appStateSettings["netTotalsColorful"] ==
-                                        true
-                                    ? (roundedWalletWithTotal == 0
-                                        ? getColor(context, "black")
-                                        : amount > 0
-                                            ? getColor(context, "incomeAmount")
-                                            : getColor(
-                                                context, "expenseAmount"))
-                                    : getColor(context, "black");
-                              },
-                        absolute: false,
-                        currencyKey: Provider.of<AllWallets>(context)
-                            .indexedByPk[appStateSettings["selectedWalletPk"]]
-                            ?.currency,
-                        totalWithCountStream:
-                            database.watchTotalWithCountOfWallet(
-                          isIncome: null,
-                          allWallets: Provider.of<AllWallets>(context),
-                          followCustomPeriodCycle: true,
-                          cycleSettingsExtension: "NetWorth",
-                          searchFilters:
-                              SearchFilters(walletPks: includedWalletPks),
-                        ),
-                        // getTextColor: (amount) => amount == 0
-                        //     ? getColor(context, "black")
-                        //     : amount > 0
-                        //         ? getColor(context, "incomeAmount")
-                        //         : getColor(context, "expenseAmount"),
-                        textColor: getColor(context, "black"),
-                        openPage: WalletDetailsPage(
-                          wallet: null,
-                          initialSearchFilters: SearchFilters(
-                            dateTimeRange:
-                                getDateTimeRangeForPassedSearchFilters(
-                              cycleSettingsExtension: "NetWorth",
-                            ),
-                          ),
-                        ),
-                      ),
+      child: NetWorthFiltersBuilder(
+        builder: (context, filters) {
+          return Padding(
+            padding: const EdgeInsetsDirectional.only(
+                bottom: 13, start: 13, end: 13),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: TransactionsAmountBox(
+                    onLongPress: () async {
+                      await openNetWorthSettings(context);
+                      homePageStateKey.currentState?.refreshState();
+                    },
+                    label: "net-worth".tr(),
+                    getTextColor: appStateSettings["netTotalsColorful"] !=
+                            true
+                        ? null
+                        : (double amount) {
+                            double? roundedWalletWithTotal =
+                                (double.tryParse(absoluteZero(amount)
+                                    .toStringAsFixed(
+                                        Provider.of<AllWallets>(context)
+                                                .indexedByPk[
+                                                    appStateSettings[
+                                                        "selectedWalletPk"]]
+                                                ?.decimals ??
+                                            2)));
+                            return appStateSettings["netTotalsColorful"] ==
+                                    true
+                                ? (roundedWalletWithTotal == 0
+                                    ? getColor(context, "black")
+                                    : amount > 0
+                                        ? getColor(context, "incomeAmount")
+                                        : getColor(
+                                            context, "expenseAmount"))
+                                : getColor(context, "black");
+                          },
+                    absolute: false,
+                    currencyKey: Provider.of<AllWallets>(context)
+                        .indexedByPk[appStateSettings["selectedWalletPk"]]
+                        ?.currency,
+                    totalWithCountStream:
+                        database.watchTotalWithCountOfWallet(
+                      isIncome: null,
+                      allWallets: Provider.of<AllWallets>(context),
+                      followCustomPeriodCycle: true,
+                      cycleSettingsExtension: "NetWorth",
+                      searchFilters: filters,
                     ),
-                  ],
+                    // getTextColor: (amount) => amount == 0
+                    //     ? getColor(context, "black")
+                    //     : amount > 0
+                    //         ? getColor(context, "incomeAmount")
+                    //         : getColor(context, "expenseAmount"),
+                    textColor: getColor(context, "black"),
+                    openPage: WalletDetailsPage(
+                      wallet: null,
+                      initialSearchFilters: netWorthDetailFilters(filters),
+                    ),
+                  ),
                 ),
-              );
-                },
-              );
-            }
-            return SizedBox.shrink();
-          }),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
+}
+
+SearchFilters netWorthFilters(
+  List<TransactionWallet> pins,
+  Set<String> excludedWalletPks,
+) =>
+    SearchFilters(
+      walletPks: appStateSettings["netWorthAllWallets"] == true
+          ? []
+          : pins.map((wallet) => wallet.walletPk).toList(),
+      excludedWalletPks: excludedWalletPks,
+    );
+
+SearchFilters netWorthDetailFilters(SearchFilters filters) => filters.copyWith(
+      walletPks: List.of(filters.walletPks),
+      dateTimeRange: getDateTimeRangeForPassedSearchFilters(
+        cycleSettingsExtension: "NetWorth",
+      ),
+    );
+
+class NetWorthFiltersBuilder extends StatefulWidget {
+  const NetWorthFiltersBuilder({required this.builder, super.key});
+
+  final Widget Function(BuildContext, SearchFilters) builder;
+
+  @override
+  State<NetWorthFiltersBuilder> createState() => _NetWorthFiltersBuilderState();
+}
+
+class _NetWorthFiltersBuilderState extends State<NetWorthFiltersBuilder> {
+  late final _pins =
+      database.getAllPinnedWallets(HomePageWidgetDisplay.NetWorth).$1;
+  late final _excluded = database.watchWalletPksExcludedFromNetWorth();
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<List<TransactionWallet>>(
+        stream: _pins,
+        builder: (context, pins) {
+          if (!pins.hasData) return const SizedBox.shrink();
+          return StreamBuilder<Set<String>>(
+            stream: _excluded,
+            builder: (context, excluded) {
+              if (!excluded.hasData) return const SizedBox.shrink();
+              return widget.builder(
+                context,
+                netWorthFilters(pins.data!, excluded.data!),
+              );
+            },
+          );
+        },
+      );
 }
 
 class WalletPickerPeriodCycle extends StatefulWidget {

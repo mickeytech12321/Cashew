@@ -728,16 +728,21 @@ class FinanceDatabase extends _$FinanceDatabase {
     };
   }
 
-  Future<Set<String>> getWalletPksExcludedFromNetWorth() async {
-    final rows = await customSelect(
+  Selectable<QueryRow> _netWorthExclusionQuery() => customSelect(
       'SELECT wallet_fk FROM account_details '
       'WHERE exclude_from_net_worth = 1 OR archived = 1',
-    ).get();
-    return rows
-        .map((r) => r.data['wallet_fk'])
-        .whereType<String>()
-        .toSet();
-  }
+      readsFrom: {wallets},
+    );
+
+  Future<Set<String>> getWalletPksExcludedFromNetWorth() async =>
+      (await _netWorthExclusionQuery().get())
+          .map((r) => r.read<String>('wallet_fk')).toSet();
+
+  Stream<Set<String>> watchWalletPksExcludedFromNetWorth() =>
+      _netWorthExclusionQuery()
+          .watch()
+          .map((rows) => rows.map((r) => r.read<String>('wallet_fk')).toSet())
+          .distinct(setEquals);
 
   Future<void> setAccountArchived(String walletPk, bool archived) async {
     final current = await getAccountDetails(walletPk);
@@ -777,14 +782,22 @@ class FinanceDatabase extends _$FinanceDatabase {
       if (await getWalletInstanceOrNull(walletPk) == null) {
         throw StateError('Wallet does not exist');
       }
-      await customStatement(
+      // The generated schema does not model account_details. Dependent
+      // streams watch wallets so metadata edits invalidate them after commit.
+      await customUpdate(
         'INSERT INTO account_details '
         '(wallet_fk, account_type, institution_name, archived, exclude_from_net_worth) '
         'VALUES (?, ?, ?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
         'account_type = excluded.account_type, institution_name = excluded.institution_name, '
         'archived = excluded.archived, exclude_from_net_worth = excluded.exclude_from_net_worth',
-        [walletPk, accountType, institutionName?.trim(), archived ? 1 : 0,
-          excludeFromNetWorth ? 1 : 0],
+        variables: [
+          Variable<String>(walletPk),
+          Variable<String>(accountType),
+          Variable<String>(institutionName?.trim()),
+          Variable<int>(archived ? 1 : 0),
+          Variable<int>(excludeFromNetWorth ? 1 : 0),
+        ],
+        updates: {wallets},
       );
     });
   }
@@ -4146,7 +4159,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Future<List<({String currency, String? category, double income, double expenses})>>
-      getFinancialInsights(DateTime start, DateTime end) async {
+      getFinancialInsights(DateTime start, DateTime end, {String? walletPk}) async {
     if (!start.isBefore(end)) throw ArgumentError('Invalid insights period');
     final rows = await customSelect(
       'SELECT LOWER(TRIM(w.currency)) AS currency, c.name AS category, '
@@ -4157,15 +4170,34 @@ class FinanceDatabase extends _$FinanceDatabase {
       'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
       "WHERE t.paid = 1 AND t.skip_paid = 0 AND t.category_fk != '0' "
       'AND COALESCE(d.archived, 0) = 0 AND t.date_created >= ? AND t.date_created < ? '
+      '${walletPk == null ? '' : 'AND w.wallet_pk = ? '}'
       'GROUP BY LOWER(TRIM(w.currency)), c.category_pk, c.name '
       'ORDER BY currency, expenses DESC, c.name',
-      variables: [Variable<DateTime>(start), Variable<DateTime>(end)],
+      variables: [
+        Variable<DateTime>(start),
+        Variable<DateTime>(end),
+        if (walletPk != null) Variable<String>(walletPk),
+      ],
     ).get();
     return rows.map((row) => (
       currency: row.readNullable<String>('currency') ?? '',
       category: row.readNullable<String>('category'),
       income: row.read<double>('income'),
       expenses: row.read<double>('expenses'),
+    )).toList();
+  }
+
+  Future<List<({String id, String name, String currency})>>
+      getFinancialInsightsAccounts() async {
+    final rows = await customSelect(
+      'SELECT w.wallet_pk, w.name, w.currency FROM wallets w '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'WHERE COALESCE(d.archived, 0) = 0 ORDER BY w."order", w.wallet_pk',
+    ).get();
+    return rows.map((row) => (
+      id: row.read<String>('wallet_pk'),
+      name: row.read<String>('name'),
+      currency: row.readNullable<String>('currency') ?? '',
     )).toList();
   }
 
@@ -4176,10 +4208,10 @@ class FinanceDatabase extends _$FinanceDatabase {
       'SELECT COALESCE(SUM(-t.amount), 0) AS amount FROM transactions t '
       'JOIN wallets w ON t.wallet_fk = w.wallet_pk '
       'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
-      "WHERE LOWER(w.currency) = ? AND t.paid = 1 AND t.skip_paid = 0 "
+      "WHERE LOWER(TRIM(w.currency)) = ? AND t.paid = 1 AND t.skip_paid = 0 "
       "AND COALESCE(d.archived, 0) = 0 AND t.amount < 0 AND t.category_fk != '0' "
       'AND t.date_created >= ? AND t.date_created < ?',
-      variables: [Variable<String>(currency.toLowerCase()),
+      variables: [Variable<String>(currency.trim().toLowerCase()),
         Variable<DateTime>(start), Variable<DateTime>(end)],
       readsFrom: {transactions, wallets},
     ).watchSingle().map((row) => row.read<double>('amount')).distinct();
@@ -7664,7 +7696,10 @@ class FinanceDatabase extends _$FinanceDatabase {
     if (searchFilters == null) return Constant(true);
 
     Expression<bool> isInWalletPks =
-        onlyShowBasedOnWalletFks(tbl, searchFilters.walletPks);
+        onlyShowBasedOnWalletFks(tbl, searchFilters.walletPks) &
+            (searchFilters.excludedWalletPks.isEmpty
+                ? const Constant(true)
+                : tbl.walletFk.isNotIn(searchFilters.excludedWalletPks));
     Expression<bool> isInCategoryPks =
         onlyShowBasedOnCategoryFks(tbl, searchFilters.categoryPks, null);
     Expression<bool> isInSubcategoryPks =

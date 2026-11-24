@@ -5,7 +5,7 @@ import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
-import 'package:budget/pages/transactionFilters.dart';
+import 'package:budget/pages/homePage/homePageNetWorth.dart';
 import 'package:budget/pages/walletDetailsPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
@@ -92,12 +92,22 @@ class _CheckWidgetLaunchState extends State<CheckWidgetLaunch> {
     } else if (widgetPayload == "monthlySpendingWidget") {
       pushRoute(context, const FinancialInsightsPage());
     } else if (widgetPayload == "netWorthLaunchWidget") {
-      pushRoute(
-        context,
-        WalletDetailsPage(
-          wallet: null,
-        ),
-      );
+      try {
+        final pins =
+            await database.getAllPinnedWallets(HomePageWidgetDisplay.NetWorth).$2;
+        final excluded = await database.getWalletPksExcludedFromNetWorth();
+        if (!mounted) return;
+        pushRoute(
+          context,
+          WalletDetailsPage(
+            wallet: null,
+            initialSearchFilters:
+                netWorthDetailFilters(netWorthFilters(pins, excluded)),
+          ),
+        );
+      } catch (error) {
+        debugPrint('Could not open net worth: ${error.runtimeType}');
+      }
     }
   }
 
@@ -184,56 +194,52 @@ class RenderHomePageWidgetsState extends State<RenderHomePageWidgets> {
         wallet: Provider.of<AllWallets>(context)
             .indexedByPk[appStateSettings["selectedWalletPk"]],
       ),
-      StreamBuilder<List<TransactionWallet>>(
-      stream: database.getAllPinnedWallets(HomePageWidgetDisplay.NetWorth).$1,
-      builder: (context, snapshot) {
-        List<String>? walletPks =
-            (snapshot.data ?? []).map((item) => item.walletPk).toList();
-        if (walletPks.length <= 0 ||
-            appStateSettings["netWorthAllWallets"] == true) walletPks = null;
-        return Container(
-          child: StreamBuilder<TotalWithCount?>(
-            stream: database.watchTotalWithCountOfWallet(
-              isIncome: null,
-              allWallets: Provider.of<AllWallets>(context),
-              followCustomPeriodCycle: true,
-              cycleSettingsExtension: "NetWorth",
-              searchFilters: SearchFilters(walletPks: walletPks ?? []),
-            ),
-            builder: (context, snapshot) {
-              Future.delayed(Duration.zero, () async {
-                int totalCount = snapshot.data?.count ?? 0;
-                String netWorthTransactionsNumber = totalCount.toString() +
-                    " " +
-                    (totalCount == 1
-                        ? "transaction".tr().toLowerCase()
-                        : "transactions".tr().toLowerCase());
-                double totalSpent = snapshot.data?.total ?? 0;
-                String netWorthAmount = convertToMoney(
-                  Provider.of<AllWallets>(context, listen: false),
-                  totalSpent,
-                );
-                await HomeWidget.saveWidgetData<String>(
-                  'netWorthAmount',
-                  netWorthAmount,
-                );
-                await HomeWidget.saveWidgetData<String>(
-                  'netWorthTransactionsNumber',
-                  netWorthTransactionsNumber,
-                );
-                await HomeWidget.updateWidget(
-                  name: 'NetWorthWidgetProvider',
-                );
-                await HomeWidget.updateWidget(
-                  name: 'NetWorthPlusWidgetProvider',
-                );
-              });
-
-              return const SizedBox.shrink();
-            },
+      NetWorthFiltersBuilder(
+        builder: (context, filters) => StreamBuilder<TotalWithCount?>(
+          stream: database.watchTotalWithCountOfWallet(
+            isIncome: null,
+            allWallets: Provider.of<AllWallets>(context),
+            followCustomPeriodCycle: true,
+            cycleSettingsExtension: "NetWorth",
+            searchFilters: filters,
           ),
-        );
-      },
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.active ||
+                snapshot.hasError) {
+              return const SizedBox.shrink();
+            }
+            Future.delayed(Duration.zero, () async {
+              if (!mounted) return;
+              int totalCount = snapshot.data?.count ?? 0;
+              String netWorthTransactionsNumber = totalCount.toString() +
+                  " " +
+                  (totalCount == 1
+                      ? "transaction".tr().toLowerCase()
+                      : "transactions".tr().toLowerCase());
+              double totalSpent = snapshot.data?.total ?? 0;
+              String netWorthAmount = convertToMoney(
+                Provider.of<AllWallets>(context, listen: false),
+                totalSpent,
+              );
+              await HomeWidget.saveWidgetData<String>(
+                'netWorthAmount',
+                netWorthAmount,
+              );
+              await HomeWidget.saveWidgetData<String>(
+                'netWorthTransactionsNumber',
+                netWorthTransactionsNumber,
+              );
+              await HomeWidget.updateWidget(
+                name: 'NetWorthWidgetProvider',
+              );
+              await HomeWidget.updateWidget(
+                name: 'NetWorthPlusWidgetProvider',
+              );
+            });
+
+            return const SizedBox.shrink();
+          },
+        ),
       ),
     ]);
   }

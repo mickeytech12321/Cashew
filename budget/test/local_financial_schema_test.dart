@@ -2,6 +2,8 @@ import 'package:budget/database/platform/stagedNativeRestore.dart';
 import 'package:budget/struct/creditStatementCsv.dart';
 import 'package:budget/database/backupValidation.dart';
 import 'dart:typed_data';
+import 'dart:async';
+import 'package:budget/pages/transactionFilters.dart';
 import 'package:budget/struct/syncClient.dart' show SyncLog;
 import 'package:budget/struct/investmentLedger.dart';
 import 'package:budget/struct/bankNotificationInbox.dart';
@@ -696,8 +698,43 @@ void main() {
         rows.map(
             (row) => (row.currency, row.category, row.income, row.expenses)),
         [('egp', 'Daily', 200.0, 30.0), ('usd', 'Daily', 0.0, 4.0)]);
+    final start = DateTime(2027, 2);
+    final end = DateTime(2027, 3);
+    final accounts = await db.getFinancialInsightsAccounts();
+    expect(accounts.map((account) => account.id), ['egp', 'usd']);
+    expect((await db.getFinancialInsights(start, end, walletPk: 'usd')).single,
+        (currency: 'usd', category: 'Daily', income: 0.0, expenses: 4.0));
+    expect(await db.getFinancialInsights(start, end, walletPk: 'archived'),
+        isEmpty);
     expect(await db.watchMonthlySpendingInCurrency('egp', DateTime(2027, 2, 1)).first, 30);
     expect(await db.watchMonthlySpendingInCurrency('usd', DateTime(2027, 2, 1)).first, 4);
+
+    final scopes = StreamIterator(db.watchWalletPksExcludedFromNetWorth());
+    addTearDown(scopes.cancel);
+    expect(await scopes.moveNext(), isTrue);
+    expect(scopes.current, {'archived'});
+    await db.setAccountExcludedFromNetWorth('egp', true);
+    expect(await scopes.moveNext().timeout(const Duration(seconds: 3)), isTrue);
+    expect(scopes.current, {'archived', 'egp'});
+
+    Future<List<Transaction>> report(SearchFilters filters) =>
+        (db.select(db.transactions)..where((table) =>
+          db.onlyShowIfFollowsSearchFilters(
+            table,
+            filters,
+            joinedWithSubcategoriesTable: null,
+            joinedWithObjectiveLoans: null,
+            joinedWithCategories: false,
+            joinedWithBudgets: false,
+            joinedWithObjectives: false,
+          ),
+        )).get();
+    final filters = SearchFilters(excludedWalletPks: scopes.current);
+    expect((await report(filters)).map((transaction) => transaction.walletFk),
+        ['usd']);
+    expect(await report(filters.copyWith(walletPks: ['egp'])), isEmpty);
+    expect((await db.getFinancialInsights(start, end, walletPk: 'egp')).single.expenses,
+        30);
   });
 
   test('credit statement separates closing balance from later card activity',
