@@ -9,6 +9,7 @@ import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class CardStatementsPage extends StatefulWidget {
   const CardStatementsPage({required this.wallet, super.key});
@@ -22,6 +23,7 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
   late var _statements =
       database.getCreditCardStatements(widget.wallet.walletPk);
   bool _saving = false;
+  bool _onlyUnpaid = false;
 
   String _label(String en, String ar) =>
       Localizations.localeOf(context).languageCode == 'ar' ? ar : en;
@@ -55,19 +57,26 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
     }
   }
 
-  Future<void> _importCsv() async {
+  Future<void> _importCsv({String? pasted}) async {
     if (_saving) return;
     setState(() => _saving = true);
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['csv'],
-        withData: true,
-      );
-      if (!mounted || result == null) return;
-      final bytes = result.files.single.bytes;
-      if (bytes == null || bytes.length > 65536) throw const FormatException();
-      final statements = parseCreditStatementCsv(utf8.decode(bytes));
+      final String csv;
+      if (pasted != null) {
+        csv = pasted;
+      } else {
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: ['csv'],
+          withData: true,
+        );
+        if (!mounted || result == null) return;
+        final bytes = result.files.single.bytes;
+        if (bytes == null || bytes.length > 65536)
+          throw const FormatException();
+        csv = utf8.decode(bytes);
+      }
+      final statements = parseCreditStatementCsv(csv);
       final dates = MaterialLocalizations.of(context);
       final currency = widget.wallet.currency ?? '';
       final confirmed = await showDialog<bool>(
@@ -116,6 +125,82 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
               'Could not import the CSV. Check the header, dates and amounts.',
               'تعذّر استيراد الملف. تحقّق من أسماء الأعمدة والتواريخ والمبالغ.'),
         )));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _pasteCsv() async {
+    var text = '';
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_label('Paste statement CSV', 'لصق كشوف CSV')),
+        content: TextField(
+          minLines: 4,
+          maxLines: 8,
+          onChanged: (value) => text = value,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(_label('Cancel', 'إلغاء'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, text),
+              child: Text(_label('Preview', 'معاينة'))),
+        ],
+      ),
+    );
+    if (result != null && mounted) await _importCsv(pasted: result);
+  }
+
+  Future<void> _copyCsv(List<BankStatementLine> rows) async {
+    try {
+      await Clipboard.setData(
+          ClipboardData(text: exportCreditStatementCsv(rows)));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_label('Statements copied.', 'تم نسخ الكشوف.')),
+        ));
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(_label('Could not copy statements.', 'تعذّر نسخ الكشوف.')),
+        ));
+    }
+  }
+
+  Future<void> _delete(DateTime closed) async {
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_label('Delete this statement?', 'حذف كشف الحساب؟')),
+        content:
+            Text(MaterialLocalizations.of(context).formatMediumDate(closed)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(_label('Cancel', 'إلغاء'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(_label('Delete', 'حذف'))),
+        ],
+      ),
+    );
+    if (!mounted || approved != true || _saving) return;
+    setState(() => _saving = true);
+    try {
+      await database.deleteCreditCardStatement(widget.wallet.walletPk, closed);
+      if (mounted)
+        setState(() => _statements =
+            database.getCreditCardStatements(widget.wallet.walletPk));
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_label(
+              'Could not delete this statement.', 'تعذّر حذف كشف الحساب.')),
+        ));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -170,6 +255,10 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
                 onPressed: _saving ? null : _importCsv,
                 child: Text(_label('Choose CSV file', 'اختر ملف CSV')),
               ),
+              TextButton(
+                onPressed: _saving ? null : _pasteCsv,
+                child: Text(_label('Paste CSV', 'لصق CSV')),
+              ),
             ],
           ),
         ),
@@ -204,18 +293,60 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
                   title: Text(
                 _label('No statements recorded.', 'لا توجد كشوف حساب مسجّلة.'),
               ));
+            final rows = snapshot.data!;
+            final visible =
+                rows.where((row) => !_onlyUnpaid || (row.remaining ?? 0) > 0);
+            final export = [
+              for (final row in rows)
+                if (row.currency == widget.wallet.currency?.toLowerCase())
+                  (
+                    closed: row.closed,
+                    due: row.due,
+                    balance: row.balance,
+                    minimum: row.minimum
+                  ),
+            ];
             return Column(children: [
-              for (final row in snapshot.data!)
+              SwitchListTile(
+                title: Text(_label('Show estimated unpaid statements only',
+                    'عرض الكشوف غير المسددة تقديريًا فقط')),
+                value: _onlyUnpaid,
+                onChanged: (value) => setState(() => _onlyUnpaid = value),
+              ),
+              TextButton(
+                onPressed: export.isEmpty ? null : () => _copyCsv(export),
+                child: Text(_label('Copy statements in current currency as CSV',
+                    'نسخ كشوف العملة الحالية بصيغة CSV')),
+              ),
+              if (visible.isEmpty)
+                ListTile(
+                    title: Text(_label(
+                        'No matching statements.', 'لا توجد كشوف مطابقة.'))),
+              for (final row in visible)
                 ListTile(
                   title: Text(
                       '${dates.formatMediumDate(row.closed)} · ${_amount(row.balance, row.currency)}'),
                   subtitle: Text([
                     '${_label('Due', 'الاستحقاق')} ${dates.formatMediumDate(row.due)}',
                     '${_label('Bank minimum due', 'الحد الأدنى للسداد')} ${_amount(row.minimum, row.currency)}',
+                    if (row.credits != null)
+                      '${_label('Recorded credits after closing', 'المبالغ الدائنة بعد الإقفال')} ${_amount(row.credits!, row.currency)}',
+                    if (row.remaining != null)
+                      '${_label('Estimated remaining balance', 'الرصيد المتبقي التقديري')} ${_amount(row.remaining!, row.currency)}',
+                    if (row.minimumRemaining != null)
+                      '${_label('Estimated minimum remaining', 'المتبقي التقديري من الحد الأدنى')} ${_amount(row.minimumRemaining!, row.currency)}',
+                    if (row.overdue)
+                      _label('Estimated minimum payment overdue',
+                          'الحد الأدنى التقديري متأخر'),
                     if (row.ledgerBalance != null)
                       '${_label('Difference from recorded balance', 'الفرق عن الرصيد المسجّل')} '
                           '${_amount(row.balance - row.ledgerBalance!, row.currency)}',
                   ].join('\n')),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: _label('Delete statement', 'حذف كشف الحساب'),
+                    onPressed: _saving ? null : () => _delete(row.closed),
+                  ),
                   onTap: _saving ||
                           widget.wallet.currency?.toLowerCase() != row.currency
                       ? null

@@ -4381,16 +4381,33 @@ class FinanceDatabase extends _$FinanceDatabase {
     });
   }
 
+  Future<bool> deleteCreditCardStatement(String walletPk, DateTime closed) async {
+    final cutoff = DateTime(closed.year, closed.month, closed.day + 1);
+    final count = await customUpdate(
+      'DELETE FROM credit_card_statements WHERE wallet_fk = ? AND closes_at = ?',
+      variables: [Variable<String>(walletPk), Variable<int>(cutoff.millisecondsSinceEpoch)],
+    );
+    return count > 0;
+  }
+
   Future<List<({DateTime closed, DateTime due, double balance, double minimum, String currency,
-      double? ledgerBalance})>> getCreditCardStatements(String walletPk) async {
+      double? ledgerBalance, double? credits, double? remaining,
+      double? minimumRemaining, bool overdue})>> getCreditCardStatements(
+        String walletPk, {DateTime? asOf}) async {
+    final now = asOf ?? DateTime.now();
     final rows = await customSelect(
       'SELECT s.*, CASE WHEN LOWER(w.currency) = s.currency THEN '
       '(SELECT COALESCE(SUM(amount), 0) FROM transactions '
       'WHERE wallet_fk = s.wallet_fk AND paid = 1 AND skip_paid = 0 '
-      'AND date_created < CAST(s.closes_at / 1000 AS INTEGER)) END AS ledger_total '
+      'AND date_created < CAST(s.closes_at / 1000 AS INTEGER)) END AS ledger_total, '
+      'CASE WHEN LOWER(w.currency) = s.currency AND CAST(s.closes_at / 1000 AS INTEGER) <= ? THEN '
+      '(SELECT COALESCE(SUM(amount), 0) FROM transactions '
+      'WHERE wallet_fk = s.wallet_fk AND paid = 1 AND skip_paid = 0 AND amount > 0 '
+      'AND date_created >= CAST(s.closes_at / 1000 AS INTEGER) '
+      'AND date_created <= ?) END AS statement_credits '
       'FROM credit_card_statements s JOIN wallets w ON w.wallet_pk = s.wallet_fk '
       'WHERE s.wallet_fk = ? ORDER BY s.closes_at DESC LIMIT 36',
-      variables: [Variable<String>(walletPk)],
+      variables: [Variable<DateTime>(now), Variable<DateTime>(now), Variable<String>(walletPk)],
     ).get();
     DateTime dayLabel(int milliseconds) {
       final cutoff = DateTime.fromMillisecondsSinceEpoch(milliseconds);
@@ -4398,13 +4415,24 @@ class FinanceDatabase extends _$FinanceDatabase {
     }
     return rows.map((row) {
       final signed = row.readNullable<double>('ledger_total');
+      final credits = row.readNullable<double>('statement_credits');
+      final balance = row.read<double>('statement_balance');
+      final minimum = row.read<double>('minimum_due');
+      final due = row.read<int>('due_at');
+      final remaining = credits == null ? null : (balance - credits).clamp(0.0, balance);
+      final minimumRemaining = credits == null ? null : (minimum - credits).clamp(0.0, minimum);
       return (
         closed: dayLabel(row.read<int>('closes_at')),
-        due: dayLabel(row.read<int>('due_at')),
-        balance: row.read<double>('statement_balance'),
-        minimum: row.read<double>('minimum_due'),
+        due: dayLabel(due),
+        balance: balance,
+        minimum: minimum,
         currency: row.read<String>('currency'),
         ledgerBalance: signed == null ? null : (signed < 0 ? -signed : 0.0),
+        credits: credits,
+        remaining: remaining,
+        minimumRemaining: minimumRemaining,
+        overdue: minimumRemaining != null && minimumRemaining > 0 &&
+            now.millisecondsSinceEpoch >= due,
       );
     }).toList();
   }

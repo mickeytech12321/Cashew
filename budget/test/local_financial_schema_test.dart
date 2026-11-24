@@ -102,6 +102,7 @@ void main() {
     final statements = parseCreditStatementCsv(
       '$creditStatementCsvHeader\n2027-01-31,2027-02-16,200,30\n2027-02-28,2027-03-16,250,35',
     );
+    expect(parseCreditStatementCsv(exportCreditStatementCsv(statements)), statements);
     expect(await db.importCreditCardStatements('card', statements), 2);
     expect(await db.importCreditCardStatements('card', statements), 0);
     expect(() => parseCreditStatementCsv(
@@ -196,13 +197,29 @@ void main() {
     await expectLater(record(120), throwsArgumentError);
     await record(25);
     await record(30);
-    final statement = (await db.getCreditCardStatements('card')).single;
+    await db.into(db.transactions).insert(Transaction(
+      transactionPk: 'credit', name: 'Credit', amount: 20, note: '',
+      categoryFk: 'daily', walletFk: 'card', dateCreated: DateTime(2027, 3, 2),
+      income: true, paid: true, skipPaid: false,
+    ));
+    final beforeDue = (await db.getCreditCardStatements('card', asOf: due)).single;
+    expect(beforeDue.overdue, isFalse);
+    final statement = (await db.getCreditCardStatements('card',
+        asOf: DateTime(2027, 3, 13))).single;
+    expect(statement.credits, 20);
+    expect(statement.remaining, 85);
+    expect(statement.minimumRemaining, 10);
+    expect(statement.overdue, isTrue);
     expect(statement.closed, closing);
     expect(statement.due, due);
     expect(statement.balance, 105);
     expect(statement.minimum, 30);
     expect(statement.ledgerBalance, 100);
-    expect(await db.select(db.transactions).get(), hasLength(2));
+    expect(await db.select(db.transactions).get(), hasLength(3));
+    expect(await db.deleteCreditCardStatement('other', closing), isFalse);
+    expect(await db.deleteCreditCardStatement('card', closing), isTrue);
+    expect(await db.getCreditCardStatements('card'), isEmpty);
+    expect(await db.select(db.transactions).get(), hasLength(3));
   });
 
   test('stale sync preserves edits, exposes conflicts and applies explicit choices', () async {

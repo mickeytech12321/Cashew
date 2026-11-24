@@ -73,3 +73,12 @@ List<BankStatementLine> parseCreditStatementCsv(String content) {
   }
   return statements;
 }
+
+String exportCreditStatementCsv(Iterable<BankStatementLine> statements) {
+  String date(DateTime value) => value.toIso8601String().split('T').first;
+  return const ListToCsvConverter().convert([
+    creditStatementCsvHeader.split(','),
+    for (final row in statements)
+      [date(row.closed), date(row.due), row.balance, row.minimum],
+  ]);
+}
