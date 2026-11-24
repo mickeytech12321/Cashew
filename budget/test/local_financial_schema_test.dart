@@ -418,6 +418,13 @@ void main() {
     expect(summary.units, 5);
     expect(summary.cost, closeTo(77.5, 0.00001));
     expect(summary.realized, closeTo(212.5, 0.00001));
+    final fifo = InvestmentBalance.fromTrades(
+      await db.getInvestmentTrades('holding'),
+      method: InvestmentCostBasis.fifo,
+    );
+    expect(fifo.units, 5);
+    expect(fifo.cost, closeTo(100, 0.00001));
+    expect(fifo.realized, closeTo(235, 0.00001));
     await expectLater(trade('invalid', 1, false, 11, 30, 0), throwsStateError);
     await expectLater(
         db.removeInvestmentTrade('holding', 'a'), throwsStateError);
@@ -429,6 +436,33 @@ void main() {
         (await db.getInvestmentPriceHistory('holding'))
             .map((quote) => quote.price),
         [31, 29]);
+  });
+
+  test('FIFO reuses partial lots and clears the basis on liquidation', () {
+    final day = DateTime(2027, 2, 1);
+    final trades = [
+      InvestmentTrade(id: 'a', date: day, buy: true, units: 1.5, price: 8, fees: 3),
+      InvestmentTrade(id: 'b', date: day, buy: true, units: 0.5, price: 20, fees: 0),
+      InvestmentTrade(id: 'c', date: day, buy: false, units: 0.75, price: 30, fees: 1),
+      InvestmentTrade(id: 'd', date: day, buy: false, units: 1, price: 30, fees: 2),
+    ];
+    final partial = InvestmentBalance.fromTrades(
+      trades,
+      method: InvestmentCostBasis.fifo,
+    );
+    expect(partial.units, 0.25);
+    expect(partial.cost, 5);
+    expect(partial.realized, 29.5);
+
+    trades.add(InvestmentTrade(
+        id: 'e', date: day, buy: false, units: 0.25, price: 40, fees: 1));
+    final closed = InvestmentBalance.fromTrades(
+      trades,
+      method: InvestmentCostBasis.fifo,
+    );
+    expect(closed.units, 0);
+    expect(closed.cost, 0);
+    expect(closed.realized, 33.5);
   });
 
   test('goal forecast offsets past contributions and scheduled payments once',

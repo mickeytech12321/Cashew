@@ -26,6 +26,7 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
   Future<List<({DateTime date, double price})>>? _prices;
   String? _selected;
   bool _busy = false;
+  InvestmentCostBasis _costBasis = InvestmentCostBasis.weightedAverage;
 
   String _label(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
@@ -122,11 +123,38 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
               'تعذّر تحميل الصفقات.',
             )));
           final trades = snapshot.data!;
-          final balance = InvestmentBalance.fromTrades(trades);
+          final InvestmentBalance balance;
+          try {
+            balance = InvestmentBalance.fromTrades(trades, method: _costBasis);
+          } on StateError {
+            return ListTile(
+              title: Text(_label('Could not calculate holdings.',
+                  'تعذّر حساب الوحدات المملوكة.')),
+            );
+          }
           final price = holding.price;
           final valuation = price == null ? null : balance.units * price;
           final dates = MaterialLocalizations.of(context);
           return Column(children: [
+            ListTile(
+              title: Text(_label('Cost basis method', 'طريقة حساب التكلفة')),
+              trailing: DropdownButton<InvestmentCostBasis>(
+                value: _costBasis,
+                items: [
+                  DropdownMenuItem(
+                    value: InvestmentCostBasis.weightedAverage,
+                    child: Text(_label('Weighted average', 'المتوسط المرجّح')),
+                  ),
+                  DropdownMenuItem(
+                    value: InvestmentCostBasis.fifo,
+                    child: Text(_label('FIFO', 'الأقدم أولًا')),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => _costBasis = value);
+                },
+              ),
+            ),
             ListTile(
               title: Text(_label('Units held', 'الوحدات المملوكة')),
               trailing: Text(balance.units.toStringAsFixed(6)),
