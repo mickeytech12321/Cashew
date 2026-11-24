@@ -71,7 +71,7 @@ android {
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            signingConfig (System.getenv('CASHEW_TEST_RELEASE') == 'true' ? signingConfigs.debug : signingConfigs.release)
         }
     }
 }
