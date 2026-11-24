@@ -26,6 +26,30 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   late var _goals = database.getAllObjectives(
       objectiveType: ObjectiveType.goal, isArchived: false);
   bool _projectRecurrences = false;
+  int _forecastPage = 0;
+  static const _forecastPageSize = 100;
+
+  String _forecastPreferenceKey(String scenarioPk) =>
+      'planningForecastOptions.$scenarioPk';
+
+  Future<void> _saveForecastOptions(
+    Set<String> accounts,
+    bool projectRecurrences,
+  ) async {
+    final scenario = _selected!;
+    final key = _forecastPreferenceKey(scenario['scenario_pk'] as String);
+    await _write(() async {
+      final saved = await sharedPreferences.setStringList(
+        key,
+        [projectRecurrences ? '1' : '0', ...accounts],
+      );
+      if (!saved) throw StateError('Could not save forecast options');
+      if (!mounted) return;
+      _scheduledAccounts = accounts;
+      _projectRecurrences = projectRecurrences;
+      _select(scenario);
+    });
+  }
 
   String _label(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
@@ -148,8 +172,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
       ),
     );
     if (result == null || !mounted) return;
-    _scheduledAccounts = result;
-    _select(_selected!);
+    await _saveForecastOptions(result, _projectRecurrences);
   }
 
   Future<void> _openPlanningPage(Widget page) async {
@@ -164,15 +187,19 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
 
   void _select(Map<String, dynamic> scenario) {
     setState(() {
-      if (_selected?['scenario_pk'] != scenario['scenario_pk']) {
-        _scheduledAccounts = {};
-        _projectRecurrences = false;
+      final id = scenario['scenario_pk'] as String;
+      if (_selected?['scenario_pk'] != id) {
+        final options = sharedPreferences.getStringList(
+          _forecastPreferenceKey(id),
+        );
+        _scheduledAccounts = options?.skip(1).toSet() ?? {};
+        _projectRecurrences = options?.firstOrNull == '1';
       }
+      _forecastPage = 0;
       if (scenario['currency'] == null && _scheduledAccounts.length > 1) {
         _scheduledAccounts = {};
       }
       _selected = scenario;
-      final id = scenario['scenario_pk'] as String;
       _forecast = database.calculatePlanningScenario(id,
           scheduledWalletPks: _scheduledAccounts,
           projectRecurrences: _projectRecurrences);
@@ -287,6 +314,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
         return;
       }
       await database.deletePlanningScenario(scenarioPk);
+      await sharedPreferences.remove(_forecastPreferenceKey(scenarioPk));
       if (mounted)
         setState(() {
           _scenarios = database.getPlanningScenarios();
@@ -444,10 +472,8 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                   value: _projectRecurrences,
                   onChanged: _busy
                       ? null
-                      : (value) {
-                          _projectRecurrences = value;
-                          _select(_selected!);
-                        },
+                      : (value) =>
+                          _saveForecastOptions(_scheduledAccounts, value),
                 ),
               if (_selected != null)
                 Wrap(children: [
@@ -501,6 +527,9 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
             key: ValueKey(('forecast', selectedPk)),
             future: _forecast,
             builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const LinearProgressIndicator();
+              }
               final error = snapshot.error;
               if (error is PlanningRateUnavailable) {
                 final source = error.source?.toUpperCase() ?? '—';
@@ -525,8 +554,9 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
               String balanceAt(Map<String, dynamic> point) =>
                   '${(point['balance'] as num).toStringAsFixed(2)} ${currency ?? ''}'
                       .trim();
-              // Render a bounded preview while keeping the calculation horizon intact.
-              const visibleCount = 100;
+              final start = _forecastPage * _forecastPageSize;
+              final visible = points.skip(start).take(_forecastPageSize);
+              final end = start + visible.length;
               return Column(
                 children: [
                   ListTile(
@@ -547,7 +577,29 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                       subtitle: Text(dates.formatMediumDate(shortfall['date'] as DateTime)),
                       trailing: Text(balanceAt(shortfall)),
                     ),
-                  for (final point in points.take(visibleCount))
+                  if (points.length > _forecastPageSize)
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Wrap(
+                        spacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          TextButton(
+                            onPressed: start == 0 ? null
+                                : () => setState(() => _forecastPage--),
+                            child: Text(_label('Previous', 'السابق')),
+                          ),
+                          Text(_label('${start + 1}–$end of ${points.length}',
+                              '${start + 1}–$end من ${points.length}')),
+                          TextButton(
+                            onPressed: end == points.length ? null
+                                : () => setState(() => _forecastPage++),
+                            child: Text(_label('Next', 'التالي')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  for (final point in visible)
                     ListTile(
                       title: Text(point['name'] as String? ??
                           _label('Starting balance', 'الرصيد الافتتاحي')),
@@ -564,10 +616,6 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                       trailing:
                           Text((point['balance'] as num).toStringAsFixed(2)),
                     ),
-                  if (points.length > visibleCount)
-                    ListTile(
-                        title: Text(_label('Showing the first 100 entries.',
-                            'يتم عرض أول ١٠٠ بند.'))),
                 ],
               );
             },
