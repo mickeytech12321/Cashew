@@ -49,9 +49,12 @@ class MainActivity : FlutterFragmentActivity() {
         notificationEvents = EventChannel(messenger, "cashew/bank_notifications/events")
         notificationEvents?.setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
-                BankNotificationListener.allowedPackages =
-                    (arguments as? List<*>)?.filterIsInstance<String>()?.toSet().orEmpty()
-                BankNotificationListener.sink = events
+                if (!hasBankNotificationAccess()) return
+                val options = arguments as? Map<*, *> ?: return
+                val packages = (options["packages"] as? List<*>)
+                    ?.filterIsInstance<String>()?.toSet().orEmpty()
+                val from = (options["since"] as? Number)?.toLong() ?: return
+                BankNotificationListener.startStream(packages, from, events)
             }
 
             override fun onCancel(arguments: Any?) = clearBankNotificationStream()
@@ -84,8 +87,7 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     private fun clearBankNotificationStream() {
-        BankNotificationListener.sink = null
-        BankNotificationListener.allowedPackages = emptySet()
+        BankNotificationListener.stopStream()
     }
 
     private fun hasBankNotificationAccess(): Boolean {

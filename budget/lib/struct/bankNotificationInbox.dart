@@ -20,6 +20,7 @@ class BankNotification {
 const _access = MethodChannel('cashew/bank_notifications/settings');
 const _events = EventChannel('cashew/bank_notifications/events');
 const _packagesKey = 'bankNotificationAllowedPackages';
+const _captureSinceKey = 'bankNotificationCaptureSince';
 const _enabledKey = 'bankNotificationImportEnabled';
 final bankNotificationInbox = BankNotificationInbox();
 
@@ -77,6 +78,13 @@ class BankNotificationInbox {
     final validated = parsePackages(packages.join(' '));
     if (enabled && validated.isEmpty)
       throw const FormatException('Select an app');
+    final changed = this.enabled != enabled ||
+        !listEquals(this.packages, validated);
+    if (changed &&
+        !await sharedPreferences.setInt(
+            _captureSinceKey, DateTime.now().millisecondsSinceEpoch)) {
+      throw StateError('Could not save notification capture start');
+    }
     if (!await sharedPreferences.setStringList(_packagesKey, validated) ||
         !await sharedPreferences.setBool(_enabledKey, enabled)) {
       throw StateError('Could not save notification settings');
@@ -97,7 +105,19 @@ class BankNotificationInbox {
     try {
       final permitted = await hasAccess();
       if (!permitted || configuration != _configuration) return;
-      _subscription = _events.receiveBroadcastStream(allowed.toList()).listen(
+      final now = DateTime.now();
+      final cutoff = now.subtract(const Duration(days: 1)).millisecondsSinceEpoch;
+      var since = sharedPreferences.getInt(_captureSinceKey);
+      if (since == null) {
+        // Existing opt-ins start recovery from their first launch with this version.
+        since = now.millisecondsSinceEpoch;
+        if (!await sharedPreferences.setInt(_captureSinceKey, since)) return;
+        if (configuration != _configuration) return;
+      }
+      _subscription = _events.receiveBroadcastStream({
+        'packages': allowed.toList(),
+        'since': since < cutoff ? cutoff : since,
+      }).listen(
         (data) {
           if (data is! Map) return;
           final timestamp = data['postedAt'];

@@ -75,15 +75,27 @@ class InitializeNotificationService extends StatefulWidget {
 }
 
 class _InitializeNotificationServiceState
-    extends State<InitializeNotificationService> {
+    extends State<InitializeNotificationService> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     Future.delayed(Duration.zero, () async {
       if (!mounted) return;
       initNotificationScanning();
       bankNotificationInbox.refresh();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) bankNotificationInbox.refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   @override

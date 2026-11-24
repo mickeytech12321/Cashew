@@ -636,8 +636,8 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(_label(
-              'While Cashew is running, matching transaction notifications from the apps below appear for review. Cashew stores the parsed amount and card suffix locally.',
-              'أثناء تشغيل Cashew، تظهر معاملات التطبيقات التالية للمراجعة. يحفظ Cashew المبلغ المستخرج وآخر أرقام البطاقة محليًا.',
+              'Matching transactions appear for review. When you reopen Cashew, it can recover notifications from the past day that are still visible in Android and arrived after you enabled this setting. Cashew stores parsed details locally.',
+              'تظهر المعاملات المطابقة للمراجعة. عند إعادة فتح Cashew، يمكنه قراءة إشعارات آخر يوم إذا كانت لا تزال ظاهرة في أندرويد ووصلت بعد تفعيل الإعداد. يحفظ Cashew البيانات المستخرجة محليًا.',
             )),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
