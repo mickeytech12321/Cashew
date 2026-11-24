@@ -24,6 +24,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.50.1'
           cache: true
       - name: Toolchain versions
         run: |
@@ -167,4 +168,15 @@ jobs:
         with:
           name: cashew-free-edition-debug
           path: budget/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+      - name: Build optimized Android release test APK
+        working-directory: budget
+        env:
+          CASHEW_TEST_RELEASE: 'true'
+        run: flutter build apk --release --no-tree-shake-icons
+      - name: Upload release test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: cashew-free-edition-release-test
+          path: budget/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
