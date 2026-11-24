@@ -1,3 +1,4 @@
+import 'package:budget/pages/investmentsPage.dart';
 import 'package:budget/pages/transferHistoryPage.dart';
 import 'package:budget/pages/financialInsightsPage.dart';
 import 'package:budget/pages/planningScenariosPage.dart';
@@ -549,6 +550,14 @@ class SettingsPageContent extends StatelessWidget {
               ? 'الأصول والالتزامات'
               : 'Assets and liabilities',
           icon: Icons.account_balance_outlined,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const InvestmentsPage(),
+          title: Localizations.localeOf(context).languageCode == 'ar'
+              ? 'الاستثمارات'
+              : 'Investments',
+          icon: Icons.show_chart_outlined,
         ),
 
         SettingsContainerOpenPage(

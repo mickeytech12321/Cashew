@@ -19,6 +19,9 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   bool _busy = false;
   late final _wallets = database.getAllWallets();
   String? _scheduledWalletPk;
+  String? _goalPk;
+  late final _goals = database.getAllObjectives(
+      objectiveType: ObjectiveType.goal, isArchived: false);
   bool _projectRecurrences = false;
 
   String _label(String english, String arabic) =>
@@ -47,12 +50,14 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
     setState(() {
       if (_selected?['scenario_pk'] != scenario['scenario_pk']) {
         _scheduledWalletPk = null;
+        _goalPk = null;
         _projectRecurrences = false;
       }
       _selected = scenario;
       final id = scenario['scenario_pk'] as String;
       _forecast = database.calculatePlanningScenario(id,
           scheduledWalletPk: _scheduledWalletPk,
+          goalPk: _goalPk,
           projectRecurrences: _projectRecurrences);
       _items = database.getPlanningScenarioItems(id);
     });
@@ -275,6 +280,62 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                     );
                   },
                 ),
+              if (currency != null)
+                FutureBuilder<List<Objective>>(
+                  future: _goals,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError)
+                      return Text(_label(
+                          'Could not load goals.', 'تعذّر تحميل الأهداف.'));
+                    if (!snapshot.hasData)
+                      return const LinearProgressIndicator();
+                    final base = _asDate(_selected!['base_date']);
+                    final days = _selected!['horizon_days'] as int;
+                    final end = DateTime(
+                        base.year,
+                        base.month,
+                        base.day + days,
+                        base.hour,
+                        base.minute,
+                        base.second,
+                        base.millisecond,
+                        base.microsecond);
+                    final goals = snapshot.data!
+                        .where((goal) =>
+                            goal.endDate != null &&
+                            !goal.endDate!.isBefore(base) &&
+                            !goal.endDate!.isAfter(end))
+                        .toList();
+                    if (goals.isEmpty) return const SizedBox.shrink();
+                    return DropdownButton<String>(
+                      isExpanded: true,
+                      value: goals.any((goal) => goal.objectivePk == _goalPk)
+                          ? _goalPk
+                          : '',
+                      items: [
+                        DropdownMenuItem(
+                            value: '',
+                            child: Text(
+                              _label('Exclude goal projection',
+                                  'استبعاد توقّع الهدف'),
+                            )),
+                        for (final goal in goals)
+                          DropdownMenuItem(
+                              value: goal.objectivePk,
+                              child: Text(
+                                  _label('Project goal: ${goal.name}',
+                                      'توقّع الهدف: ${goal.name}'),
+                                  overflow: TextOverflow.ellipsis)),
+                      ],
+                      onChanged: _busy
+                          ? null
+                          : (value) {
+                              _goalPk = value == '' ? null : value;
+                              _select(_selected!);
+                            },
+                    );
+                  },
+                ),
               if (_selected != null && _scheduledWalletPk != null)
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -374,7 +435,10 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                           _label('Starting balance', 'الرصيد الافتتاحي')),
                       subtitle: Text([
                         dates.formatMediumDate(point['date'] as DateTime),
-                        if (point['projected'] == true)
+                        if (point['goal'] == true)
+                          _label(
+                              'Remaining goal amount', 'المبلغ المتبقي للهدف')
+                        else if (point['projected'] == true)
                           _label('Projected recurrence', 'تكرار متوقع')
                         else if (point['scheduled'] == true)
                           _label('Scheduled', 'مجدولة'),

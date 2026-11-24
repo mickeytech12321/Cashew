@@ -1,3 +1,4 @@
+import 'package:budget/struct/investmentLedger.dart';
 import 'package:budget/struct/bankNotificationInbox.dart';
 import 'dart:io';
 
@@ -20,6 +21,105 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('investment ledger weights costs and rolls back invalid history edits',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.createInvestmentHolding(
+        id: 'holding', name: 'Fund', currency: 'EGP');
+    Future<void> trade(String id, int day, bool buy, double units, double price,
+            double fees) =>
+        db.addInvestmentTrade(
+            'holding',
+            InvestmentTrade(
+              id: id,
+              date: DateTime(2027, 2, day),
+              buy: buy,
+              units: units,
+              price: price,
+              fees: fees,
+            ));
+    await trade('a', 1, true, 10, 10, 10);
+    await trade('b', 2, true, 10, 20, 0);
+    await trade('c', 3, false, 15, 30, 5);
+    final summary =
+        InvestmentBalance.fromTrades(await db.getInvestmentTrades('holding'));
+    expect(summary.units, 5);
+    expect(summary.cost, closeTo(77.5, 0.00001));
+    expect(summary.realized, closeTo(212.5, 0.00001));
+    await expectLater(trade('invalid', 1, false, 11, 30, 0), throwsStateError);
+    await expectLater(
+        db.removeInvestmentTrade('holding', 'a'), throwsStateError);
+    expect(await db.getInvestmentTrades('holding'), hasLength(3));
+    await db.setInvestmentMarketPrice('holding', 31, DateTime(2027, 2, 5));
+    await db.setInvestmentMarketPrice('holding', 29, DateTime(2027, 2, 4));
+    expect((await db.getInvestmentHoldings()).single.price, 31);
+    expect(
+        (await db.getInvestmentPriceHistory('holding'))
+            .map((quote) => quote.price),
+        [31, 29]);
+  });
+
+  test('goal forecast offsets past contributions and scheduled payments once',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final start = DateTime(2027, 2, 2);
+    final due = DateTime(2027, 2, 7);
+    await db.savePlanningScenario(
+        scenarioPk: 'plan',
+        name: 'Plan',
+        baseDate: start,
+        horizonDays: 15,
+        startingBalance: 1000,
+        currency: 'EGP');
+    await db.into(db.wallets).insert(WalletsCompanion.insert(
+          walletPk: const Value('wallet'),
+          name: 'Account',
+          order: 0,
+          currency: const Value('egp'),
+        ));
+    await db.into(db.objectives).insert(ObjectivesCompanion.insert(
+          objectivePk: const Value('goal'),
+          name: 'Trip',
+          amount: 300,
+          order: 0,
+          walletFk: const Value('wallet'),
+          endDate: Value(due),
+        ));
+    Future<void> expense(
+        String id, double amount, DateTime date, bool paid) async {
+      await db.into(db.transactions).insert(Transaction(
+            transactionPk: id,
+            name: id,
+            amount: amount,
+            note: '',
+            categoryFk: 'category',
+            walletFk: 'wallet',
+            dateCreated: date,
+            income: false,
+            paid: paid,
+            skipPaid: false,
+            type: paid ? null : TransactionSpecialType.upcoming,
+            objectiveFk: 'goal',
+          ));
+    }
+
+    await expense(
+        'covered', -100, start.subtract(const Duration(days: 1)), true);
+    await expense('scheduled', -50, due.add(const Duration(hours: 10)), false);
+    final withScheduled = await db.calculatePlanningScenario('plan',
+        goalPk: 'goal', scheduledWalletPk: 'wallet');
+    expect(
+        withScheduled.where((point) => point['goal'] == true).single['amount'],
+        -150);
+    expect(withScheduled.last['balance'], 800);
+    final withoutScheduled =
+        await db.calculatePlanningScenario('plan', goalPk: 'goal');
+    expect(withoutScheduled.last['balance'], 800);
+    expect(await db.select(db.transactions).get(), hasLength(2));
+  });
+
   test(
       'notification inbox filters sources and stages only parsed transaction fields',
       () async {

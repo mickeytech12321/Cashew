@@ -1,3 +1,4 @@
+import 'package:budget/struct/investmentLedger.dart';
 import 'package:budget/struct/upcomingTransactionsFunctions.dart' show nextRecurringDate;
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
@@ -893,6 +894,30 @@ class FinanceDatabase extends _$FinanceDatabase {
       breakdown_json TEXT NOT NULL
     )''');
     await customStatement('CREATE INDEX IF NOT EXISTS wealth_snapshots_date_idx ON wealth_snapshots(captured_at)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_holdings (
+      holding_pk TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      market_price REAL,
+      market_price_at INTEGER
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_quotes (
+      holding_fk TEXT NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
+      quoted_at INTEGER NOT NULL,
+      price REAL NOT NULL CHECK (price >= 0),
+      PRIMARY KEY (holding_fk, quoted_at)
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_trades (
+      trade_pk TEXT PRIMARY KEY NOT NULL,
+      holding_fk TEXT NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
+      traded_at INTEGER NOT NULL,
+      buy INTEGER NOT NULL CHECK (buy IN (0,1)),
+      units REAL NOT NULL CHECK (units > 0),
+      price REAL NOT NULL CHECK (price > 0),
+      fees REAL NOT NULL CHECK (fees >= 0)
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS investment_trades_holding_date_idx '
+        'ON investment_trades(holding_fk, traded_at)');
     await customStatement('''CREATE TABLE IF NOT EXISTS household_members (
       member_pk TEXT PRIMARY KEY NOT NULL,
       display_name TEXT NOT NULL,
@@ -4574,7 +4599,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Future<List<Map<String, dynamic>>> calculatePlanningScenario(
-      String scenarioPk, {String? scheduledWalletPk, bool projectRecurrences = false,
+      String scenarioPk, {String? scheduledWalletPk, bool projectRecurrences = false, String? goalPk,
         Map<String, dynamic>? rateSettings}) async {
     final scenario = await customSelect(
       'SELECT p.*, c.currency FROM planning_scenarios p '
@@ -4666,6 +4691,7 @@ class FinanceDatabase extends _$FinanceDatabase {
             'amount': entry.amount * ratio,
             'scheduled': true,
             'projected': projected,
+            'goal_pk': entry.objectiveFk,
           });
         }
 
@@ -4686,6 +4712,59 @@ class FinanceDatabase extends _$FinanceDatabase {
               (entry.endDate?.isBefore(next) ?? false)) break;
           addOccurrence(next, projected: true);
           date = next;
+        }
+      }
+    }
+    final scenarioCurrency = scenario.readNullable<String>('currency');
+    if (goalPk != null && scenarioCurrency != null) {
+      final goal = await (select(objectives)
+            ..where((row) => row.objectivePk.equals(goalPk) &
+                row.type.equals(ObjectiveType.goal.index) &
+                row.archived.equals(false)))
+          .getSingleOrNull();
+      final deadline = goal?.endDate;
+      if (goal != null && deadline != null &&
+          !deadline.isBefore(base) && !deadline.isAfter(horizon)) {
+        double convert(double amount, String? currency) {
+          if (amount == 0) return 0;
+          final ratio = strictCurrencyRatio(currency, scenarioCurrency,
+              appStateSettingsPassed: rateSettings);
+          if (ratio == null) throw PlanningRateUnavailable(currency, scenarioCurrency);
+          return amount * ratio;
+        }
+        final goalWallet = await getWalletInstanceOrNull(goal.walletFk);
+        final target = convert(goal.amount.abs(), goalWallet?.currency);
+        final direction = goal.income ? 1 : -1;
+        final settled = await customSelect(
+          'SELECT w.currency AS currency, SUM(t.amount) AS total FROM transactions t '
+          'LEFT JOIN wallets w ON w.wallet_pk = t.wallet_fk '
+          'WHERE t.objective_fk = ? AND t.paid = 1 AND t.skip_paid = 0 AND t.date_created < ? '
+          'GROUP BY w.currency',
+          variables: [Variable<String>(goalPk), Variable<DateTime>(base)],
+        ).get();
+        var contributed = 0.0;
+        for (final row in settled) {
+          contributed += convert(row.read<double>('total'),
+              row.readNullable<String>('currency')) * direction;
+        }
+        final endOfDeadline = advanceDays(
+            DateTime(deadline.year, deadline.month, deadline.day), 1);
+        final scheduled = points.where((point) =>
+            point['goal_pk'] == goalPk &&
+            (point['date'] as DateTime).isBefore(endOfDeadline));
+        for (final point in scheduled) {
+          contributed += (point['amount'] as double) * direction;
+        }
+        final remaining = target - contributed;
+        if (!remaining.isFinite) throw StateError('Invalid goal projection');
+        if (remaining > 0) {
+          points.add({
+            'date': deadline,
+            'item_pk': goalPk,
+            'amount': remaining * direction,
+            'name': goal.name,
+            'goal': true,
+          });
         }
       }
     }
@@ -4735,6 +4814,112 @@ class FinanceDatabase extends _$FinanceDatabase {
        DateTime.now().millisecondsSinceEpoch],
     );
   }
+
+  Future<void> createInvestmentHolding({
+    required String id,
+    required String name,
+    required String currency,
+  }) async {
+    final code = currency.trim().toLowerCase();
+    if (id.isEmpty || name.trim().isEmpty || name.trim().length > NAME_LIMIT ||
+        !RegExp(r'^[a-z]{3}$').hasMatch(code)) {
+      throw ArgumentError('Invalid investment holding');
+    }
+    await customStatement(
+      'INSERT INTO investment_holdings (holding_pk, name, currency) VALUES (?, ?, ?)',
+      [id, name.trim(), code],
+    );
+  }
+
+  Future<List<({String id, String name, String currency, double? price, DateTime? priceAt})>>
+      getInvestmentHoldings() async {
+    final rows = await customSelect(
+      'SELECT * FROM investment_holdings ORDER BY name COLLATE NOCASE, holding_pk',
+    ).get();
+    return rows.map((row) {
+      final timestamp = row.readNullable<int>('market_price_at');
+      return (
+        id: row.read<String>('holding_pk'),
+        name: row.read<String>('name'),
+        currency: row.read<String>('currency'),
+        price: row.readNullable<double>('market_price'),
+        priceAt: timestamp == null ? null : DateTime.fromMillisecondsSinceEpoch(timestamp),
+      );
+    }).toList();
+  }
+
+  Future<void> setInvestmentMarketPrice(String id, double price, DateTime date) async {
+    if (!price.isFinite || price < 0) throw ArgumentError('Invalid market price');
+    final timestamp = date.millisecondsSinceEpoch;
+    await transaction(() async {
+      if ((await customSelect(
+        'SELECT holding_pk FROM investment_holdings WHERE holding_pk = ?',
+        variables: [Variable<String>(id)],
+      ).getSingleOrNull()) == null) throw StateError('Holding not found');
+      await customStatement(
+        'INSERT INTO investment_quotes (holding_fk,quoted_at,price) VALUES (?,?,?) '
+        'ON CONFLICT(holding_fk,quoted_at) DO UPDATE SET price=excluded.price',
+        [id, timestamp, price],
+      );
+      await customStatement(
+        'UPDATE investment_holdings SET market_price = ?, market_price_at = ? '
+        'WHERE holding_pk = ? AND (market_price_at IS NULL OR market_price_at <= ?)',
+        [price, timestamp, id, timestamp],
+      );
+    });
+  }
+
+  Future<List<({DateTime date, double price})>> getInvestmentPriceHistory(String id) async {
+    final rows = await customSelect(
+      'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
+      'ORDER BY quoted_at DESC LIMIT 100',
+      variables: [Variable<String>(id)],
+    ).get();
+    return rows.map((row) => (
+      date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('quoted_at')),
+      price: row.read<double>('price'),
+    )).toList();
+  }
+
+  Future<List<InvestmentTrade>> getInvestmentTrades(String id) async {
+    final rows = await customSelect(
+      'SELECT * FROM investment_trades WHERE holding_fk = ? ORDER BY traded_at, rowid',
+      variables: [Variable<String>(id)],
+    ).get();
+    return rows.map((row) => InvestmentTrade(
+      id: row.read<String>('trade_pk'),
+      date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('traded_at')),
+      buy: row.read<int>('buy') == 1,
+      units: row.read<double>('units'),
+      price: row.read<double>('price'),
+      fees: row.read<double>('fees'),
+    )).toList();
+  }
+
+  Future<void> addInvestmentTrade(String holdingId, InvestmentTrade trade) =>
+      transaction(() async {
+    final holding = await customSelect(
+      'SELECT holding_pk FROM investment_holdings WHERE holding_pk = ?',
+      variables: [Variable<String>(holdingId)],
+    ).getSingleOrNull();
+    if (holding == null) throw StateError('Holding not found');
+    await customStatement(
+      'INSERT INTO investment_trades (trade_pk, holding_fk, traded_at, buy, units, price, fees) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [trade.id, holdingId, trade.date.millisecondsSinceEpoch,
+       trade.buy ? 1 : 0, trade.units, trade.price, trade.fees],
+    );
+    InvestmentBalance.fromTrades(await getInvestmentTrades(holdingId));
+  });
+
+  Future<void> removeInvestmentTrade(String holdingId, String tradeId) =>
+      transaction(() async {
+    await customStatement(
+      'DELETE FROM investment_trades WHERE holding_fk = ? AND trade_pk = ?',
+      [holdingId, tradeId],
+    );
+    InvestmentBalance.fromTrades(await getInvestmentTrades(holdingId));
+  });
 
   Future<List<Map<String, dynamic>>> getWealthAssets() async {
     final rows = await customSelect(
