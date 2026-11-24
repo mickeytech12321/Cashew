@@ -9,3 +9,5 @@ Future<FinanceDatabase> constructDb(String dbName,
 Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) => throw UnimplementedError();
 
 Future overwriteDefaultDB(Uint8List dataStore) => throw UnimplementedError();
+
+Future<void> discardPendingDatabaseRestore() async {}

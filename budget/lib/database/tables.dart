@@ -1,3 +1,4 @@
+import 'package:budget/struct/creditStatementCsv.dart' show BankStatementLine;
 import 'package:budget/struct/investmentLedger.dart';
 import 'package:budget/struct/upcomingTransactionsFunctions.dart' show nextRecurringDate;
 import 'package:budget/functions.dart';
@@ -3687,6 +3688,40 @@ class FinanceDatabase extends _$FinanceDatabase {
     return transaction;
   }
 
+  Future<Transaction?> findLikelyDuplicateTransaction(Transaction draft) async {
+    if (!draft.paid || draft.type != null || draft.categoryFk == '0' ||
+        draft.amount == 0 || !draft.amount.isFinite || draft.pairedTransactionFk != null) {
+      return null;
+    }
+    final title = draft.name.trim().toLowerCase();
+    final date = draft.dateCreated;
+    final start = title.isEmpty ? date.subtract(const Duration(minutes: 5))
+        : DateTime(date.year, date.month, date.day);
+    final end = title.isEmpty ? date.add(const Duration(minutes: 5))
+        : DateTime(date.year, date.month, date.day + 1);
+    final row = await customSelect(
+      'SELECT transaction_pk FROM transactions WHERE wallet_fk = ? '
+      'AND category_fk = ? AND paid = 1 AND type IS NULL AND paired_transaction_fk IS NULL '
+      'AND amount BETWEEN ? AND ? AND date_created >= ? AND date_created < ? '
+      'AND LOWER(TRIM(name)) = ? AND shared_reference_budget_pk IS ? '
+      'AND objective_fk IS ? AND objective_loan_fk IS ? '
+      'ORDER BY date_created DESC, transaction_pk LIMIT 1',
+      variables: [
+        Variable<String>(draft.walletFk),
+        Variable<String>(draft.categoryFk),
+        Variable<double>(draft.amount - 0.00000001),
+        Variable<double>(draft.amount + 0.00000001),
+        Variable<DateTime>(start),
+        Variable<DateTime>(end),
+        Variable<String>(title),
+        Variable<String>(draft.sharedReferenceBudgetPk),
+        Variable<String>(draft.objectiveFk),
+        Variable<String>(draft.objectiveLoanFk),
+      ],
+    ).getSingleOrNull();
+    return row == null ? null : tryGetTransactionFromPk(row.read<String>('transaction_pk'));
+  }
+
   // create or update a new transaction
   Future<int?>? createOrUpdateTransaction(
     Transaction transaction, {
@@ -4272,6 +4307,29 @@ class FinanceDatabase extends _$FinanceDatabase {
         [walletPk, closes.millisecondsSinceEpoch, due.millisecondsSinceEpoch,
          statementBalance, minimumDue, currency],
       );
+    });
+  }
+
+  Future<int> importCreditCardStatements(String walletPk, List<BankStatementLine> statements) {
+    if (statements.isEmpty || statements.length > 36) {
+      throw ArgumentError('Invalid statement import size');
+    }
+    return transaction(() async {
+      var added = 0;
+      for (final line in statements) {
+        final close = DateTime(line.closed.year, line.closed.month, line.closed.day + 1);
+        final existing = await customSelect(
+          'SELECT 1 FROM credit_card_statements WHERE wallet_fk = ? AND closes_at = ?',
+          variables: [Variable<String>(walletPk), Variable<int>(close.millisecondsSinceEpoch)],
+        ).getSingleOrNull();
+        if (existing != null) continue;
+        await saveCreditCardStatement(
+          walletPk: walletPk, closingDate: line.closed, dueDate: line.due,
+          statementBalance: line.balance, minimumDue: line.minimum,
+        );
+        added++;
+      }
+      return added;
     });
   }
 

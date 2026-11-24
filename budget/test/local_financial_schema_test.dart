@@ -1,3 +1,5 @@
+import 'package:budget/database/platform/stagedNativeRestore.dart';
+import 'package:budget/struct/creditStatementCsv.dart';
 import 'package:budget/database/backupValidation.dart';
 import 'dart:typed_data';
 import 'package:budget/struct/syncClient.dart' show SyncLog;
@@ -24,6 +26,90 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('staged restore leaves the live database intact until the next opening', () async {
+    final folder = await Directory.systemTemp.createTemp('cashew-staged-test-');
+    addTearDown(() => folder.delete(recursive: true));
+    final liveFile = File('${folder.path}/db.sqlite');
+    final sourceFile = File('${folder.path}/incoming.sqlite');
+    final live = FinanceDatabase(NativeDatabase(liveFile));
+    final source = FinanceDatabase(NativeDatabase(sourceFile));
+    Future<void> seed(FinanceDatabase db, String name) =>
+        db.into(db.wallets).insert(WalletsCompanion.insert(
+          walletPk: const Value('wallet'), name: name, order: 0,
+        )).then((_) {});
+    await seed(source, 'Restored');
+    await source.close();
+    await seed(live, 'Keep until restart');
+    await stageNativeRestore(liveFile, await sourceFile.readAsBytes());
+    expect((await live.getWalletInstance('wallet')).name, 'Keep until restart');
+    await expectLater(stageNativeRestore(liveFile, Uint8List(200)), throwsFormatException);
+    expect(await pendingNativeRestoreFile(liveFile).exists(), isTrue);
+    await live.close();
+    expect(await applyPendingNativeRestore(liveFile), isTrue);
+    expect(await applyPendingNativeRestore(liveFile), isFalse);
+    final restored = FinanceDatabase(NativeDatabase(liveFile));
+    addTearDown(restored.close);
+    expect((await restored.getWalletInstance('wallet')).name, 'Restored');
+  });
+
+  test('credit CSV imports atomically and preserves a previously saved statement', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.into(db.wallets).insert(WalletsCompanion.insert(
+      walletPk: const Value('card'), name: 'Card', order: 0, currency: const Value('egp'),
+    ));
+    await db.saveAccountDetails(walletPk: 'card', accountType: 'credit');
+    final statements = parseCreditStatementCsv(
+      '$creditStatementCsvHeader\n2027-01-31,2027-02-16,200,30\n2027-02-28,2027-03-16,250,35',
+    );
+    expect(await db.importCreditCardStatements('card', statements), 2);
+    expect(await db.importCreditCardStatements('card', statements), 0);
+    expect(() => parseCreditStatementCsv(
+        '$creditStatementCsvHeader\n2027-02-30,2027-03-16,250,35'),
+        throwsFormatException);
+    expect(() => parseCreditStatementCsv(
+        '$creditStatementCsvHeader\n2027-02-28,2027-03-16,250,260'),
+        throwsFormatException);
+    await expectLater(db.importCreditCardStatements('card', [
+      (closed: DateTime(2027, 3, 31), due: DateTime(2027, 4, 16), balance: 10.0, minimum: 2.0),
+      (closed: DateTime(2027, 4, 30), due: DateTime(2027, 4, 16), balance: 10.0, minimum: 2.0),
+    ]), throwsArgumentError);
+    expect(await db.getCreditCardStatements('card'), hasLength(2));
+    expect(await db.select(db.transactions).get(), isEmpty);
+  });
+
+  test('duplicate hints respect day, labels, account, category and transaction type', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final morning = DateTime(2027, 2, 1, 10);
+    final existing = Transaction(
+      transactionPk: 'old', name: 'Coffee', amount: -30, note: '',
+      categoryFk: 'daily', walletFk: 'wallet', dateCreated: morning,
+      income: false, paid: true, skipPaid: false,
+    );
+    await db.into(db.transactions).insert(existing);
+    final draft = existing.copyWith(
+      transactionPk: 'new', dateCreated: DateTime(2027, 2, 1, 20), name: ' coffee ',
+    );
+    expect((await db.findLikelyDuplicateTransaction(draft))?.transactionPk, 'old');
+    for (final unmatched in [
+      draft.copyWith(amount: -31),
+      draft.copyWith(name: 'Groceries'),
+      draft.copyWith(walletFk: 'other'),
+      draft.copyWith(categoryFk: 'other'),
+      draft.copyWith(dateCreated: DateTime(2027, 2, 2)),
+      draft.copyWith(paid: false),
+      draft.copyWith(type: const Value(TransactionSpecialType.upcoming)),
+    ]) {
+      expect(await db.findLikelyDuplicateTransaction(unmatched), isNull);
+    }
+    final nameless = existing.copyWith(transactionPk: 'unnamed', name: '');
+    await db.into(db.transactions).insert(nameless);
+    expect(await db.findLikelyDuplicateTransaction(nameless.copyWith(
+      dateCreated: morning.add(const Duration(minutes: 6)),
+    )), isNull);
+  });
+
   test('restore validation rejects invalid and future files before replacement', () async {
     expect(() => validateCashewBackupHeader(Uint8List.fromList([1, 2, 3])),
         throwsFormatException);

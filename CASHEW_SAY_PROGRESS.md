@@ -16,7 +16,7 @@
 - CODED: local transfer history is available in Settings, with pagination, confirmation and conflict-checked undo or restore.
 - CODED: conflict-checked undo for journaled local transfers.
 - CODED: journal-backed redo refreshes the saved snapshots so a subsequent undo still verifies the persisted records. Undo writes both deletion logs in the same database transaction.
-- PARTIAL: generalized duplicate detection beyond idempotency keys.
+- PARTIAL: New manual transactions get a possible-duplicate review based on account, amount, category, name and date. Users can still save intentional repeats.
 - CODED: recurring calendar boundary logic plus regression tests for short months/leap years.
 - CODED: transfer UI routes through the atomic journaled API, restores creation of the balancing category on first use, requires known cross-currency rates, and guards against overlapping save taps.
 - CODED: database regression covers transfer pairing, retry without double posting, undo, redo and a second undo. Real-device UI flows still need verification.
@@ -26,7 +26,7 @@
 - CODED: account editor localizes account types and credit metadata in English and Arabic and validates credit fields before saving.
 - PARTIAL: debit/prepaid/e-wallet account types and reusable automation identifiers; richer card metadata still required.
 - PARTIAL: account editor supports linking a repayment account and recording a repayment as a paired balance transfer. Verify balances and double-count behavior across all reports.
-- PARTIAL: saved cards expose outstanding balance, available credit and next configured statement and due dates. The card editor also estimates the latest closed statement balance, its due date, and what remains after credits recorded in Cashew. Saved credit cards can record the bank’s statement balance, due date and minimum due, and compare the recorded amount with the ledger at close. Issuer-specific fee and minimum-due calculations and importing statements remain.
+- PARTIAL: saved cards expose outstanding balance, available credit and next configured statement and due dates. The card editor also estimates the latest closed statement balance, its due date, and what remains after credits recorded in Cashew. Saved credit cards can record the bank’s statement balance, due date and minimum due, and compare the recorded amount with the ledger at close. CSV statements can be previewed and imported together, with existing closing dates skipped. Card statement history can open an editable fee or refund transaction draft in the card account. Issuer-specific automatic fees and minimum-due calculations remain.
 - PARTIAL: homepage Net Worth now excludes archived / exclude-from-net-worth accounts; remaining reports still need the same policy.
 
 ## Phase 03 — Bank Automation / Egypt
@@ -55,7 +55,7 @@
 - PARTIAL: bilingual financial screens are accessible from Settings. English/LTR and Arabic/RTL label rendering have widget tests. Financial insights show monthly paid income, expenses, net cash flow and category spending for each currency. An Android launcher widget shows current-month spending in the selected account’s currency after explicit opt-in. It opens Financial insights and hides snapshots from previous months at refresh. Android build and RTL device review remain.
 
 ## Phase 09 — Security / Release
-- PARTIAL: bank message review strips staged raw text on future approval/ignore/duplicate transitions. New Drive backups and sync snapshots omit raw import message bodies from an isolated database copy while retaining parsed review metadata. Earlier backups can retain the old data. Drive replacement uploads complete before pruning old backups, and sync cancellation waits for the active read to stop before restore. Restore validates the SQLite header, schema version, integrity and expected tables in an isolated copy before replacing local data. Migration and financial regression tests are in the suite. Broader privacy/security review, release notes and APK validation remain.
+- PARTIAL: bank message review strips staged raw text on future approval/ignore/duplicate transitions. New Drive backups and sync snapshots omit raw import message bodies from an isolated database copy while retaining parsed review metadata. Earlier backups can retain the old data. Drive replacement uploads complete before pruning old backups, and sync cancellation waits for the active read to stop before restore. Restore validates the SQLite header, schema version, integrity and expected tables in an isolated copy. Native restores are staged for restart and applied through the SQLite backup API before the main connection opens. Migration and financial regression tests are in the suite. The branch changelog summarizes this release. Broader privacy/security review and APK validation remain.
 
 ## Verification still required
 

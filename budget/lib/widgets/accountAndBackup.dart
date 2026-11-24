@@ -337,6 +337,7 @@ Future<void> createBackupInBackground(context) async {
 }
 
 Future forceDeleteDB() async {
+  await discardPendingDatabaseRestore();
   if (kIsWeb) {
     final html.Storage localStorage = html.window.localStorage;
     localStorage.clear();

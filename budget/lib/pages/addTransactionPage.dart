@@ -402,6 +402,34 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     return result;
   }
 
+  Future<bool> _confirmPossibleDuplicate(Transaction draft) async {
+    final duplicate = await database.findLikelyDuplicateTransaction(draft);
+    if (!mounted) return false;
+    if (duplicate == null) return true;
+    final arabic = Localizations.localeOf(context).languageCode == 'ar';
+    final date = MaterialLocalizations.of(context).formatMediumDate(duplicate.dateCreated);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(arabic ? 'معاملة مشابهة موجودة' : 'Possible duplicate transaction'),
+        content: Text([
+          if (duplicate.name.isNotEmpty) duplicate.name,
+          date,
+          duplicate.amount.toString(),
+          arabic ? 'هل تريد حفظ معاملة أخرى بهذا المبلغ؟'
+              : 'Save another transaction for this amount?',
+        ].join('\n')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false),
+              child: Text(arabic ? 'الرجوع' : 'Go back')),
+          FilledButton(onPressed: () => Navigator.pop(context, true),
+              child: Text(arabic ? 'الحفظ على أي حال' : 'Save anyway')),
+        ],
+      ),
+    );
+    return confirmed == true && mounted;
+  }
+
   Future<bool> addTransactionLocked() async {
     if (appStateSettings["canShowTransactionActionButtonTip"] == true &&
         selectedType != null) {
@@ -455,7 +483,9 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       );
     }
     try {
-      print("Added transaction");
+      final createdTransaction = createTransaction();
+      if (widget.transaction == null &&
+          !await _confirmPossibleDuplicate(createdTransaction)) return false;
       if (selectedTitle != null &&
           selectedCategory != null &&
           selectedTitle != "") {
@@ -466,8 +496,6 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         // }
         await addAssociatedTitles(selectedTitle!, selectedCategory!);
       }
-
-      Transaction createdTransaction = await createTransaction();
 
       if (widget.transaction != null) {
         // Only ask if changes were made that will affect other balance correction

@@ -182,3 +182,4 @@ class InMemoryWebStorage implements DriftWebStorage {
 
 // print("QUERY TEST " + (await databaseSync.getAllBudgets()).toString());
 // print(Uint8List.fromList(dataStore).length);
+Future<void> discardPendingDatabaseRestore() async {}

@@ -1,3 +1,9 @@
+import 'package:budget/pages/addTransactionPage.dart';
+import 'package:budget/widgets/openPopup.dart';
+import 'dart:convert';
+
+import 'package:budget/struct/creditStatementCsv.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
@@ -49,6 +55,88 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
     }
   }
 
+  Future<void> _importCsv() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv'],
+        withData: true,
+      );
+      if (!mounted || result == null) return;
+      final bytes = result.files.single.bytes;
+      if (bytes == null || bytes.length > 65536) throw const FormatException();
+      final statements = parseCreditStatementCsv(utf8.decode(bytes));
+      final dates = MaterialLocalizations.of(context);
+      final currency = widget.wallet.currency ?? '';
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          scrollable: true,
+          title:
+              Text(_label('Review statement import', 'مراجعة استيراد الكشوف')),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(_label(
+                'Existing closing dates will be skipped. Amounts use this card’s currency.',
+                'سيتم تخطي تواريخ الإقفال المسجّلة بالفعل. المبالغ بعملة البطاقة.')),
+            for (final line in statements)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(dates.formatMediumDate(line.closed)),
+                subtitle: Text(_amount(line.balance, currency)),
+              ),
+          ]),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(_label('Cancel', 'إلغاء'))),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(_label('Import statements', 'استيراد الكشوف'))),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      final added = await database.importCreditCardStatements(
+          widget.wallet.walletPk, statements);
+      if (!mounted) return;
+      setState(() => _statements =
+          database.getCreditCardStatements(widget.wallet.walletPk));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_label(
+        '$added statements imported.',
+        'تم استيراد $added كشف حساب.',
+      ))));
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+          _label(
+              'Could not import the CSV. Check the header, dates and amounts.',
+              'تعذّر استيراد الملف. تحقّق من أسماء الأعمدة والتواريخ والمبالغ.'),
+        )));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _recordCardActivity({required bool refund}) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => AddTransactionPage(
+        selectedWallet: widget.wallet,
+        selectedIncome: refund,
+        selectedTitle: refund
+            ? _label('Card refund', 'مرتجع البطاقة')
+            : _label('Card fee', 'رسوم البطاقة'),
+        routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+      ),
+    ));
+    if (mounted)
+      setState(() => _statements =
+          database.getCreditCardStatements(widget.wallet.walletPk));
+  }
+
   String _amount(double value, String currency) =>
       '${value.toStringAsFixed(widget.wallet.decimals.clamp(0, 12))} ${currency.toUpperCase()}';
 
@@ -65,6 +153,40 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
               onPressed: _saving ? null : () => _edit(),
               child: Text(
                   _label('Record a bank statement', 'تسجيل كشف حساب بنكي'))),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: ExpansionTile(
+            title: Text(
+                _label('Import statements from CSV', 'استيراد الكشوف من CSV')),
+            children: [
+              ListTile(
+                title: const SelectableText(creditStatementCsvHeader),
+                subtitle: Text(_label(
+                    'Use YYYY-MM-DD dates and decimal amounts.',
+                    'استخدم تواريخ YYYY-MM-DD ومبالغ عشرية.')),
+              ),
+              OutlinedButton(
+                onPressed: _saving ? null : _importCsv,
+                child: Text(_label('Choose CSV file', 'اختر ملف CSV')),
+              ),
+            ],
+          ),
+        ),
+        Wrap(
+          alignment: WrapAlignment.center,
+          children: [
+            TextButton(
+              onPressed:
+                  _saving ? null : () => _recordCardActivity(refund: false),
+              child: Text(_label('Record card fee', 'تسجيل رسوم البطاقة')),
+            ),
+            TextButton(
+              onPressed:
+                  _saving ? null : () => _recordCardActivity(refund: true),
+              child: Text(_label('Record card refund', 'تسجيل مرتجع البطاقة')),
+            ),
+          ],
         ),
         FutureBuilder(
           future: _statements,
