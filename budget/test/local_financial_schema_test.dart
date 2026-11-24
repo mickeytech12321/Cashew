@@ -43,6 +43,14 @@ void main() {
     expect((await db.getInvestmentHoldings()).single.price, 123.5);
     expect((await db.getInvestmentPriceHistory('fund')).map((q) => q.price),
         [123.5, 100, 90]);
+    final secondPage = await db.getInvestmentPriceHistory('fund', limit: 1, offset: 1);
+    expect(secondPage.single.price, 100);
+    expect(await db.deleteInvestmentQuote('fund', (date: quotes[1].date, price: 1)), isFalse);
+    expect(await db.deleteInvestmentQuote('fund', quotes[1]), isTrue);
+    expect((await db.getInvestmentHoldings()).single.price, 100);
+    expect(await db.deleteInvestmentQuote('fund', secondPage.single), isTrue);
+    expect(await db.deleteInvestmentQuote('fund', quotes[2]), isTrue);
+    expect((await db.getInvestmentHoldings()).single.price, isNull);
     expect(() => parseInvestmentQuoteCsv(
         'date,price\n2026-02-30,10', DateTime(2026, 3, 5)), throwsFormatException);
   });

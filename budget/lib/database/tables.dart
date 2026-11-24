@@ -5146,11 +5146,37 @@ class FinanceDatabase extends _$FinanceDatabase {
     });
   }
 
-  Future<List<InvestmentQuote>> getInvestmentPriceHistory(String id) async {
+  Future<bool> deleteInvestmentQuote(String id, InvestmentQuote quote) =>
+      transaction(() async {
+        final timestamp = quote.date.millisecondsSinceEpoch;
+        final removed = await customUpdate(
+          'DELETE FROM investment_quotes WHERE holding_fk = ? AND quoted_at = ? AND price = ?',
+          variables: [Variable<String>(id), Variable<int>(timestamp),
+            Variable<double>(quote.price)],
+        );
+        if (removed == 0) return false;
+        final latest = await customSelect(
+          'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
+          'ORDER BY quoted_at DESC LIMIT 1',
+          variables: [Variable<String>(id)],
+        ).getSingleOrNull();
+        await customStatement(
+          'UPDATE investment_holdings SET market_price = ?, market_price_at = ? '
+          'WHERE holding_pk = ? AND market_price_at = ?',
+          [latest?.read<double>('price'), latest?.read<int>('quoted_at'), id, timestamp],
+        );
+        return true;
+      });
+
+  Future<List<InvestmentQuote>> getInvestmentPriceHistory(String id,
+      {int limit = 100, int offset = 0}) async {
+    if (limit < 1 || limit > 365 || offset < 0) {
+      throw ArgumentError('Invalid quote history page');
+    }
     final rows = await customSelect(
       'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
-      'ORDER BY quoted_at DESC LIMIT 100',
-      variables: [Variable<String>(id)],
+      'ORDER BY quoted_at DESC LIMIT ? OFFSET ?',
+      variables: [Variable<String>(id), Variable<int>(limit), Variable<int>(offset)],
     ).get();
     return rows.map((row) => (
       date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('quoted_at')),

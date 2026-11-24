@@ -24,7 +24,9 @@ class InvestmentsPage extends StatefulWidget {
 class _InvestmentsPageState extends State<InvestmentsPage> {
   late var _holdings = database.getInvestmentHoldings();
   Future<List<InvestmentTrade>>? _trades;
-  Future<List<({DateTime date, double price})>>? _prices;
+  Future<List<InvestmentQuote>>? _prices;
+  int _quoteOffset = 0;
+  static const _quotePageSize = 25;
   String? _selected;
   bool _busy = false;
 
@@ -62,7 +64,7 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
         _holdings = database.getInvestmentHoldings();
         final id = _selected;
         _trades = id == null ? null : database.getInvestmentTrades(id);
-        _prices = id == null ? null : database.getInvestmentPriceHistory(id);
+        _loadQuotePage(id, 0);
       });
     } catch (_) {
       if (mounted) {
@@ -130,6 +132,46 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
 
   String _money(double value, String currency) =>
       '${value.toStringAsFixed(2)} ${currency.toUpperCase()}';
+
+  void _loadQuotePage(String? id, int offset) {
+    _quoteOffset = offset;
+    _prices = id == null ? null : database.getInvestmentPriceHistory(
+      id, offset: offset, limit: _quotePageSize + 1,
+    );
+  }
+
+  Future<void> _removeQuote(_Holding holding, InvestmentQuote quote) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_label('Delete this price?', 'حذف هذا السعر؟')),
+        content: Text(
+          '${MaterialLocalizations.of(context).formatMediumDate(quote.date)}'
+          ' · ${_money(quote.price, holding.currency)}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(_label('Cancel', 'إلغاء')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(_label('Delete', 'حذف')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _write(() async {
+      final removed = await database.deleteInvestmentQuote(holding.id, quote);
+      if (!removed && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          _label('Price changed. The history has been refreshed.',
+              'تغيّر السعر. تم تحديث السجل.'),
+        )));
+      }
+    });
+  }
 
   Future<void> _importQuotes(_Holding holding) async {
     var input = '';
@@ -323,17 +365,41 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
                         'تعذّر تحميل سجل الأسعار.'),
                   ));
                 final prices = snapshot.data;
-                if (prices == null || prices.isEmpty)
+                if (prices == null || (prices.isEmpty && _quoteOffset == 0))
                   return const SizedBox.shrink();
                 return ExpansionTile(
                   title: Text(
                       _label('Price history', 'سجل الأسعار')),
                   children: [
-                    for (final quote in prices)
-                      ListTile(
-                        title: Text(dates.formatMediumDate(quote.date)),
-                        trailing: Text(_money(quote.price, holding.currency)),
-                      ),
+                    if (snapshot.connectionState != ConnectionState.done)
+                      const LinearProgressIndicator()
+                    else ...[
+                      for (final quote in prices.take(_quotePageSize))
+                        ListTile(
+                          title: Text(dates.formatMediumDate(quote.date)),
+                          subtitle: Text(_money(quote.price, holding.currency)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            tooltip: _label('Delete price', 'حذف السعر'),
+                            onPressed: _busy ? null : () => _removeQuote(holding, quote),
+                          ),
+                        ),
+                      if (_quoteOffset > 0 || prices.length > _quotePageSize)
+                        Wrap(children: [
+                          TextButton(
+                            onPressed: _quoteOffset == 0 ? null : () => setState(
+                              () => _loadQuotePage(holding.id, _quoteOffset - _quotePageSize),
+                            ),
+                            child: Text(_label('Newer', 'الأحدث')),
+                          ),
+                          TextButton(
+                            onPressed: prices.length <= _quotePageSize ? null : () => setState(
+                              () => _loadQuotePage(holding.id, _quoteOffset + _quotePageSize),
+                            ),
+                            child: Text(_label('Older', 'الأقدم')),
+                          ),
+                        ]),
+                    ],
                   ],
                 );
               },
@@ -406,7 +472,7 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
                               setState(() {
                                 _selected = value;
                                 _trades = database.getInvestmentTrades(value);
-                                _prices = database.getInvestmentPriceHistory(value);
+                                _loadQuotePage(value, 0);
                               });
                           },
                   ),
