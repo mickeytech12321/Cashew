@@ -2822,6 +2822,7 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Future<int> createOrUpdateCategoryLimit(CategoryBudgetLimit categoryLimit,
       {bool insert = false}) async {
+    if (!transaction.amount.isFinite) return null;
     double maxAmount = 999999999999;
     if (categoryLimit.amount >= maxAmount)
       categoryLimit = categoryLimit.copyWith(amount: maxAmount);
@@ -3438,11 +3439,6 @@ class FinanceDatabase extends _$FinanceDatabase {
     else if (transaction.amount <= -maxAmount)
       transaction = transaction.copyWith(amount: -maxAmount);
 
-    if (transaction.amount == double.infinity ||
-        transaction.amount == double.negativeInfinity ||
-        transaction.amount.isNaN) {
-      return null;
-    }
 
     transaction = transaction.copyWith(
       name: transaction.name.trim(),
