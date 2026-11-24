@@ -3794,6 +3794,60 @@ class FinanceDatabase extends _$FinanceDatabase {
     });
   }
 
+  // Redo a transfer only when its journal is intact and neither leg exists.
+  Future<bool> redoLocalTransfer(String actionPk) async {
+    return transaction(() async {
+      final action = await customSelect(
+        'SELECT * FROM financial_actions WHERE action_pk = ?',
+        variables: [Variable<String>(actionPk)],
+      ).getSingleOrNull();
+      if (action == null || action.data['action_type'] != 'transfer' ||
+          action.data['undone_at'] == null) return false;
+      final changes = await getLocalFinancialActionChanges(actionPk);
+      if (changes.length != 2) throw StateError('Invalid transfer journal');
+      final restored = <Transaction>[];
+      for (final change in changes) {
+        final id = change['entity_pk'];
+        final snapshot = change['after_json'];
+        if (id is! String || snapshot is! String ||
+            change['entity_type'] != 'transaction' ||
+            change['before_json'] != null) {
+          throw StateError('Invalid transfer change');
+        }
+        if (await tryGetTransactionFromPk(id) != null) {
+          throw StateError('Transfer ID already exists');
+        }
+        final decoded = jsonDecode(snapshot);
+        if (decoded is! Map<String, dynamic>) {
+          throw StateError('Invalid transfer snapshot');
+        }
+        final restoredTransaction = Transaction.fromJson(decoded);
+        if (restoredTransaction.transactionPk != id) {
+          throw StateError('Transfer snapshot identity mismatch');
+        }
+        restored.add(restoredTransaction);
+      }
+      if (restored.length != 2 ||
+          restored[0].pairedTransactionFk != restored[1].transactionPk ||
+          restored[1].pairedTransactionFk != restored[0].transactionPk) {
+        throw StateError('Transfer pairing mismatch');
+      }
+      for (final leg in restored) {
+        final saved = await createOrUpdateTransaction(
+          leg, updateSharedEntry: false);
+        if (saved == null) throw StateError('Transfer restore failed');
+        await (delete(deleteLogs)
+          ..where((d) => d.type.equalsValue(DeleteLogType.Transaction) &
+              d.entryPk.equals(leg.transactionPk))).go();
+      }
+      await customStatement(
+        'UPDATE financial_actions SET undone_at = NULL WHERE action_pk = ?',
+        [actionPk],
+      );
+      return true;
+    });
+  }
+
   Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
     // We want InsertMode.insertOrReplace because
     // if null values are inserted we want to overwrite it with a null
