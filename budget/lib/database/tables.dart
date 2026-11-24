@@ -832,6 +832,45 @@ class FinanceDatabase extends _$FinanceDatabase {
       created_at INTEGER NOT NULL
     )''');
     await customStatement('CREATE INDEX IF NOT EXISTS imported_financial_events_status_idx ON imported_financial_events(status, occurred_at)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenarios (
+      scenario_pk TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      base_date INTEGER NOT NULL,
+      horizon_days INTEGER NOT NULL CHECK (horizon_days BETWEEN 1 AND 3650),
+      starting_balance REAL NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenario_items (
+      item_pk TEXT PRIMARY KEY NOT NULL,
+      scenario_fk TEXT NOT NULL REFERENCES planning_scenarios(scenario_pk) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      direction TEXT NOT NULL CHECK (direction IN ('income','expense')),
+      first_date INTEGER NOT NULL,
+      recurrence_days INTEGER CHECK (recurrence_days IS NULL OR recurrence_days > 0),
+      end_date INTEGER
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS planning_items_scenario_idx ON planning_scenario_items(scenario_fk, first_date)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS wealth_assets (
+      asset_pk TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      asset_type TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 1,
+      unit_value REAL NOT NULL,
+      liability INTEGER NOT NULL DEFAULT 0 CHECK (liability IN (0,1)),
+      institution_name TEXT,
+      notes TEXT,
+      updated_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS wealth_snapshots (
+      snapshot_pk TEXT PRIMARY KEY NOT NULL,
+      captured_at INTEGER NOT NULL,
+      net_worth_primary REAL NOT NULL,
+      breakdown_json TEXT NOT NULL
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS wealth_snapshots_date_idx ON wealth_snapshots(captured_at)');
   }
 
   @override
@@ -8160,6 +8199,135 @@ class TransactionAssociatedTitleWithCategory {
       'UPDATE imported_financial_events SET status = ?, transaction_fk = ? WHERE event_pk = ?',
       [status, transactionFk, eventPk],
     );
+  }
+
+  Future<void> savePlanningScenario({
+    required String scenarioPk,
+    required String name,
+    required DateTime baseDate,
+    required int horizonDays,
+    required double startingBalance,
+  }) async {
+    if (scenarioPk.trim().isEmpty || name.trim().isEmpty ||
+        horizonDays < 1 || horizonDays > 3650 || !startingBalance.isFinite) {
+      throw ArgumentError('Invalid planning scenario');
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await customStatement(
+      'INSERT INTO planning_scenarios '
+      '(scenario_pk,name,base_date,horizon_days,starting_balance,created_at,updated_at) '
+      'VALUES (?,?,?,?,?,?,?) ON CONFLICT(scenario_pk) DO UPDATE SET '
+      'name=excluded.name,base_date=excluded.base_date,horizon_days=excluded.horizon_days,'
+      'starting_balance=excluded.starting_balance,updated_at=excluded.updated_at',
+      [scenarioPk, name.trim(), baseDate.millisecondsSinceEpoch, horizonDays,
+       startingBalance, now, now],
+    );
+  }
+
+  Future<void> savePlanningScenarioItem({
+    required String itemPk,
+    required String scenarioPk,
+    required String name,
+    required double amount,
+    required bool income,
+    required DateTime firstDate,
+    int? recurrenceDays,
+    DateTime? endDate,
+  }) async {
+    if (itemPk.trim().isEmpty || scenarioPk.trim().isEmpty ||
+        name.trim().isEmpty || !amount.isFinite || amount < 0 ||
+        recurrenceDays != null && recurrenceDays <= 0 ||
+        endDate != null && endDate.isBefore(firstDate)) {
+      throw ArgumentError('Invalid planning item');
+    }
+    await customStatement(
+      'INSERT INTO planning_scenario_items '
+      '(item_pk,scenario_fk,name,amount,direction,first_date,recurrence_days,end_date) '
+      'VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(item_pk) DO UPDATE SET '
+      'scenario_fk=excluded.scenario_fk,name=excluded.name,amount=excluded.amount,'
+      'direction=excluded.direction,first_date=excluded.first_date,'
+      'recurrence_days=excluded.recurrence_days,end_date=excluded.end_date',
+      [itemPk, scenarioPk, name.trim(), amount, income ? 'income' : 'expense',
+       firstDate.millisecondsSinceEpoch, recurrenceDays,
+       endDate?.millisecondsSinceEpoch],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> calculatePlanningScenario(
+      String scenarioPk) async {
+    final scenario = await customSelect(
+      'SELECT * FROM planning_scenarios WHERE scenario_pk = ?',
+      variables: [Variable<String>(scenarioPk)]).getSingleOrNull();
+    if (scenario == null) throw StateError('Planning scenario not found');
+    final items = await customSelect(
+      'SELECT * FROM planning_scenario_items WHERE scenario_fk = ? ORDER BY first_date',
+      variables: [Variable<String>(scenarioPk)]).get();
+    final base = DateTime.fromMillisecondsSinceEpoch(
+        scenario.data['base_date'] as int);
+    final horizon = base.add(Duration(days: scenario.data['horizon_days'] as int));
+    var balance = (scenario.data['starting_balance'] as num).toDouble();
+    final points = <Map<String, dynamic>>[
+      {'date': base, 'balance': balance, 'item_pk': null}
+    ];
+    for (final row in items) {
+      final data = row.data;
+      var date = DateTime.fromMillisecondsSinceEpoch(data['first_date'] as int);
+      final end = data['end_date'] == null
+          ? horizon
+          : DateTime.fromMillisecondsSinceEpoch(data['end_date'] as int);
+      final recurrence = data['recurrence_days'] as int?;
+      while (!date.isAfter(horizon) && !date.isAfter(end)) {
+        final signed = (data['amount'] as num).toDouble() *
+            (data['direction'] == 'income' ? 1 : -1);
+        balance += signed;
+        points.add({'date': date, 'balance': balance,
+          'item_pk': data['item_pk'], 'amount': signed, 'name': data['name']});
+        if (recurrence == null) break;
+        date = date.add(Duration(days: recurrence));
+      }
+    }
+    points.sort((a,b) => (a['date'] as DateTime).compareTo(b['date'] as DateTime));
+    // Recalculate after chronological sort because items may interleave.
+    balance = (scenario.data['starting_balance'] as num).toDouble();
+    for (final point in points.skip(1)) {
+      balance += (point['amount'] as num).toDouble();
+      point['balance'] = balance;
+    }
+    return points;
+  }
+
+  Future<void> saveWealthAsset({
+    required String assetPk,
+    required String name,
+    required String assetType,
+    required String currency,
+    double quantity = 1,
+    required double unitValue,
+    bool liability = false,
+    String? institutionName,
+    String? notes,
+  }) async {
+    if (assetPk.trim().isEmpty || name.trim().isEmpty ||
+        assetType.trim().isEmpty || currency.trim().isEmpty ||
+        !quantity.isFinite || quantity < 0 || !unitValue.isFinite ||
+        unitValue < 0) throw ArgumentError('Invalid wealth asset');
+    await customStatement(
+      'INSERT INTO wealth_assets '
+      '(asset_pk,name,asset_type,currency,quantity,unit_value,liability,institution_name,notes,updated_at) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(asset_pk) DO UPDATE SET '
+      'name=excluded.name,asset_type=excluded.asset_type,currency=excluded.currency,'
+      'quantity=excluded.quantity,unit_value=excluded.unit_value,liability=excluded.liability,'
+      'institution_name=excluded.institution_name,notes=excluded.notes,updated_at=excluded.updated_at',
+      [assetPk,name.trim(),assetType.trim(),currency.trim().toLowerCase(),quantity,
+       unitValue,liability ? 1 : 0,institutionName?.trim(),notes,
+       DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getWealthAssets() async {
+    final rows = await customSelect(
+      'SELECT * FROM wealth_assets ORDER BY liability, name COLLATE NOCASE').get();
+    return rows.map((r) => r.data).toList();
   }
 
   Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
