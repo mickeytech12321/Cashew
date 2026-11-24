@@ -4060,6 +4060,31 @@ class FinanceDatabase extends _$FinanceDatabase {
     );
   }
 
+  Future<List<Map<String, dynamic>>> getAssistantAccountTotals({
+    required bool monthlySpending,
+    required DateTime asOf,
+  }) async {
+    final monthStart = DateTime(asOf.year, asOf.month);
+    final spendingFilter = monthlySpending
+        ? "AND t.amount < 0 AND t.category_fk != '0' AND t.date_created >= ? "
+        : '';
+    final rows = await customSelect(
+      'SELECT w.name, w.currency, w.decimals, '
+      'COALESCE(SUM(t.amount), 0) AS total '
+      'FROM wallets w LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk '
+      'AND t.paid = 1 AND t.date_created <= ? '
+      '$spendingFilter'
+      'WHERE COALESCE(d.archived, 0) = 0 '
+      'GROUP BY w.wallet_pk, w.name, w.currency ORDER BY w."order", w.wallet_pk',
+      variables: [
+        Variable<DateTime>(asOf),
+        if (monthlySpending) Variable<DateTime>(monthStart),
+      ],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
   Future<Map<String, dynamic>> getCreditCardSummary(String walletPk) async {
     final details = await getCreditCardDetails(walletPk);
     if (details == null) throw StateError('Credit card details not found');

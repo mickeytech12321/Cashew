@@ -18,6 +18,55 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
   late final _wallets = database.getAllWallets();
   FinancialAssistantIntent? _intent;
   TransactionWallet? _wallet;
+  Future<List<Map<String, dynamic>>>? _accountTotals;
+
+  void _interpret() {
+    final intent = const FinancialAssistant().parse(_input.text);
+    final spending = intent.type == FinancialAssistantIntentType.querySpending;
+    setState(() {
+      _intent = intent;
+      _wallet = null;
+      _accountTotals =
+          spending || intent.type == FinancialAssistantIntentType.queryBalance
+              ? database.getAssistantAccountTotals(
+                  monthlySpending: spending, asOf: DateTime.now())
+              : null;
+    });
+  }
+
+  Widget _queryResult(bool spending) =>
+      FutureBuilder<List<Map<String, dynamic>>>(
+        future: _accountTotals,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Text(
+                _label('Could not load totals.', 'تعذّر تحميل الإجماليات.'));
+          }
+          if (!snapshot.hasData) return const LinearProgressIndicator();
+          if (snapshot.data!.isEmpty) {
+            return Text(_label('No active accounts.', 'لا توجد حسابات نشطة.'));
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(spending
+                  ? _label('Paid expenses this month by account',
+                      'المصروفات المدفوعة هذا الشهر حسب الحساب')
+                  : _label('Paid balance by account',
+                      'رصيد المعاملات المدفوعة حسب الحساب')),
+              for (final row in snapshot.data!)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(row['name'] as String),
+                  trailing: Text(
+                    '${((row['total'] as num) * (spending ? -1 : 1)).toStringAsFixed((row['decimals'] as int).clamp(0, 12))} '
+                    '${(row['currency'] as String?)?.toUpperCase() ?? ''}',
+                  ),
+                ),
+            ],
+          );
+        },
+      );
 
   String _label(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
@@ -45,24 +94,26 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
                 maxLength: 250,
                 decoration: InputDecoration(
                   labelText: _label(
-                    'Describe income or spending',
-                    'صِف دخلك أو مصروفك',
+                    'Ask about balances or describe a transaction',
+                    'اسأل عن الرصيد أو صِف معاملة',
                   ),
                   hintText: _label('I paid 250 EGP', 'دفعت ٢٥٠ جنيه'),
                 ),
                 onChanged: (_) => setState(() {
                   _intent = null;
                   _wallet = null;
+                  _accountTotals = null;
                 }),
               ),
               FilledButton(
-                onPressed: () => setState(() {
-                  _intent = const FinancialAssistant().parse(_input.text);
-                  _wallet = null;
-                }),
-                child: Text(_label('Prepare draft', 'إعداد مسودة')),
+                onPressed: _interpret,
+                child: Text(_label('Continue', 'متابعة')),
               ),
-              if (intent != null) _draft(intent),
+              if (_accountTotals != null)
+                _queryResult(
+                    intent!.type == FinancialAssistantIntentType.querySpending)
+              else if (intent != null)
+                _draft(intent),
             ],
           ),
         ),
@@ -127,16 +178,16 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
               onPressed: _wallet == null
                   ? null
                   : () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => AddTransactionPage(
-                          selectedIncome: income,
-                          selectedAmount: income ? amount : -amount,
-                          selectedWallet: _wallet,
-                          startInitialAddTransactionSequence: false,
-                          routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+                        MaterialPageRoute<void>(
+                          builder: (_) => AddTransactionPage(
+                            selectedIncome: income,
+                            selectedAmount: income ? amount : -amount,
+                            selectedWallet: _wallet,
+                            startInitialAddTransactionSequence: false,
+                            routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+                          ),
                         ),
                       ),
-                    ),
               child: Text(_label('Review transaction', 'مراجعة المعاملة')),
             ),
           ],

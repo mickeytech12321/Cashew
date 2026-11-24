@@ -207,6 +207,16 @@ void main() {
             idempotencyKey: 'repayment'),
         isFalse);
     final paired = await database.select(database.transactions).get();
+    final totals = await database.getAssistantAccountTotals(
+      monthlySpending: false,
+      asOf: DateTime(2026, 11, 25),
+    );
+    expect(totals.map((row) => row['total']), [-250, 250]);
+    final spending = await database.getAssistantAccountTotals(
+      monthlySpending: true,
+      asOf: DateTime(2026, 11, 25),
+    );
+    expect(spending.map((row) => row['total']), [0, 0]);
     expect(paired.map((row) => row.pairedTransactionFk),
         unorderedEquals(['out', 'in']));
     expect(await database.undoLocalTransfer('out'), isTrue);
