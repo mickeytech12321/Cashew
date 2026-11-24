@@ -69,6 +69,12 @@ class _AddWalletPageState extends State<AddWalletPage> {
   String? institutionName;
   bool accountArchived = false;
   bool excludeFromNetWorth = false;
+  double? creditLimit;
+  int? statementDay;
+  int? dueDay;
+  double? minimumPayment;
+  double? aprPercent;
+  String? cardLastFour;
   FocusNode _titleFocusNode = FocusNode();
 
   void setSelectedTitle(String title) {
@@ -119,6 +125,17 @@ class _AddWalletPageState extends State<AddWalletPage> {
         archived: accountArchived,
         excludeFromNetWorth: excludeFromNetWorth,
       );
+      if (selectedAccountType == 'credit') {
+        await database.saveCreditCardDetails(
+          walletPk: walletSaved.walletPk,
+          creditLimit: creditLimit,
+          statementDay: statementDay,
+          dueDay: dueDay,
+          minimumPayment: minimumPayment,
+          aprPercent: aprPercent,
+          lastFour: cardLastFour,
+        );
+      }
     }
 
     if (popContext) {
@@ -198,6 +215,21 @@ class _AddWalletPageState extends State<AddWalletPage> {
             excludeFromNetWorth =
                 ((details['exclude_from_net_worth'] as int?) ?? 0) == 1;
           });
+          if (details['account_type'] == 'credit') {
+            final credit =
+                await database.getCreditCardDetails(widget.wallet!.walletPk);
+            if (credit != null && mounted) {
+              setState(() {
+                creditLimit = (credit['credit_limit'] as num?)?.toDouble();
+                statementDay = credit['statement_day'] as int?;
+                dueDay = credit['due_day'] as int?;
+                minimumPayment =
+                    (credit['minimum_payment'] as num?)?.toDouble();
+                aprPercent = (credit['apr_percent'] as num?)?.toDouble();
+                cardLastFour = credit['last_four'] as String?;
+              });
+            }
+          }
         }
       }
       walletInitial = await createTransactionWallet();
@@ -528,6 +560,46 @@ class _AddWalletPageState extends State<AddWalletPage> {
                         ? null
                         : value.trim(),
                   ),
+                  if (selectedAccountType == 'credit') ...[
+                    TextFormField(
+                      initialValue: creditLimit?.toString(),
+                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Credit limit'),
+                      onChanged: (v) => creditLimit = double.tryParse(v),
+                    ),
+                    TextFormField(
+                      initialValue: statementDay?.toString(),
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Statement day (1-31)'),
+                      onChanged: (v) => statementDay = int.tryParse(v),
+                    ),
+                    TextFormField(
+                      initialValue: dueDay?.toString(),
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Due day (1-31)'),
+                      onChanged: (v) => dueDay = int.tryParse(v),
+                    ),
+                    TextFormField(
+                      initialValue: minimumPayment?.toString(),
+                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Minimum payment'),
+                      onChanged: (v) => minimumPayment = double.tryParse(v),
+                    ),
+                    TextFormField(
+                      initialValue: aprPercent?.toString(),
+                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'APR %'),
+                      onChanged: (v) => aprPercent = double.tryParse(v),
+                    ),
+                    TextFormField(
+                      initialValue: cardLastFour,
+                      keyboardType: TextInputType.number,
+                      maxLength: 4,
+                      decoration: const InputDecoration(labelText: 'Card last 4 digits'),
+                      onChanged: (v) => cardLastFour =
+                          v.trim().isEmpty ? null : v.trim(),
+                    ),
+                  ],
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Exclude from net worth'),
