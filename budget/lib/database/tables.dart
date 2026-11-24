@@ -4372,6 +4372,33 @@ class FinanceDatabase extends _$FinanceDatabase {
     return rows.map((row) => row.data).toList();
   }
 
+  Future<List<Map<String, dynamic>>> getPlanningScenarioItems(String scenarioPk) async {
+    final rows = await customSelect(
+      'SELECT * FROM planning_scenario_items WHERE scenario_fk = ? '
+      'ORDER BY first_date, item_pk',
+      variables: [Variable<String>(scenarioPk)],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
+  Future<void> deletePlanningScenarioItem(String scenarioPk, String itemPk) async {
+    await customStatement(
+      'DELETE FROM planning_scenario_items WHERE scenario_fk = ? AND item_pk = ?',
+      [scenarioPk, itemPk],
+    );
+  }
+
+  Future<void> deletePlanningScenario(String scenarioPk) async {
+    await transaction(() async {
+      await customStatement(
+        'DELETE FROM planning_scenario_items WHERE scenario_fk = ?', [scenarioPk],
+      );
+      await customStatement(
+        'DELETE FROM planning_scenarios WHERE scenario_pk = ?', [scenarioPk],
+      );
+    });
+  }
+
   Future<void> savePlanningScenarioItem({
     required String itemPk,
     required String scenarioPk,

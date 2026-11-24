@@ -36,7 +36,7 @@
 - TODO: Egyptian bank/e-wallet rules.
 
 ## Phase 04 — Financial Planning
-- PARTIAL: offline scenario calculations skip occurrences before the forecast base date and order simultaneous entries consistently. Settings → Cash-flow scenarios can create and reopen single-currency scenarios, add one-off or fixed-day recurring events and show a chronological running balance. Existing scenario/item editing and direct recurring/bill integration remain.
+- PARTIAL: offline scenario calculations skip occurrences before the forecast base date and order simultaneous entries consistently. Settings → Cash-flow scenarios can create and reopen single-currency scenarios, add one-off or fixed-day recurring events and show a chronological running balance. Saved scenarios and entries can be edited or deleted with confirmation. Direct recurring/bill integration remains.
 - TODO: bills/subscriptions planning UI and goals improvements.
 
 ## Phase 05 — Wealth

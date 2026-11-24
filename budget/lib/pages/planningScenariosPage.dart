@@ -13,6 +13,7 @@ class PlanningScenariosPage extends StatefulWidget {
 class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   late var _scenarios = database.getPlanningScenarios();
   Future<List<Map<String, dynamic>>>? _forecast;
+  Future<List<Map<String, dynamic>>>? _items;
   Map<String, dynamic>? _selected;
   bool _busy = false;
 
@@ -41,18 +42,31 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   void _select(Map<String, dynamic> scenario) {
     setState(() {
       _selected = scenario;
-      _forecast =
-          database.calculatePlanningScenario(scenario['scenario_pk'] as String);
+      final id = scenario['scenario_pk'] as String;
+      _forecast = database.calculatePlanningScenario(id);
+      _items = database.getPlanningScenarioItems(id);
     });
   }
 
-  Future<void> _createScenario() async {
+  Future<void> _editScenario([Map<String, dynamic>? scenario]) async {
     final draft = await showDialog<_PlanningDraft>(
       context: context,
-      builder: (_) => _PlanningEditor(label: _label, scenario: true),
+      builder: (_) => _PlanningEditor(
+        label: _label,
+        scenario: true,
+        draft: scenario == null
+            ? null
+            : _PlanningDraft(
+                scenario['name'] as String,
+                (scenario['starting_balance'] as num).toDouble(),
+                _asDate(scenario['base_date']),
+                scenario['horizon_days'] as int,
+                false,
+              ),
+      ),
     );
     if (draft == null || !mounted) return;
-    final scenarioPk = uuid.v4();
+    final scenarioPk = scenario?['scenario_pk'] as String? ?? uuid.v4();
     await _write(() async {
       await database.savePlanningScenario(
         scenarioPk: scenarioPk,
@@ -67,11 +81,13 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
         'scenario_pk': scenarioPk,
         'name': draft.name,
         'base_date': draft.date.millisecondsSinceEpoch,
+        'starting_balance': draft.amount,
+        'horizon_days': draft.days,
       });
     });
   }
 
-  Future<void> _addItem() async {
+  Future<void> _editItem([Map<String, dynamic>? item]) async {
     final current = _selected!;
     final draft = await showDialog<_PlanningDraft>(
       context: context,
@@ -79,20 +95,70 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
         label: _label,
         scenario: false,
         initialDate: _asDate(current['base_date']),
+        draft: item == null
+            ? null
+            : _PlanningDraft(
+                item['name'] as String,
+                (item['amount'] as num).toDouble(),
+                _asDate(item['first_date']),
+                item['recurrence_days'] as int?,
+                item['direction'] == 'income',
+              ),
       ),
     );
     if (draft == null || !mounted) return;
     await _write(() async {
       await database.savePlanningScenarioItem(
-        itemPk: uuid.v4(),
+        itemPk: item?['item_pk'] as String? ?? uuid.v4(),
         scenarioPk: current['scenario_pk'] as String,
         name: draft.name,
         amount: draft.amount,
         income: draft.income,
         firstDate: draft.date,
         recurrenceDays: draft.days,
+        endDate: item?['end_date'] == null ? null : _asDate(item!['end_date']),
       );
       if (mounted) _select(current);
+    });
+  }
+
+  Future<void> _delete([Map<String, dynamic>? item]) async {
+    final scenario = _selected!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(item == null
+            ? _label(
+                'Delete scenario and its entries?', 'حذف السيناريو وبنوده؟')
+            : _label('Delete entry?', 'حذف البند؟')),
+        content: Text((item ?? scenario)['name'] as String),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(_label('Cancel', 'إلغاء'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(_label('Delete', 'حذف'))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final scenarioPk = scenario['scenario_pk'] as String;
+    await _write(() async {
+      if (item != null) {
+        await database.deletePlanningScenarioItem(
+            scenarioPk, item['item_pk'] as String);
+        if (mounted) _select(scenario);
+        return;
+      }
+      await database.deletePlanningScenario(scenarioPk);
+      if (mounted)
+        setState(() {
+          _scenarios = database.getPlanningScenarios();
+          _selected = null;
+          _forecast = null;
+          _items = null;
+        });
     });
   }
 
@@ -110,7 +176,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               FilledButton(
-                onPressed: _busy ? null : _createScenario,
+                onPressed: _busy ? null : () => _editScenario(),
                 child: Text(_label('New scenario', 'سيناريو جديد')),
               ),
               FutureBuilder<List<Map<String, dynamic>>>(
@@ -153,16 +219,55 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                   'استخدم عملة واحدة لجميع المبالغ في هذا السيناريو.',
                 )),
               if (_selected != null)
+                Wrap(children: [
+                  TextButton(
+                    onPressed: _busy ? null : () => _editScenario(_selected),
+                    child: Text(_label('Edit scenario', 'تعديل السيناريو')),
+                  ),
+                  TextButton(
+                    onPressed: _busy ? null : () => _delete(),
+                    child: Text(_label('Delete scenario', 'حذف السيناريو')),
+                  ),
+                ]),
+              if (_selected != null)
                 OutlinedButton(
-                  onPressed: _busy ? null : _addItem,
+                  onPressed: _busy ? null : () => _editItem(),
                   child: Text(
                       _label('Add income or expense', 'إضافة دخل أو مصروف')),
                 ),
             ],
           ),
         ),
+        if (_items != null)
+          FutureBuilder<List<Map<String, dynamic>>>(
+            key: ValueKey(('items', selectedPk)),
+            future: _items,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return ListTile(
+                    title: Text(_label(
+                        'Could not load entries.', 'تعذّر تحميل البنود.')));
+              }
+              if (!snapshot.hasData) return const LinearProgressIndicator();
+              return Column(children: [
+                for (final item in snapshot.data!)
+                  ListTile(
+                    title: Text(item['name'] as String),
+                    subtitle: Text(
+                        dates.formatMediumDate(_asDate(item['first_date']))),
+                    onTap: _busy ? null : () => _editItem(item),
+                    trailing: IconButton(
+                      tooltip: _label('Delete entry', 'حذف البند'),
+                      onPressed: _busy ? null : () => _delete(item),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ),
+              ]);
+            },
+          ),
         if (_forecast != null)
           FutureBuilder<List<Map<String, dynamic>>>(
+            key: ValueKey(('forecast', selectedPk)),
             future: _forecast,
             builder: (context, snapshot) {
               if (snapshot.hasError) {
@@ -216,10 +321,14 @@ class _PlanningDraft {
 
 class _PlanningEditor extends StatefulWidget {
   const _PlanningEditor(
-      {required this.label, required this.scenario, this.initialDate});
+      {required this.label,
+      required this.scenario,
+      this.initialDate,
+      this.draft});
   final String Function(String, String) label;
   final bool scenario;
   final DateTime? initialDate;
+  final _PlanningDraft? draft;
 
   @override
   State<_PlanningEditor> createState() => _PlanningEditorState();
@@ -227,12 +336,15 @@ class _PlanningEditor extends StatefulWidget {
 
 class _PlanningEditorState extends State<_PlanningEditor> {
   final _form = GlobalKey<FormState>();
-  final _name = TextEditingController();
-  late final _amount = TextEditingController(text: widget.scenario ? '0' : '');
-  late final _days = TextEditingController(text: widget.scenario ? '30' : '');
-  late DateTime _date =
-      widget.initialDate ?? DateUtils.dateOnly(DateTime.now());
-  bool _income = false;
+  late final _name = TextEditingController(text: widget.draft?.name);
+  late final _amount = TextEditingController(
+      text: widget.draft?.amount.toString() ?? (widget.scenario ? '0' : ''));
+  late final _days = TextEditingController(
+      text: widget.draft?.days?.toString() ?? (widget.scenario ? '30' : ''));
+  late DateTime _date = widget.draft?.date ??
+      widget.initialDate ??
+      DateUtils.dateOnly(DateTime.now());
+  late bool _income = widget.draft?.income ?? false;
 
   @override
   void dispose() {
@@ -250,9 +362,13 @@ class _PlanningEditorState extends State<_PlanningEditor> {
     final label = widget.label;
     final scenario = widget.scenario;
     return AlertDialog(
-      title: Text(scenario
-          ? label('New scenario', 'سيناريو جديد')
-          : label('Add income or expense', 'إضافة دخل أو مصروف')),
+      title: Text(widget.draft != null
+          ? (scenario
+              ? label('Edit scenario', 'تعديل السيناريو')
+              : label('Edit entry', 'تعديل البند'))
+          : scenario
+              ? label('New scenario', 'سيناريو جديد')
+              : label('Add income or expense', 'إضافة دخل أو مصروف')),
       scrollable: true,
       content: Form(
         key: _form,

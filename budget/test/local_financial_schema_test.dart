@@ -19,6 +19,42 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('scenario edits recompute forecasts and deletions stay scoped',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final date = DateTime(2026, 11, 24);
+    Future<void> save(String id, double balance) => db.savePlanningScenario(
+          scenarioPk: id,
+          name: id,
+          baseDate: date,
+          horizonDays: 7,
+          startingBalance: balance,
+        );
+    await save('a', 100);
+    await save('b', 250);
+    Future<void> item(double amount) => db.savePlanningScenarioItem(
+          itemPk: 'expense',
+          scenarioPk: 'a',
+          name: 'Expense',
+          amount: amount,
+          income: false,
+          firstDate: date,
+        );
+    await item(20);
+    await item(30);
+    await save('a', 200);
+    expect((await db.calculatePlanningScenario('a')).last['balance'], 170);
+    await db.deletePlanningScenarioItem('b', 'expense');
+    expect(await db.getPlanningScenarioItems('a'), hasLength(1));
+    await db.deletePlanningScenarioItem('a', 'expense');
+    expect((await db.calculatePlanningScenario('a')).last['balance'], 200);
+    await item(40);
+    await db.deletePlanningScenario('a');
+    expect(await db.getPlanningScenarioItems('a'), isEmpty);
+    expect((await db.getPlanningScenarios()).single['scenario_pk'], 'b');
+  });
+
   test('upgrades generated version 46 schema and keeps existing wallets',
       () async {
     final directory = await Directory.systemTemp.createTemp('cashew-v46-test');
