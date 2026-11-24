@@ -1,3 +1,5 @@
+import 'package:csv/csv.dart';
+import 'package:flutter/services.dart';
 import 'package:budget/pages/objectivesListPage.dart';
 import 'package:budget/pages/subscriptionsPage.dart';
 import 'package:budget/pages/upcomingOverdueTransactionsPage.dart';
@@ -325,6 +327,40 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
     });
   }
 
+  Future<void> _copyForecast(
+    List<Map<String, dynamic>> points,
+    String? currency,
+  ) async {
+    final csv = const ListToCsvConverter().convert([
+      ['date', 'currency', 'type', 'amount', 'balance'],
+      for (final point in points)
+        [
+          (point['date'] as DateTime).toIso8601String(),
+          currency ?? '',
+          point['item_pk'] == null ? 'opening'
+              : point['goal'] == true ? 'goal'
+              : point['projected'] == true ? 'recurrence'
+              : point['scheduled'] == true ? 'scheduled' : 'manual',
+          point['amount'],
+          point['balance'],
+        ],
+    ]);
+    try {
+      await Clipboard.setData(ClipboardData(text: csv));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          _label('Forecast copied as CSV.', 'تم نسخ التوقع بصيغة CSV.'),
+        )));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          _label('Could not copy forecast.', 'تعذّر نسخ التوقع.'),
+        )));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedPk = _selected?['scenario_pk'] as String?;
@@ -559,6 +595,11 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
               final end = start + visible.length;
               return Column(
                 children: [
+                  TextButton.icon(
+                    onPressed: () => _copyForecast(points, currency),
+                    icon: const Icon(Icons.copy_outlined),
+                    label: Text(_label('Copy forecast as CSV', 'نسخ التوقع بصيغة CSV')),
+                  ),
                   ListTile(
                     title: Text(_label('Projected ending balance',
                         'الرصيد المتوقع في نهاية الفترة')),

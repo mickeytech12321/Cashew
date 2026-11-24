@@ -14,6 +14,14 @@ void main() {
       expect(FinancialMessageParser.parse('Purchase AED 25 or EGP 300').amount,
           isNull);
     });
+    test('reads wallet cash movements and ignores incomplete transfers', () {
+      final cashIn = FinancialMessageParser.parse(
+          'Cash in EGP 300. Available bal: EGP 900');
+      expect((cashIn.amount, cashIn.direction), (300.0, 'credit'));
+      final cashOut = FinancialMessageParser.parse('Cash out EGP 40');
+      expect((cashOut.amount, cashOut.direction), (40.0, 'debit'));
+      expect(FinancialMessageParser.parse('لم يكتمل التحويل ٣٠٠ جنيه').confidence, 0);
+    });
     test('parses English EGP debit', () {
       final p = FinancialMessageParser.parse(
         'Purchase EGP 1,250.50 at Carrefour card ending 1234',

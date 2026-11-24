@@ -37,13 +37,13 @@ class FinancialMessageParser {
         .trim();
     if (message.isEmpty) return const ParsedFinancialMessage(confidence: 0);
     if (RegExp(
-      r'\b(?:otp|declined|unsuccessful|failed|verification code|one[- ]time password)\b|(?:رمز|كود) (?:التحقق|التأكيد|التفعيل)|تم رفض|لم تتم|لم يتم تنفيذ|فشلت العملية',
+      r'\b(?:otp|declined|unsuccessful|failed|verification code|one[- ]time password)\b|(?:رمز|كود) (?:التحقق|التأكيد|التفعيل)|تم رفض|لم تتم|لم يتم تنفيذ|فشلت العملية|لم يكتمل التحويل|تعذر تنفيذ|تعذّر تنفيذ',
     ).hasMatch(message.toLowerCase())) {
       return const ParsedFinancialMessage(confidence: 0);
     }
     // A separately labelled trailing balance is not a transaction amount.
     final balance = RegExp(
-      r'(?:^|[\s.;،|])(?:(?:new|available|remaining|current|avail\.?)\s+balance\b|(?:الرصيد|رصيدك)\s+(?:المتاح|الحالي|الجديد|المتبقي)|رصيدك\s+(?:الحالى|الآن|الان))',
+      r'(?:^|[\s.;،|])(?:(?:new|available|remaining|current|avail\.?)\s+balance\b|(?:available|avail\.?)\s+bal\.?\s*:|(?:الرصيد|رصيدك)\s+(?:المتاح|الحالي|الجديد|المتبقي)|رصيدك\s+(?:الحالى|الآن|الان))',
       caseSensitive: false,
     ).firstMatch(message);
     final text =
@@ -93,10 +93,10 @@ class FinancialMessageParser {
       }
     }
     final debit = RegExp(
-      r'\b(?:purchase[ds]?|paid|withdraw(?:al|n)?|debited|sent|outgoing transfer)\b|خصم|شراء|سحب|دفعت|تم [إا]رسال|(?:تم تحويل|حولت)\s+.+?\s+(?:[إا]لى\s+(?!محفظتك من)|لرقم)',
+      r'\b(?:purchase[ds]?|paid|withdraw(?:al|n)?|debited|sent|outgoing transfer|cash out)\b|خصم|شراء|سحب|دفعت|تم [إا]رسال|(?:تم تحويل|حولت)\s+.+?\s+(?:[إا]لى\s+(?!محفظتك من)|لرقم)',
     ).hasMatch(lower);
     final credit = RegExp(
-      r'\b(?:received|credited|deposit(?:ed)?|refund(?:ed)?|incoming transfer)\b|استلام|استلمت|[إا]يداع|رد مبلغ|تم [إا]ضافة|تم استرداد|تم تحويل\s+.+?\s+(?:[إا]لى محفظتك من|لحسابك من)',
+      r'\b(?:received|credited|deposit(?:ed)?|refund(?:ed)?|incoming transfer|cash in)\b|استلام|استلمت|[إا]يداع|رد مبلغ|تم [إا]ضافة|تم استرداد|تم شحن محفظتك|تم تحويل\s+.+?\s+(?:[إا]لى محفظتك من|لحسابك من)',
     ).hasMatch(lower);
     final direction = debit == credit ? null : (debit ? 'debit' : 'credit');
     final last4 = RegExp(

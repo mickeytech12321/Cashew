@@ -34,3 +34,18 @@ List<InvestmentQuote> parseInvestmentQuoteCsv(String text, DateTime today) {
   }
   return quotes;
 }
+
+/// The most recent quote wins if several entries share a calendar day.
+String exportInvestmentQuoteCsv(Iterable<InvestmentQuote> quotes) {
+  final ordered = quotes.toList()
+    ..sort((a, b) => b.date.compareTo(a.date));
+  final daily = <String, double>{};
+  for (final quote in ordered) {
+    final date = quote.date.toIso8601String().split('T').first;
+    daily.putIfAbsent(date, () => quote.price);
+  }
+  return const ListToCsvConverter().convert([
+    ['date', 'price'],
+    for (final quote in daily.entries) [quote.key, quote.value],
+  ]);
+}

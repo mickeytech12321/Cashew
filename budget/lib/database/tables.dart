@@ -4285,9 +4285,11 @@ class FinanceDatabase extends _$FinanceDatabase {
     final balances = await customSelect(
       'SELECT COALESCE(SUM(amount), 0) AS balance, '
       'COALESCE(SUM(CASE WHEN date_created <= ? THEN amount ELSE 0 END), 0) AS closing_balance, '
-      'COALESCE(SUM(CASE WHEN date_created > ? AND amount > 0 THEN amount ELSE 0 END), 0) AS later_credits '
-      'FROM transactions WHERE wallet_fk = ? AND paid = 1 AND date_created <= ?',
+      'COALESCE(SUM(CASE WHEN date_created > ? AND amount > 0 THEN amount ELSE 0 END), 0) AS later_credits, '
+      'COALESCE(SUM(CASE WHEN date_created > ? AND amount < 0 THEN -amount ELSE 0 END), 0) AS later_charges '
+      'FROM transactions WHERE wallet_fk = ? AND paid = 1 AND skip_paid = 0 AND date_created <= ?',
       variables: [
+        Variable<DateTime>(closing),
         Variable<DateTime>(closing),
         Variable<DateTime>(closing),
         Variable<String>(walletPk),
@@ -4300,11 +4302,20 @@ class FinanceDatabase extends _$FinanceDatabase {
     final endingDebt = (-balances.read<double>('closing_balance')).clamp(0.0, double.infinity);
     final remaining = (endingDebt - balances.read<double>('later_credits'))
         .clamp(0.0, endingDebt);
+    final minimum = (details['minimum_payment'] as num?)?.toDouble();
+    final credited = balances.read<double>('later_credits');
     return {
       ...details,
       'current_balance': balance,
       'outstanding': outstanding,
       'available_credit': limit == null ? null : (limit - outstanding).clamp(0.0, limit),
+      'utilization_percent': limit == null || limit == 0 ? null : outstanding / limit * 100,
+      'over_limit_amount': limit == null ? null : (outstanding - limit).clamp(0.0, double.infinity),
+      'statement_credits': closing == null ? null : credited,
+      'charges_after_statement': closing == null ? null : balances.read<double>('later_charges'),
+      'estimated_minimum_remaining': closing == null || minimum == null
+          ? null : (minimum.clamp(0.0, endingDebt) - credited).clamp(0.0, remaining),
+      'estimated_statement_overdue': statementDue != null && now.isAfter(statementDue) && remaining > 0,
       'next_statement_date': nextStatement,
       'next_due_date': nextDue,
       'last_statement_date': closing,
@@ -5177,6 +5188,18 @@ class FinanceDatabase extends _$FinanceDatabase {
       'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
       'ORDER BY quoted_at DESC LIMIT ? OFFSET ?',
       variables: [Variable<String>(id), Variable<int>(limit), Variable<int>(offset)],
+    ).get();
+    return rows.map((row) => (
+      date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('quoted_at')),
+      price: row.read<double>('price'),
+    )).toList();
+  }
+
+  Future<List<InvestmentQuote>> getInvestmentQuotesForExport(String id) async {
+    final rows = await customSelect(
+      'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
+      'ORDER BY quoted_at DESC',
+      variables: [Variable<String>(id)],
     ).get();
     return rows.map((row) => (
       date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('quoted_at')),

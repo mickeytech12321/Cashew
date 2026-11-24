@@ -29,6 +29,17 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('investment quote export keeps latest prices by date and round trips', () {
+    final quotes = [
+      (date: DateTime(2026, 1, 1), price: 10.0),
+      (date: DateTime(2026, 1, 1, 18), price: 12.0),
+      (date: DateTime(2026, 1, 2), price: 13.0),
+    ];
+    final imported = parseInvestmentQuoteCsv(
+        exportInvestmentQuoteCsv(quotes), DateTime(2026, 1, 2));
+    expect(imported.map((quote) => quote.price), [13, 12]);
+  });
+
   test('investment quote imports skip retries and retain the latest price', () async {
     final db = FinanceDatabase(NativeDatabase.memory());
     addTearDown(db.close);
@@ -847,7 +858,7 @@ void main() {
         ));
     await db.saveAccountDetails(walletPk: 'card', accountType: 'credit');
     await db.saveCreditCardDetails(
-        walletPk: 'card', statementDay: 31, dueDay: 12, creditLimit: 1000);
+        walletPk: 'card', statementDay: 31, dueDay: 12, creditLimit: 1000, minimumPayment: 100);
     var count = 0;
     Future<void> add(double amount, DateTime date) async {
       await db.into(db.transactions).insert(Transaction(
@@ -876,6 +887,18 @@ void main() {
     expect(card['estimated_statement_remaining'], 225);
     expect(card['outstanding'], 275);
     expect(card['available_credit'], 725);
+    expect(card['utilization_percent'], closeTo(27.5, 0.001));
+    expect(card['estimated_minimum_remaining'], 25);
+    expect(card['over_limit_amount'], 0);
+    expect(card['statement_credits'], 75);
+    expect(card['charges_after_statement'], 50);
+    expect(card['estimated_statement_overdue'], isFalse);
+    final overdue =
+        await db.getCreditCardSummary('card', asOf: DateTime(2027, 3, 13));
+    expect(overdue['estimated_statement_overdue'], isTrue);
+    final overLimit =
+        await db.getCreditCardSummary('card', asOf: DateTime(2027, 3, 16));
+    expect(overLimit['over_limit_amount'], 275);
   });
 
   test('bank import suggests only a unique active card in the same currency',

@@ -139,7 +139,15 @@ class _AddWalletPageState extends State<AddWalletPage> {
                   final statementDue = snapshot.data?['last_statement_due_date'] as DateTime?;
                   final statementBalance = snapshot.data?['estimated_statement_balance'] as num?;
                   final statementRemaining = snapshot.data?['estimated_statement_remaining'] as num?;
+                  final utilization = snapshot.data?['utilization_percent'] as num?;
+                  final overLimit = snapshot.data?['over_limit_amount'] as num?;
+                  final credits = snapshot.data?['statement_credits'] as num?;
+                  final charges = snapshot.data?['charges_after_statement'] as num?;
+                  final minimum = snapshot.data?['estimated_minimum_remaining'] as num?;
+                  final overdue = snapshot.data?['estimated_statement_overdue'] == true;
                   final dates = MaterialLocalizations.of(context);
+                  String amount(num value) =>
+                      '${value.toStringAsFixed(selectedDecimals)} $currency'.trim();
                   final summary = [
                     '${outstanding.toStringAsFixed(selectedDecimals)} $currency',
                     if (closing != null && statementBalance != null)
@@ -149,6 +157,18 @@ class _AddWalletPageState extends State<AddWalletPage> {
                     if (statementRemaining != null)
                       '${_accountLabel('Estimated remaining statement balance', 'المتبقي التقديري من كشف الحساب')} '
                       '${statementRemaining.toStringAsFixed(selectedDecimals)} $currency',
+                    if (minimum != null)
+                      '${_accountLabel('Estimated minimum remaining', 'المتبقي من الحد الأدنى التقديري')} ${amount(minimum)}',
+                    if (credits != null && credits > 0)
+                      '${_accountLabel('Credits since closing', 'المبالغ الدائنة بعد الإقفال')} ${amount(credits)}',
+                    if (charges != null && charges > 0)
+                      '${_accountLabel('Charges since closing', 'المصروفات بعد الإقفال')} ${amount(charges)}',
+                    if (utilization != null)
+                      '${_accountLabel('Credit used', 'نسبة استخدام الحد')} ${utilization.toStringAsFixed(1)}%',
+                    if (overLimit != null && overLimit > 0)
+                      '${_accountLabel('Over credit limit', 'تجاوز حد الائتمان')} ${amount(overLimit)}',
+                    if (overdue)
+                      _accountLabel('Estimated statement payment overdue', 'سداد كشف الحساب التقديري متأخر'),
                     if (statementDue != null)
                       '${_accountLabel('Statement due date', 'استحقاق كشف الحساب')} '
                       '${dates.formatMediumDate(statementDue)}',

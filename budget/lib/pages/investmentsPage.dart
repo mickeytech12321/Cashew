@@ -5,6 +5,7 @@ import 'package:budget/struct/investmentLedger.dart';
 import 'package:budget/struct/investmentQuoteCsv.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 typedef _Holding = ({
   String id,
@@ -171,6 +172,26 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
         )));
       }
     });
+  }
+
+  Future<void> _copyQuotes(_Holding holding) async {
+    try {
+      final quotes = await database.getInvestmentQuotesForExport(holding.id);
+      if (!mounted) return;
+      if (quotes.isNotEmpty) {
+        await Clipboard.setData(ClipboardData(text: exportInvestmentQuoteCsv(quotes)));
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+        quotes.isEmpty ? _label('No quotes to copy.', 'لا توجد أسعار للنسخ.')
+            : _label('Prices copied as CSV.', 'تم نسخ الأسعار بصيغة CSV.'),
+      )));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+        _label('Could not copy prices.', 'تعذّر نسخ الأسعار.'),
+      )));
+    }
   }
 
   Future<void> _importQuotes(_Holding holding) async {
@@ -353,6 +374,9 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
               TextButton(
                   onPressed: _busy ? null : () => _importQuotes(holding),
                   child: Text(_label('Import prices', 'استيراد الأسعار'))),
+              TextButton(
+                  onPressed: _busy ? null : () => _copyQuotes(holding),
+                  child: Text(_label('Copy price history', 'نسخ سجل الأسعار'))),
             ]),
             FutureBuilder(
               key: ValueKey(('prices', holding.id)),
