@@ -117,21 +117,41 @@ String getCurrencyString(AllWallets allWallets, {String? currencyKey}) {
           : (currenciesJSON[selectedWalletCurrency]?["Symbol"] ?? "");
 }
 
-double getCurrencyExchangeRate(
+double? getKnownCurrencyExchangeRate(
   String? currencyKey, {
   Map<String, dynamic>? appStateSettingsPassed,
 }) {
-  if (currencyKey == null || currencyKey.isEmpty) return 1;
+  if (currencyKey == null || currencyKey.trim().isEmpty) return null;
   final settings = appStateSettingsPassed ?? appStateSettings;
-  final key = currencyKey.toLowerCase();
+  final key = currencyKey.trim().toLowerCase();
   if (key == "usd") return 1;
   for (final source in [settings["customCurrencyAmounts"], settings["cachedCurrencyExchange"]]) {
     if (source is! Map) continue;
     final value = source[currencyKey] ?? source[key];
     if (value is num && value.isFinite && value > 0) return value.toDouble();
   }
-  // Legacy display fallback; strict conversion must be introduced separately.
-  return 1;
+  return null;
+}
+
+double? strictCurrencyRatio(String? from, String? to, {
+  Map<String, dynamic>? appStateSettingsPassed,
+}) {
+  if (from == null || to == null || from.trim().isEmpty || to.trim().isEmpty) return null;
+  if (from.trim().toLowerCase() == to.trim().toLowerCase()) return 1;
+  final source = getKnownCurrencyExchangeRate(from, appStateSettingsPassed: appStateSettingsPassed);
+  final target = getKnownCurrencyExchangeRate(to, appStateSettingsPassed: appStateSettingsPassed);
+  if (source == null || target == null) return null;
+  final ratio = target / source;
+  return ratio.isFinite && ratio > 0 ? ratio : null;
+}
+
+double getCurrencyExchangeRate(
+  String? currencyKey, {
+  Map<String, dynamic>? appStateSettingsPassed,
+}) {
+  // Preserve legacy display behavior. Financial writes should use strictCurrencyRatio.
+  return getKnownCurrencyExchangeRate(currencyKey,
+      appStateSettingsPassed: appStateSettingsPassed) ?? 1;
 }
 
 double budgetAmountToPrimaryCurrency(AllWallets allWallets, Budget budget) {
