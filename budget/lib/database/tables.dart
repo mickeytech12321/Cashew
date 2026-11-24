@@ -719,6 +719,17 @@ class FinanceDatabase extends _$FinanceDatabase {
     };
   }
 
+  Future<Set<String>> getWalletPksExcludedFromNetWorth() async {
+    final rows = await customSelect(
+      'SELECT wallet_fk FROM account_details '
+      'WHERE exclude_from_net_worth = 1 OR archived = 1',
+    ).get();
+    return rows
+        .map((r) => r.data['wallet_fk'])
+        .whereType<String>()
+        .toSet();
+  }
+
   Future<void> setAccountArchived(String walletPk, bool archived) async {
     final current = await getAccountDetails(walletPk);
     await saveAccountDetails(
