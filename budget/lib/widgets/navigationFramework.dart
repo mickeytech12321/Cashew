@@ -1,3 +1,4 @@
+import 'package:budget/struct/cloudConfiguration.dart';
 import 'package:animations/animations.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/database/initializeDefaultDatabase.dart';
@@ -316,10 +317,12 @@ Future<bool> runAllCloudFunctions(BuildContext context,
       loadingIndeterminateKey.currentState?.setVisibility(true);
       await parseEmailsInBackground(context, forceParse: true);
     }
-    loadingIndeterminateKey.currentState?.setVisibility(true);
-    await syncPendingQueueOnServer(); //sync before download
-    loadingIndeterminateKey.currentState?.setVisibility(true);
-    await getCloudBudgets();
+    if (enableCashewCloudServices) {
+      loadingIndeterminateKey.currentState?.setVisibility(true);
+      await syncPendingQueueOnServer();
+      loadingIndeterminateKey.currentState?.setVisibility(true);
+      await getCloudBudgets();
+    }
     loadingIndeterminateKey.currentState?.setVisibility(true);
     await createBackupInBackground(context);
     loadingIndeterminateKey.currentState?.setVisibility(true);
@@ -336,7 +339,6 @@ Future<bool> runAllCloudFunctions(BuildContext context,
       // Request had invalid authentication credentials. Try logging out and back in.
       // This stems from silent sign-in not providing the credentials for GDrive API for e.g.
       await refreshGoogleSignIn();
-      runAllCloudFunctions(context);
     } else {
       if (kIsWeb && appStateSettings["webForceLoginPopupOnLaunch"] == true) {
         signOutGoogle();

@@ -9,6 +9,7 @@ Branch: `feature/free-edition` (not merged into main).
 - Cash-flow forecasts with goals, recurring entries and known-rate conversion. Wealth and investment tracking with price history and opt-in investment valuation.
 - Offline assistant drafts and Android on-device dictation where supported. Monthly spending insights and an opt-in Android launcher widget.
 - Local household profiles and account previews. Device-to-device transaction sync preserves newer edits, exposes eligible conflicts for review and retains deletion history.
+- Android Google sign-in uses an owned OAuth client ID configured at build time. Backup, attachment and Gmail authorization are separate. See [Google setup](GOOGLE_DRIVE_SETUP.md).
 - New Drive snapshots keep parsed import metadata without raw message bodies, and replace a previous backup only after upload completes. Restore validates the candidate and applies native restores at startup, before the main database opens.
 - Schema remains at 47. Additional local tables are initialized on open. Flutter and SQLite verification cover fresh, v46-upgrade and partial-v47 scenarios.
 

@@ -1,3 +1,4 @@
+import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'package:budget/struct/bankNotificationInbox.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -426,8 +427,7 @@ Future<void> parseEmailsInBackground(context,
           appStateSettings["EmailAutoTransactions-amountOfEmails"] ?? 10;
       int newEmailCount = 0;
 
-      final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
-      final authenticateClient = GoogleAuthClient(authHeaders);
+      final authenticateClient = await getGoogleAuthorizedClient(googleMailScopes);
       gMail.GmailApi gmailApi = gMail.GmailApi(authenticateClient);
       gMail.ListMessagesResponse results = await gmailApi.users.messages
           .list(googleUser!.id.toString(), maxResults: amountOfEmails);
@@ -664,8 +664,7 @@ class _GmailApiScreenState extends State<GmailApiScreen> {
     loading = true;
     if (googleUser != null) {
       try {
-        final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
-        final authenticateClient = GoogleAuthClient(authHeaders);
+        final authenticateClient = await getGoogleAuthorizedClient(googleMailScopes);
         gMail.GmailApi gmailApi = gMail.GmailApi(authenticateClient);
         gMail.ListMessagesResponse results = await gmailApi.users.messages
             .list(googleUser!.id.toString(), maxResults: amountOfEmails);

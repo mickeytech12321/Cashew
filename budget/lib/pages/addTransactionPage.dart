@@ -1,3 +1,4 @@
+import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'package:budget/database/generatePreviewData.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -4166,12 +4167,9 @@ Future<List<int>?> getGoogleDriveFileImageData(String url) async {
       String? fileId = getFileIdFromUrl(url);
       if (fileId == null) throw ("No file id found!");
 
-      if (googleUser == null) {
-        await signInGoogle(drivePermissionsAttachments: true);
-      }
+      if (!await signInGoogle(drivePermissionsAttachments: true)) return null;
 
-      final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
-      final authenticateClient = GoogleAuthClient(authHeaders);
+      final authenticateClient = await getGoogleAuthorizedClient(googleAttachmentScopes);
       drive.DriveApi driveApi = drive.DriveApi(authenticateClient);
 
       List<int> dataStore = [];

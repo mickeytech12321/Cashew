@@ -1,3 +1,4 @@
+import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:budget/database/binary_string_conversion.dart';
@@ -122,8 +123,7 @@ Future<bool> createSyncBackup(
     return false;
   }
 
-  final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
-  final authenticateClient = GoogleAuthClient(authHeaders);
+  final authenticateClient = await getGoogleAuthorizedClient(googleBackupScopes);
   drive.DriveApi driveApi = drive.DriveApi(authenticateClient);
   if (driveApi == null) {
     if (changeMadeSync)
@@ -250,8 +250,7 @@ Future<bool> _syncData(BuildContext context) async {
     return false;
   }
 
-  final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
-  final authenticateClient = GoogleAuthClient(authHeaders);
+  final authenticateClient = await getGoogleAuthorizedClient(googleBackupScopes);
   drive.DriveApi driveApi = drive.DriveApi(authenticateClient);
   if (driveApi == null) {
     throw "Failed to login to Google Drive";
