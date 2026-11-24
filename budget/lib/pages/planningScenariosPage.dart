@@ -19,7 +19,6 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   bool _busy = false;
   late final _wallets = database.getAllWallets();
   String? _scheduledWalletPk;
-  String? _goalPk;
   late final _goals = database.getAllObjectives(
       objectiveType: ObjectiveType.goal, isArchived: false);
   bool _projectRecurrences = false;
@@ -46,18 +45,68 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
     }
   }
 
+  Future<void> _chooseGoals(List<Objective> goals) async {
+    final scenario = _selected!;
+    final id = scenario['scenario_pk'] as String;
+    await _write(() async {
+      final selected = await database.getPlanningScenarioGoals(id);
+      selected.retainAll((await _goals).map((goal) => goal.objectivePk));
+      if (!mounted) return;
+      final result = await showDialog<Set<String>>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, update) {
+            return AlertDialog(
+              scrollable: true,
+              title: Text(
+                _label('Choose goals to forecast', 'اختر الأهداف للتوقّع'),
+              ),
+              content: Column(
+                children: [
+                  for (final goal in goals)
+                    CheckboxListTile(
+                      title: Text(goal.name),
+                      value: selected.contains(goal.objectivePk),
+                      onChanged: (value) => update(() {
+                        if (value == true) {
+                          selected.add(goal.objectivePk);
+                        } else {
+                          selected.remove(goal.objectivePk);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(_label('Cancel', 'إلغاء')),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, selected),
+                  child: Text(_label('Save goals', 'حفظ الأهداف')),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+      if (result == null || !mounted) return;
+      await database.setPlanningScenarioGoals(id, result);
+      if (mounted) _select(scenario);
+    });
+  }
+
   void _select(Map<String, dynamic> scenario) {
     setState(() {
       if (_selected?['scenario_pk'] != scenario['scenario_pk']) {
         _scheduledWalletPk = null;
-        _goalPk = null;
         _projectRecurrences = false;
       }
       _selected = scenario;
       final id = scenario['scenario_pk'] as String;
       _forecast = database.calculatePlanningScenario(id,
           scheduledWalletPk: _scheduledWalletPk,
-          goalPk: _goalPk,
           projectRecurrences: _projectRecurrences);
       _items = database.getPlanningScenarioItems(id);
     });
@@ -307,32 +356,9 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                             !goal.endDate!.isAfter(end))
                         .toList();
                     if (goals.isEmpty) return const SizedBox.shrink();
-                    return DropdownButton<String>(
-                      isExpanded: true,
-                      value: goals.any((goal) => goal.objectivePk == _goalPk)
-                          ? _goalPk
-                          : '',
-                      items: [
-                        DropdownMenuItem(
-                            value: '',
-                            child: Text(
-                              _label('Exclude goal projection',
-                                  'استبعاد توقّع الهدف'),
-                            )),
-                        for (final goal in goals)
-                          DropdownMenuItem(
-                              value: goal.objectivePk,
-                              child: Text(
-                                  _label('Project goal: ${goal.name}',
-                                      'توقّع الهدف: ${goal.name}'),
-                                  overflow: TextOverflow.ellipsis)),
-                      ],
-                      onChanged: _busy
-                          ? null
-                          : (value) {
-                              _goalPk = value == '' ? null : value;
-                              _select(_selected!);
-                            },
+                    return OutlinedButton(
+                      onPressed: _busy ? null : () => _chooseGoals(goals),
+                      child: Text(_label('Choose goals to forecast', 'اختر الأهداف للتوقّع')),
                     );
                   },
                 ),

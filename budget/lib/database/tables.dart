@@ -864,6 +864,11 @@ class FinanceDatabase extends _$FinanceDatabase {
       scenario_fk TEXT PRIMARY KEY NOT NULL REFERENCES planning_scenarios(scenario_pk) ON DELETE CASCADE,
       currency TEXT NOT NULL
     )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenario_goals (
+      scenario_fk TEXT NOT NULL REFERENCES planning_scenarios(scenario_pk) ON DELETE CASCADE,
+      goal_fk TEXT NOT NULL REFERENCES objectives(objective_pk) ON DELETE CASCADE,
+      PRIMARY KEY (scenario_fk, goal_fk)
+    )''');
     await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenario_items (
       item_pk TEXT PRIMARY KEY NOT NULL,
       scenario_fk TEXT NOT NULL REFERENCES planning_scenarios(scenario_pk) ON DELETE CASCADE,
@@ -4555,8 +4560,43 @@ class FinanceDatabase extends _$FinanceDatabase {
     );
   }
 
+  Future<Set<String>> getPlanningScenarioGoals(String scenarioPk) async {
+    final rows = await customSelect(
+      'SELECT goal_fk FROM planning_scenario_goals WHERE scenario_fk = ? ORDER BY goal_fk',
+      variables: [Variable<String>(scenarioPk)],
+    ).get();
+    return rows.map((row) => row.read<String>('goal_fk')).toSet();
+  }
+
+  Future<void> setPlanningScenarioGoals(String scenarioPk, Set<String> goalPks) async {
+    await transaction(() async {
+      final scenario = await customSelect(
+        'SELECT scenario_pk FROM planning_scenarios WHERE scenario_pk = ?',
+        variables: [Variable<String>(scenarioPk)],
+      ).getSingleOrNull();
+      if (scenario == null) throw StateError('Planning scenario not found');
+      final valid = goalPks.isEmpty ? <Objective>[] : await (select(objectives)
+            ..where((row) => row.objectivePk.isIn(goalPks) &
+                row.type.equals(ObjectiveType.goal.index) & row.archived.equals(false)))
+          .get();
+      if (valid.length != goalPks.length) throw StateError('Goal no longer available');
+      await customStatement(
+        'DELETE FROM planning_scenario_goals WHERE scenario_fk = ?', [scenarioPk],
+      );
+      for (final id in goalPks) {
+        await customStatement(
+          'INSERT INTO planning_scenario_goals (scenario_fk,goal_fk) VALUES (?,?)',
+          [scenarioPk, id],
+        );
+      }
+    });
+  }
+
   Future<void> deletePlanningScenario(String scenarioPk) async {
     await transaction(() async {
+      await customStatement(
+        'DELETE FROM planning_scenario_goals WHERE scenario_fk = ?', [scenarioPk],
+      );
       await customStatement(
         'DELETE FROM planning_scenario_items WHERE scenario_fk = ?', [scenarioPk],
       );
@@ -4716,14 +4756,16 @@ class FinanceDatabase extends _$FinanceDatabase {
       }
     }
     final scenarioCurrency = scenario.readNullable<String>('currency');
-    if (goalPk != null && scenarioCurrency != null) {
+    final selectedGoals = scenarioCurrency == null ? const <String>{}
+        : goalPk == null ? await getPlanningScenarioGoals(scenarioPk) : {goalPk};
+    for (final selectedGoal in selectedGoals) {
       final goal = await (select(objectives)
-            ..where((row) => row.objectivePk.equals(goalPk) &
+            ..where((row) => row.objectivePk.equals(selectedGoal) &
                 row.type.equals(ObjectiveType.goal.index) &
                 row.archived.equals(false)))
           .getSingleOrNull();
       final deadline = goal?.endDate;
-      if (goal != null && deadline != null &&
+      if (scenarioCurrency != null && goal != null && deadline != null &&
           !deadline.isBefore(base) && !deadline.isAfter(horizon)) {
         double convert(double amount, String? currency) {
           if (amount == 0) return 0;
@@ -4740,7 +4782,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           'LEFT JOIN wallets w ON w.wallet_pk = t.wallet_fk '
           'WHERE t.objective_fk = ? AND t.paid = 1 AND t.skip_paid = 0 AND t.date_created < ? '
           'GROUP BY w.currency',
-          variables: [Variable<String>(goalPk), Variable<DateTime>(base)],
+          variables: [Variable<String>(selectedGoal), Variable<DateTime>(base)],
         ).get();
         var contributed = 0.0;
         for (final row in settled) {
@@ -4750,7 +4792,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         final endOfDeadline = advanceDays(
             DateTime(deadline.year, deadline.month, deadline.day), 1);
         final scheduled = points.where((point) =>
-            point['goal_pk'] == goalPk &&
+            point['goal_pk'] == selectedGoal &&
             (point['date'] as DateTime).isBefore(endOfDeadline));
         for (final point in scheduled) {
           contributed += (point['amount'] as double) * direction;
@@ -4760,7 +4802,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         if (remaining > 0) {
           points.add({
             'date': deadline,
-            'item_pk': goalPk,
+            'item_pk': selectedGoal,
             'amount': remaining * direction,
             'name': goal.name,
             'goal': true,
@@ -4886,15 +4928,17 @@ class FinanceDatabase extends _$FinanceDatabase {
       'SELECT * FROM investment_trades WHERE holding_fk = ? ORDER BY traded_at, rowid',
       variables: [Variable<String>(id)],
     ).get();
-    return rows.map((row) => InvestmentTrade(
+    return rows.map(_readInvestmentTrade).toList();
+  }
+
+  InvestmentTrade _readInvestmentTrade(QueryRow row) => InvestmentTrade(
       id: row.read<String>('trade_pk'),
       date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('traded_at')),
       buy: row.read<int>('buy') == 1,
       units: row.read<double>('units'),
       price: row.read<double>('price'),
       fees: row.read<double>('fees'),
-    )).toList();
-  }
+    );
 
   Future<void> addInvestmentTrade(String holdingId, InvestmentTrade trade) =>
       transaction(() async {
@@ -4927,31 +4971,59 @@ class FinanceDatabase extends _$FinanceDatabase {
     return rows.map((r) => r.data).toList();
   }
 
-  Future<({double? total, List<String> missingCurrencies})> getWealthValuation(
+  Future<({double? total, List<String> missingCurrencies, int unpricedHoldings})>
+      getWealthValuation(
     String currency, {
     Map<String, dynamic>? rateSettings,
+    bool includeInvestments = false,
   }) async {
     final balances = await customSelect(
       'SELECT LOWER(TRIM(currency)) AS currency, '
       'SUM(quantity * unit_value * CASE WHEN liability = 1 THEN -1 ELSE 1 END) '
       'AS total FROM wealth_assets GROUP BY LOWER(TRIM(currency))',
     ).get();
+    var hasEntries = balances.isNotEmpty;
     var total = 0.0;
-    final missing = <String>[];
-    for (final row in balances) {
-      final source = row.read<String>('currency');
+    var unpriced = 0;
+    final missing = <String>{};
+    void add(String source, double value) {
       final ratio = strictCurrencyRatio(source, currency,
           appStateSettingsPassed: rateSettings);
       if (ratio == null) {
         missing.add(source);
       } else {
-        total += row.read<double>('total') * ratio;
+        total += value * ratio;
       }
     }
-    missing.sort();
+    for (final row in balances) {
+      add(row.read<String>('currency'), row.read<double>('total'));
+    }
+    if (includeInvestments) {
+      final trades = await customSelect(
+        'SELECT h.currency, h.market_price, t.* FROM investment_trades t '
+        'JOIN investment_holdings h ON h.holding_pk = t.holding_fk '
+        'ORDER BY t.holding_fk, t.traded_at, t.rowid',
+      ).get();
+      final positions = <String, List<QueryRow>>{};
+      for (final row in trades) {
+        (positions[row.read<String>('holding_fk')] ??= []).add(row);
+      }
+      for (final position in positions.values) {
+        final units = InvestmentBalance.fromTrades(position.map(_readInvestmentTrade)).units;
+        if (units == 0) continue;
+        hasEntries = true;
+        final price = position.first.readNullable<double>('market_price');
+        if (price == null) {
+          unpriced++;
+        } else {
+          add(position.first.read<String>('currency'), units * price);
+        }
+      }
+    }
     return (
-      total: balances.isNotEmpty && missing.isEmpty && total.isFinite ? total : null,
-      missingCurrencies: missing,
+      total: hasEntries && missing.isEmpty && unpriced == 0 && total.isFinite ? total : null,
+      missingCurrencies: missing.toList()..sort(),
+      unpricedHoldings: unpriced,
     );
   }
 
@@ -4976,26 +5048,27 @@ class FinanceDatabase extends _$FinanceDatabase {
     required DateTime capturedAt,
     required String currency,
     Map<String, dynamic>? rateSettings,
+    bool includeInvestments = false,
   }) async {
     final code = currency.trim().toLowerCase();
     if (!RegExp(r'^[a-z]{3}$').hasMatch(code) || snapshotPk.trim().isEmpty) {
       throw ArgumentError('Invalid snapshot identity or currency');
     }
     return transaction(() async {
-      final value = await getWealthValuation(code, rateSettings: rateSettings);
+      final value = await getWealthValuation(code, rateSettings: rateSettings, includeInvestments: includeInvestments);
       if (value.total == null) return false;
       await customStatement(
         'INSERT INTO wealth_snapshots '
         '(snapshot_pk, captured_at, net_worth_primary, breakdown_json) '
         'VALUES (?, ?, ?, ?) ON CONFLICT(snapshot_pk) DO NOTHING',
         [snapshotPk, capturedAt.millisecondsSinceEpoch, value.total,
-         jsonEncode({'currency': code})],
+         jsonEncode({'currency': code, 'includes_investments': includeInvestments})],
       );
       return true;
     });
   }
 
-  Future<List<({DateTime capturedAt, double total, String? currency})>>
+  Future<List<({DateTime capturedAt, double total, String? currency, bool includesInvestments})>>
       getWealthSnapshotHistory() async {
     final rows = await customSelect(
       'SELECT captured_at, net_worth_primary, breakdown_json '
@@ -5003,10 +5076,12 @@ class FinanceDatabase extends _$FinanceDatabase {
     ).get();
     return rows.map((row) {
       String? currency;
+      var includesInvestments = false;
       try {
         final details = jsonDecode(row.read<String>('breakdown_json'));
-        if (details is Map && details['currency'] is String) {
-          currency = details['currency'] as String;
+        if (details is Map) {
+          if (details['currency'] is String) currency = details['currency'] as String;
+          includesInvestments = details['includes_investments'] == true;
         }
       } on FormatException {
         // Older snapshots can still be displayed without a currency code.
@@ -5015,6 +5090,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         capturedAt: DateTime.fromMillisecondsSinceEpoch(row.read<int>('captured_at')),
         total: row.read<double>('net_worth_primary'),
         currency: currency,
+        includesInvestments: includesInvestments,
       );
     }).toList();
   }

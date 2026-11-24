@@ -14,7 +14,9 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
   late var _assets = database.getWealthAssets();
   bool _busy = false;
   String _valuationCurrency = 'egp';
-  late var _valuation = database.getWealthValuation(_valuationCurrency);
+  bool _includeInvestments = false;
+  late var _valuation = database.getWealthValuation(
+      _valuationCurrency, includeInvestments: _includeInvestments);
   late var _allocation = database.getWealthAllocation();
   late var _history = database.getWealthSnapshotHistory();
 
@@ -28,7 +30,8 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
       if (mounted)
         setState(() {
           _assets = database.getWealthAssets();
-          _valuation = database.getWealthValuation(_valuationCurrency);
+          _valuation = database.getWealthValuation(
+      _valuationCurrency, includeInvestments: _includeInvestments);
           _history = database.getWealthSnapshotHistory();
           _allocation = database.getWealthAllocation();
         });
@@ -93,6 +96,7 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
           snapshotPk: uuid.v4(),
           capturedAt: DateTime.now(),
           currency: _valuationCurrency,
+          includeInvestments: _includeInvestments,
         );
         if (!captured && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -120,7 +124,10 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
                   : value != null && value.missingCurrencies.isNotEmpty
                       ? '${_label('Missing exchange rates', 'أسعار الصرف غير المتاحة')} '
                           '${value.missingCurrencies.join(', ').toUpperCase()}'
-                      : _label('Valuation unavailable', 'التقييم غير متاح')),
+                      : value != null && value.unpricedHoldings > 0
+                          ? _label('Enter prices for all open investments.',
+                              'أدخل أسعار كل الاستثمارات المفتوحة.')
+                          : _label('Valuation unavailable', 'التقييم غير متاح')),
           trailing: DropdownButton<String>(
             value: _valuationCurrency,
             items: [
@@ -133,7 +140,8 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
                     if (value == null) return;
                     setState(() {
                       _valuationCurrency = value;
-                      _valuation = database.getWealthValuation(value);
+                      _valuation = database.getWealthValuation(
+                          value, includeInvestments: _includeInvestments);
                     });
                   },
           ),
@@ -153,6 +161,19 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
               onPressed: _busy ? null : () => _edit(),
               child: Text(_label('Add entry', 'إضافة بند')),
             ),
+          ),
+          SwitchListTile(
+            title: Text(_label('Include tracked investments', 'تضمين الاستثمارات المسجّلة')),
+            subtitle: Text(_label(
+              'Enable when these holdings are recorded only under Investments.',
+              'فعّل الخيار لو الأصول دي مسجّلة في الاستثمارات فقط.',
+            )),
+            value: _includeInvestments,
+            onChanged: _busy ? null : (value) => setState(() {
+              _includeInvestments = value;
+              _valuation = database.getWealthValuation(_valuationCurrency,
+                  includeInvestments: value);
+            }),
           ),
           FutureBuilder<List<Map<String, dynamic>>>(
             future: _assets,
@@ -179,10 +200,10 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
                     ListTile(
                         title: Text(
                             _label('No entries yet.', 'لا توجد بنود بعد.'))),
-                  if (assets.isNotEmpty)
+                  if (assets.isNotEmpty || _includeInvestments)
                     _valuationPanel(
                         balances.keys.map((key) => key.toLowerCase()).toSet()),
-                  if (assets.isNotEmpty)
+                  if (assets.isNotEmpty || _includeInvestments)
                     OutlinedButton(
                       onPressed: _busy ? null : _captureSnapshot,
                       child: Text(_label(
@@ -275,6 +296,8 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
                   for (final entry in history)
                     ListTile(
                       title: Text(dates.formatMediumDate(entry.capturedAt)),
+                  subtitle: entry.includesInvestments
+                      ? Text(_label('Includes investments', 'يشمل الاستثمارات')) : null,
                       trailing:
                           Text(_amount(entry.total, entry.currency ?? '')),
                     ),

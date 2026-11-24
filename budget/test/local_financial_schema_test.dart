@@ -21,6 +21,117 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+
+  test(
+    'valuation includes open investments only when requested and priced',
+    () async {
+      final db = FinanceDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      final date = DateTime(2027, 2, 1);
+      await db.createInvestmentHolding(
+        id: 'holding',
+        name: 'Fund',
+        currency: 'USD',
+      );
+      await db.addInvestmentTrade(
+        'holding',
+        InvestmentTrade(
+          id: 'buy',
+          date: date,
+          buy: true,
+          units: 2,
+          price: 10,
+          fees: 0,
+        ),
+      );
+      expect((await db.getWealthValuation('usd')).total, isNull);
+      final unpriced = await db.getWealthValuation(
+        'usd',
+        includeInvestments: true,
+      );
+      expect(unpriced.total, isNull);
+      expect(unpriced.unpricedHoldings, 1);
+      await db.setInvestmentMarketPrice('holding', 15, date);
+      expect(
+        (await db.getWealthValuation('usd', includeInvestments: true)).total,
+        30,
+      );
+      expect(
+        await db.captureWealthSnapshot(
+          snapshotPk: 'snapshot',
+          capturedAt: date,
+          currency: 'usd',
+          includeInvestments: true,
+        ),
+        isTrue,
+      );
+      await db.setInvestmentMarketPrice('holding', 20, date);
+      final saved = (await db.getWealthSnapshotHistory()).single;
+      expect(saved.total, 30);
+      expect(saved.includesInvestments, isTrue);
+      await db.addInvestmentTrade(
+        'holding',
+        InvestmentTrade(
+          id: 'sell',
+          date: date.add(const Duration(days: 1)),
+          buy: false,
+          units: 2,
+          price: 20,
+          fees: 0,
+        ),
+      );
+      expect(
+        (await db.getWealthValuation('usd', includeInvestments: true)).total,
+        isNull,
+      );
+    },
+  );
+
+  test('scenario goals persist and are removed with their scenario', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final base = DateTime(2027, 2, 1);
+    await db.into(db.wallets).insert(
+          WalletsCompanion.insert(
+            walletPk: const Value('wallet'),
+            name: 'Account',
+            order: 0,
+            currency: const Value('egp'),
+          ),
+        );
+    for (final id in ['a', 'b']) {
+      await db.into(db.objectives).insert(
+            ObjectivesCompanion.insert(
+              objectivePk: Value(id),
+              name: id,
+              amount: 100,
+              order: 0,
+              walletFk: const Value('wallet'),
+              endDate: Value(base.add(const Duration(days: 2))),
+            ),
+          );
+    }
+    await db.savePlanningScenario(
+      scenarioPk: 'plan',
+      name: 'Plan',
+      baseDate: base,
+      horizonDays: 7,
+      startingBalance: 1000,
+      currency: 'egp',
+    );
+    await db.setPlanningScenarioGoals('plan', {'a', 'b'});
+    expect(await db.getPlanningScenarioGoals('plan'), {'a', 'b'});
+    expect((await db.calculatePlanningScenario('plan')).last['balance'], 800);
+    await expectLater(
+      db.setPlanningScenarioGoals('plan', {'missing'}),
+      throwsStateError,
+    );
+    expect(await db.getPlanningScenarioGoals('plan'), {'a', 'b'});
+    await db.deletePlanningScenario('plan');
+    expect(await db.getPlanningScenarioGoals('plan'), isEmpty);
+  });
+
+
   test('investment ledger weights costs and rolls back invalid history edits',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());
