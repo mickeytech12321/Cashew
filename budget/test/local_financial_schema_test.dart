@@ -19,6 +19,71 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('converts scheduled amounts only with a known scenario currency rate',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final date = DateTime(2027, 2, 1);
+    await db.savePlanningScenario(
+        scenarioPk: 'plan',
+        name: 'Plan',
+        baseDate: date,
+        horizonDays: 7,
+        startingBalance: 1000,
+        currency: 'EGP');
+    await db.into(db.wallets).insert(WalletsCompanion.insert(
+          walletPk: const Value('usd'),
+          name: 'Dollars',
+          order: 0,
+          currency: const Value('usd'),
+        ));
+    await db.into(db.transactions).insert(Transaction(
+          transactionPk: 'scheduled',
+          name: 'Subscription',
+          amount: -10,
+          note: '',
+          categoryFk: 'category',
+          walletFk: 'usd',
+          dateCreated: date,
+          income: false,
+          paid: false,
+          skipPaid: false,
+          type: TransactionSpecialType.upcoming,
+        ));
+    expect((await db.getPlanningScenarios()).single['currency'], 'egp');
+    await expectLater(
+        db.calculatePlanningScenario('plan',
+            scheduledWalletPk: 'usd', rateSettings: {}),
+        throwsA(isA<PlanningRateUnavailable>()));
+    final result = await db.calculatePlanningScenario('plan',
+        scheduledWalletPk: 'usd',
+        rateSettings: {
+          'cachedCurrencyExchange': {'egp': 50}
+        });
+    expect(result.map((row) => row['balance']), [1000, 500]);
+    await expectLater(
+        db.savePlanningScenario(
+            scenarioPk: 'plan',
+            name: 'Replace',
+            baseDate: date,
+            horizonDays: 7,
+            startingBalance: 100,
+            currency: 'USD'),
+        throwsStateError);
+    expect((await db.getPlanningScenarios()).single['name'], 'Plan');
+    await db.deletePlanningScenario('plan');
+    await db.savePlanningScenario(
+        scenarioPk: 'plan',
+        name: 'New',
+        baseDate: date,
+        horizonDays: 7,
+        startingBalance: 100);
+    expect((await db.getPlanningScenarios()).single['currency'], isNull);
+    final legacy = await db.calculatePlanningScenario('plan',
+        scheduledWalletPk: 'usd', rateSettings: {});
+    expect(legacy.last['balance'], 90);
+  });
+
   test('insights group settled cash flow by month, category and currency',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());

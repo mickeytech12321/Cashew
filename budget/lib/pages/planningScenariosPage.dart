@@ -72,6 +72,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                 _asDate(scenario['base_date']),
                 scenario['horizon_days'] as int,
                 false,
+                currency: scenario['currency'] as String?,
               ),
       ),
     );
@@ -84,6 +85,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
         baseDate: draft.date,
         horizonDays: draft.days!,
         startingBalance: draft.amount,
+        currency: draft.currency,
       );
       if (!mounted) return;
       setState(() => _scenarios = database.getPlanningScenarios());
@@ -93,6 +95,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
         'base_date': draft.date.millisecondsSinceEpoch,
         'starting_balance': draft.amount,
         'horizon_days': draft.days,
+        'currency': draft.currency,
       });
     });
   }
@@ -175,6 +178,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   @override
   Widget build(BuildContext context) {
     final selectedPk = _selected?['scenario_pk'] as String?;
+    final currency = (_selected?['currency'] as String?)?.toUpperCase();
     final dates = MaterialLocalizations.of(context);
     return PageFramework(
       title: _label('Cash-flow scenarios', 'سيناريوهات التدفق النقدي'),
@@ -225,8 +229,12 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
               ),
               if (_selected != null)
                 Text(_label(
-                  'Use one currency for all amounts in this scenario.',
-                  'استخدم عملة واحدة لجميع المبالغ في هذا السيناريو.',
+                  currency == null
+                      ? 'Use one currency for all amounts in this scenario.'
+                      : 'Manual amounts are in $currency.',
+                  currency == null
+                      ? 'استخدم عملة واحدة لجميع المبالغ في هذا السيناريو.'
+                      : 'المبالغ اليدوية بعملة $currency.',
                 )),
               if (_selected != null)
                 FutureBuilder<List<TransactionWallet>>(
@@ -332,6 +340,16 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
             key: ValueKey(('forecast', selectedPk)),
             future: _forecast,
             builder: (context, snapshot) {
+              final error = snapshot.error;
+              if (error is PlanningRateUnavailable) {
+                final source = error.source?.toUpperCase() ?? '—';
+                final target = error.target.toUpperCase();
+                return ListTile(
+                    title: Text(_label(
+                  'Exchange rate unavailable for $source to $target.',
+                  'سعر الصرف من $source إلى $target غير متاح.',
+                )));
+              }
               if (snapshot.hasError) {
                 return ListTile(
                     title: Text(_label('Could not calculate the forecast.',
@@ -347,7 +365,8 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                     title: Text(_label('Projected ending balance',
                         'الرصيد المتوقع في نهاية الفترة')),
                     trailing: Text(
-                        (points.last['balance'] as num).toStringAsFixed(2)),
+                        '${(points.last['balance'] as num).toStringAsFixed(2)} ${currency ?? ''}'
+                            .trim()),
                   ),
                   for (final point in points.take(visibleCount))
                     ListTile(
@@ -378,12 +397,14 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
 
 class _PlanningDraft {
   const _PlanningDraft(
-      this.name, this.amount, this.date, this.days, this.income);
+      this.name, this.amount, this.date, this.days, this.income,
+      {this.currency});
   final String name;
   final double amount;
   final DateTime date;
   final int? days;
   final bool income;
+  final String? currency;
 }
 
 class _PlanningEditor extends StatefulWidget {
@@ -403,6 +424,8 @@ class _PlanningEditor extends StatefulWidget {
 
 class _PlanningEditorState extends State<_PlanningEditor> {
   final _form = GlobalKey<FormState>();
+  late final _currency =
+      TextEditingController(text: widget.draft?.currency?.toUpperCase());
   late final _name = TextEditingController(text: widget.draft?.name);
   late final _amount = TextEditingController(
       text: widget.draft?.amount.toString() ?? (widget.scenario ? '0' : ''));
@@ -415,6 +438,7 @@ class _PlanningEditorState extends State<_PlanningEditor> {
 
   @override
   void dispose() {
+    _currency.dispose();
     _name.dispose();
     _amount.dispose();
     _days.dispose();
@@ -450,6 +474,28 @@ class _PlanningEditorState extends State<_PlanningEditor> {
                   ? null
                   : label('Required', 'مطلوب'),
             ),
+            if (scenario)
+              TextFormField(
+                controller: _currency,
+                readOnly: widget.draft?.currency != null,
+                maxLength: 3,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  labelText: label('Currency code', 'رمز العملة'),
+                  helperText: widget.draft == null
+                      ? null
+                      : label('Existing amounts use this currency.',
+                          'المبالغ الحالية تستخدم هذه العملة.'),
+                ),
+                validator: (value) {
+                  final code = value?.trim() ?? '';
+                  if (code.isEmpty && widget.draft != null) return null;
+                  return RegExp(r'^[a-zA-Z]{3}$').hasMatch(code)
+                      ? null
+                      : label('Enter a three-letter code',
+                          'أدخل رمزًا من ثلاثة أحرف');
+                },
+              ),
             TextFormField(
               controller: _amount,
               decoration: InputDecoration(
@@ -528,6 +574,9 @@ class _PlanningEditorState extends State<_PlanningEditor> {
                   _date,
                   int.tryParse(_normalize(_days.text)),
                   _income,
+                  currency: !scenario || _currency.text.trim().isEmpty
+                      ? null
+                      : _currency.text.trim().toLowerCase(),
                 ));
           },
           child: Text(label('Save', 'حفظ')),

@@ -40,6 +40,12 @@ const int COLOUR_LIMIT = 50;
 const int DEFAULT_LIMIT = 100000;
 const int DEFAULT_OFFSET = 0;
 
+class PlanningRateUnavailable implements Exception {
+  const PlanningRateUnavailable(this.source, this.target);
+  final String? source;
+  final String target;
+}
+
 enum BudgetReoccurence { custom, daily, weekly, monthly, yearly }
 
 enum TransactionSpecialType {
@@ -852,6 +858,10 @@ class FinanceDatabase extends _$FinanceDatabase {
       starting_balance REAL NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenario_currency (
+      scenario_fk TEXT PRIMARY KEY NOT NULL REFERENCES planning_scenarios(scenario_pk) ON DELETE CASCADE,
+      currency TEXT NOT NULL
     )''');
     await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenario_items (
       item_pk TEXT PRIMARY KEY NOT NULL,
@@ -4458,26 +4468,48 @@ class FinanceDatabase extends _$FinanceDatabase {
     required DateTime baseDate,
     required int horizonDays,
     required double startingBalance,
+    String? currency,
   }) async {
+    final code = currency?.trim().toLowerCase();
     if (scenarioPk.trim().isEmpty || name.trim().isEmpty ||
-        horizonDays < 1 || horizonDays > 3650 || !startingBalance.isFinite) {
+        horizonDays < 1 || horizonDays > 3650 || !startingBalance.isFinite ||
+        (code != null && !RegExp(r'^[a-z]{3}$').hasMatch(code))) {
       throw ArgumentError('Invalid planning scenario');
     }
     final now = DateTime.now().millisecondsSinceEpoch;
-    await customStatement(
-      'INSERT INTO planning_scenarios '
-      '(scenario_pk,name,base_date,horizon_days,starting_balance,created_at,updated_at) '
-      'VALUES (?,?,?,?,?,?,?) ON CONFLICT(scenario_pk) DO UPDATE SET '
-      'name=excluded.name,base_date=excluded.base_date,horizon_days=excluded.horizon_days,'
-      'starting_balance=excluded.starting_balance,updated_at=excluded.updated_at',
-      [scenarioPk, name.trim(), baseDate.millisecondsSinceEpoch, horizonDays,
-       startingBalance, now, now],
-    );
+    await transaction(() async {
+      if (code != null) {
+        final existing = await customSelect(
+          'SELECT currency FROM planning_scenario_currency WHERE scenario_fk = ?',
+          variables: [Variable<String>(scenarioPk)],
+        ).getSingleOrNull();
+        if (existing != null && existing.read<String>('currency') != code) {
+          throw StateError('The currency of a saved scenario cannot change');
+        }
+      }
+      await customStatement(
+        'INSERT INTO planning_scenarios '
+        '(scenario_pk,name,base_date,horizon_days,starting_balance,created_at,updated_at) '
+        'VALUES (?,?,?,?,?,?,?) ON CONFLICT(scenario_pk) DO UPDATE SET '
+        'name=excluded.name,base_date=excluded.base_date,horizon_days=excluded.horizon_days,'
+        'starting_balance=excluded.starting_balance,updated_at=excluded.updated_at',
+        [scenarioPk, name.trim(), baseDate.millisecondsSinceEpoch, horizonDays,
+         startingBalance, now, now],
+      );
+      if (code != null) {
+        await customStatement(
+          'INSERT INTO planning_scenario_currency (scenario_fk,currency) VALUES (?,?) '
+          'ON CONFLICT(scenario_fk) DO NOTHING', [scenarioPk, code],
+        );
+      }
+    });
   }
 
   Future<List<Map<String, dynamic>>> getPlanningScenarios() async {
     final rows = await customSelect(
-      'SELECT * FROM planning_scenarios ORDER BY updated_at DESC, scenario_pk',
+      'SELECT p.*, c.currency FROM planning_scenarios p '
+      'LEFT JOIN planning_scenario_currency c ON c.scenario_fk = p.scenario_pk '
+      'ORDER BY p.updated_at DESC, p.scenario_pk',
     ).get();
     return rows.map((row) => row.data).toList();
   }
@@ -4502,6 +4534,9 @@ class FinanceDatabase extends _$FinanceDatabase {
     await transaction(() async {
       await customStatement(
         'DELETE FROM planning_scenario_items WHERE scenario_fk = ?', [scenarioPk],
+      );
+      await customStatement(
+        'DELETE FROM planning_scenario_currency WHERE scenario_fk = ?', [scenarioPk],
       );
       await customStatement(
         'DELETE FROM planning_scenarios WHERE scenario_pk = ?', [scenarioPk],
@@ -4539,9 +4574,12 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Future<List<Map<String, dynamic>>> calculatePlanningScenario(
-      String scenarioPk, {String? scheduledWalletPk, bool projectRecurrences = false}) async {
+      String scenarioPk, {String? scheduledWalletPk, bool projectRecurrences = false,
+        Map<String, dynamic>? rateSettings}) async {
     final scenario = await customSelect(
-      'SELECT * FROM planning_scenarios WHERE scenario_pk = ?',
+      'SELECT p.*, c.currency FROM planning_scenarios p '
+      'LEFT JOIN planning_scenario_currency c ON c.scenario_fk = p.scenario_pk '
+      'WHERE p.scenario_pk = ?',
       variables: [Variable<String>(scenarioPk)]).getSingleOrNull();
     if (scenario == null) throw StateError('Planning scenario not found');
     final items = await customSelect(
@@ -4602,6 +4640,14 @@ class FinanceDatabase extends _$FinanceDatabase {
                   TransactionSpecialType.repetitive,
                 ])))
           .get();
+      final target = scenario.readNullable<String>('currency');
+      var ratio = 1.0;
+      if (target != null && scheduled.isNotEmpty) {
+        final source = (await getWalletInstanceOrNull(scheduledWalletPk))?.currency;
+        final known = strictCurrencyRatio(source, target, appStateSettingsPassed: rateSettings);
+        if (known == null) throw PlanningRateUnavailable(source, target);
+        ratio = known;
+      }
       final lastScheduledBySeries = <String, DateTime>{};
       String seriesKey(String id) => id.replaceFirst(RegExp(r'::predict::[0-9]+$'), '');
       for (final entry in scheduled) {
@@ -4617,7 +4663,7 @@ class FinanceDatabase extends _$FinanceDatabase {
             'date': date,
             'item_pk': entry.transactionPk,
             'name': entry.name,
-            'amount': entry.amount,
+            'amount': entry.amount * ratio,
             'scheduled': true,
             'projected': projected,
           });
