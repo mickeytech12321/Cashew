@@ -30,23 +30,26 @@ class FinancialMessageParser {
   }
 
   static ParsedFinancialMessage parse(String raw) {
-    final message = normalize(raw).replaceAll(RegExp(r'\s+'), ' ').trim();
+    final message = normalize(raw)
+        .replaceAll(RegExp(r'[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
     if (message.isEmpty) return const ParsedFinancialMessage(confidence: 0);
     if (RegExp(
-      r'\b(?:otp|declined|unsuccessful|failed|verification code|one[- ]time password)\b|رمز التحقق|رمز التأكيد|تم رفض|لم تتم',
+      r'\b(?:otp|declined|unsuccessful|failed|verification code|one[- ]time password)\b|(?:رمز|كود) (?:التحقق|التأكيد|التفعيل)|تم رفض|لم تتم|لم يتم تنفيذ|فشلت العملية',
     ).hasMatch(message.toLowerCase())) {
       return const ParsedFinancialMessage(confidence: 0);
     }
     // A separately labelled trailing balance is not a transaction amount.
     final balance = RegExp(
-      r'(?:^|[.;،|]\s*)(?:(?:new|available|remaining|current)\s+balance\b|(?:الرصيد|رصيدك)\s+(?:المتاح|الحالي|الجديد|المتبقي))',
+      r'(?:^|[\s.;،|])(?:(?:new|available|remaining|current|avail\.?)\s+balance\b|(?:الرصيد|رصيدك)\s+(?:المتاح|الحالي|الجديد|المتبقي)|رصيدك\s+(?:الحالى|الآن|الان))',
       caseSensitive: false,
     ).firstMatch(message);
     final text =
         balance == null ? message : message.substring(0, balance.start);
     final lower = text.toLowerCase();
     const currencyPattern =
-        r'(?:\b(?:egp|le)\b|e£|جنيه(?:ًا|ا)?|ج\.?\s*م\.?|\busd\b|دولار)';
+        r'(?:\b(?:egp|le)\b|l\.\s*e\.|e£|جنيه(?:ًا|ا)?|ج\.?\s*م\.?|\busd\b|دولار)';
     const numberPattern =
         r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,2})?';
     final amountPattern = RegExp(
@@ -69,10 +72,10 @@ class FinancialMessageParser {
       }
     }
     final debit = RegExp(
-      r'\b(?:purchase[ds]?|paid|withdraw(?:al|n)?|debited|sent|outgoing transfer)\b|خصم|شراء|سحب|دفعت|تم إرسال|تم تحويل.+(?:إلى|الى)',
+      r'\b(?:purchase[ds]?|paid|withdraw(?:al|n)?|debited|sent|outgoing transfer)\b|خصم|شراء|سحب|دفعت|تم [إا]رسال|(?:تم تحويل|حولت)\s+.+?\s+(?:[إا]لى\s+(?!محفظتك من)|لرقم)',
     ).hasMatch(lower);
     final credit = RegExp(
-      r'\b(?:received|credited|deposit(?:ed)?|refund(?:ed)?|incoming transfer)\b|استلام|استلمت|[إا]يداع|رد مبلغ|تم إضافة',
+      r'\b(?:received|credited|deposit(?:ed)?|refund(?:ed)?|incoming transfer)\b|استلام|استلمت|[إا]يداع|رد مبلغ|تم [إا]ضافة|تم استرداد|تم تحويل\s+.+?\s+(?:[إا]لى محفظتك من|لحسابك من)',
     ).hasMatch(lower);
     final direction = debit == credit ? null : (debit ? 'debit' : 'credit');
     final last4 = RegExp(

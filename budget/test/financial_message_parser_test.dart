@@ -83,5 +83,31 @@ void main() {
       expect(p.amount, isNull);
       expect(p.confidence, 0);
     });
+    test('reads compact card alerts with an unpunctuated balance', () {
+      final parsed = FinancialMessageParser.parse(
+        'Purchase L.E. 650.50 at Shop card ending 9932 avail. balance LE 900',
+      );
+      expect((parsed.amount, parsed.currency, parsed.direction, parsed.lastFour),
+          (650.50, 'egp', 'debit', '9932'));
+    });
+    test('reads wallet alerts with bidi marks and Eastern Arabic digits', () {
+      final parsed = FinancialMessageParser.parse(
+        'تم تحويل \u200f۲۵۰٫۵۰ جنيه إلى محفظتك من رقم آخر رصيدك الآن ۳۰۰ جنيه',
+      );
+      expect((parsed.amount, parsed.currency, parsed.direction),
+          (250.50, 'egp', 'credit'));
+      final sent =
+          FinancialMessageParser.parse('تم تحويل ٢٥٠ جنيه لرقم آخر');
+      expect((sent.amount, sent.direction), (250.0, 'debit'));
+    });
+    test('rejects Arabic activation codes and unsuccessful transfers', () {
+      for (final message in [
+        'كود التفعيل 123456 لشراء 250 جنيه',
+        'لم يتم تنفيذ تحويل 250 جنيه لرقم آخر',
+        'فشلت العملية: خصم 250 جنيه',
+      ]) {
+        expect(FinancialMessageParser.parse(message).confidence, 0);
+      }
+    });
   });
 }
