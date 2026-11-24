@@ -134,9 +134,23 @@ class _AddWalletPageState extends State<AddWalletPage> {
                   final currency = widget.wallet?.currency?.toUpperCase() ?? '';
                   final statement = snapshot.data?['next_statement_date'] as DateTime?;
                   final due = snapshot.data?['next_due_date'] as DateTime?;
+                  final closing = snapshot.data?['last_statement_date'] as DateTime?;
+                  final statementDue = snapshot.data?['last_statement_due_date'] as DateTime?;
+                  final statementBalance = snapshot.data?['estimated_statement_balance'] as num?;
+                  final statementRemaining = snapshot.data?['estimated_statement_remaining'] as num?;
                   final dates = MaterialLocalizations.of(context);
                   final summary = [
                     '${outstanding.toStringAsFixed(selectedDecimals)} $currency',
+                    if (closing != null && statementBalance != null)
+                      '${_accountLabel('Estimated statement balance', 'رصيد كشف الحساب التقديري')} '
+                      '${statementBalance.toStringAsFixed(selectedDecimals)} $currency · '
+                      '${dates.formatMediumDate(closing)}',
+                    if (statementRemaining != null)
+                      '${_accountLabel('Estimated remaining statement balance', 'المتبقي التقديري من كشف الحساب')} '
+                      '${statementRemaining.toStringAsFixed(selectedDecimals)} $currency',
+                    if (statementDue != null)
+                      '${_accountLabel('Statement due date', 'استحقاق كشف الحساب')} '
+                      '${dates.formatMediumDate(statementDue)}',
                     if (available != null)
                       '${_accountLabel('Available', 'المتاح')} '
                       '${available.toStringAsFixed(selectedDecimals)} $currency',

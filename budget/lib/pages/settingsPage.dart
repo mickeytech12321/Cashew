@@ -1,3 +1,4 @@
+import 'package:budget/pages/financialInsightsPage.dart';
 import 'package:budget/pages/planningScenariosPage.dart';
 import 'package:budget/pages/wealthAssetsPage.dart';
 import 'package:budget/pages/financialAssistantPage.dart';
@@ -523,6 +524,14 @@ class SettingsPageContent extends StatelessWidget {
               ? 'المساعد دون اتصال'
               : 'Offline assistant',
           icon: Icons.edit_note_outlined,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const FinancialInsightsPage(),
+          title: Localizations.localeOf(context).languageCode == 'ar'
+              ? 'التحليلات المالية'
+              : 'Financial insights',
+          icon: Icons.bar_chart_outlined,
         ),
 
         SettingsContainerOpenPage(

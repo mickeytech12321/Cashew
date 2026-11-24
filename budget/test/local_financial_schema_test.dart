@@ -19,6 +19,106 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('insights group settled cash flow by month, category and currency',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    for (final id in ['egp', 'usd', 'archived']) {
+      await db.into(db.wallets).insert(WalletsCompanion.insert(
+            walletPk: Value(id),
+            name: id,
+            order: 0,
+            currency: Value(id == 'archived' ? 'egp' : id),
+          ));
+    }
+    await db.saveAccountDetails(
+        walletPk: 'archived', accountType: 'cash', archived: true);
+    await db.into(db.categories).insert(CategoriesCompanion.insert(
+          categoryPk: const Value('daily'),
+          name: 'Daily',
+          order: 0,
+        ));
+    var count = 0;
+    Future<void> add(
+      double amount,
+      String wallet, {
+      String category = 'daily',
+      bool paid = true,
+      bool skipped = false,
+      int month = 2,
+    }) async {
+      await db.into(db.transactions).insert(Transaction(
+            transactionPk: 't${count++}',
+            name: 'Entry',
+            amount: amount,
+            note: '',
+            categoryFk: category,
+            walletFk: wallet,
+            dateCreated: DateTime(2027, month, 1),
+            income: amount > 0,
+            paid: paid,
+            skipPaid: skipped,
+          ));
+    }
+
+    await add(200, 'egp');
+    await add(-30, 'egp');
+    await add(-4, 'usd');
+    await add(-1000, 'archived');
+    await add(-1000, 'egp', category: '0');
+    await add(-1000, 'egp', paid: false);
+    await add(-1000, 'egp', skipped: true);
+    await add(-1000, 'egp', month: 3);
+    final rows =
+        await db.getFinancialInsights(DateTime(2027, 2), DateTime(2027, 3));
+    expect(
+        rows.map(
+            (row) => (row.currency, row.category, row.income, row.expenses)),
+        [('egp', 'Daily', 200.0, 30.0), ('usd', 'Daily', 0.0, 4.0)]);
+  });
+
+  test('credit statement separates closing balance from later card activity',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.into(db.wallets).insert(WalletsCompanion.insert(
+          walletPk: const Value('card'),
+          name: 'Card',
+          order: 0,
+        ));
+    await db.saveAccountDetails(walletPk: 'card', accountType: 'credit');
+    await db.saveCreditCardDetails(
+        walletPk: 'card', statementDay: 31, dueDay: 12, creditLimit: 1000);
+    var count = 0;
+    Future<void> add(double amount, DateTime date) async {
+      await db.into(db.transactions).insert(Transaction(
+            transactionPk: 't${count++}',
+            name: 'Entry',
+            amount: amount,
+            note: '',
+            categoryFk: 'daily',
+            walletFk: 'card',
+            dateCreated: date,
+            income: amount > 0,
+            paid: true,
+            skipPaid: false,
+          ));
+    }
+
+    await add(-300, DateTime(2027, 2, 28, 21));
+    await add(-50, DateTime(2027, 3, 1));
+    await add(75, DateTime(2027, 3, 2));
+    await add(-1000, DateTime(2027, 3, 15));
+    final card =
+        await db.getCreditCardSummary('card', asOf: DateTime(2027, 3, 5));
+    expect(card['last_statement_date'], DateTime(2027, 2, 28, 23, 59, 59));
+    expect(card['last_statement_due_date'], DateTime(2027, 3, 12, 23, 59, 59));
+    expect(card['estimated_statement_balance'], 300);
+    expect(card['estimated_statement_remaining'], 225);
+    expect(card['outstanding'], 275);
+    expect(card['available_credit'], 725);
+  });
+
   test('bank import suggests only a unique active card in the same currency',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());
@@ -137,6 +237,11 @@ void main() {
     expect(await capture(), isTrue);
     expect((await db.getWealthValuation('egp', rateSettings: settings)).total,
         1150);
+    final allocation = await db.getWealthAllocation();
+    expect(
+        allocation
+            .map((row) => (row.type, row.currency, row.liability, row.value)),
+        [('Debt', 'egp', true, 50.0), ('Cash', 'usd', false, 20.0)]);
     final history = await db.getWealthSnapshotHistory();
     expect(history.single.total, 950);
     expect(history.single.currency, 'egp');

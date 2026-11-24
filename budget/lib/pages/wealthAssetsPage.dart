@@ -15,6 +15,7 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
   bool _busy = false;
   String _valuationCurrency = 'egp';
   late var _valuation = database.getWealthValuation(_valuationCurrency);
+  late var _allocation = database.getWealthAllocation();
   late var _history = database.getWealthSnapshotHistory();
 
   String _label(String english, String arabic) =>
@@ -29,6 +30,7 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
           _assets = database.getWealthAssets();
           _valuation = database.getWealthValuation(_valuationCurrency);
           _history = database.getWealthSnapshotHistory();
+          _allocation = database.getWealthAllocation();
         });
     } catch (_) {
       if (mounted) {
@@ -206,6 +208,48 @@ class _WealthAssetsPageState extends State<WealthAssetsPage> {
                         onPressed: _busy ? null : () => _delete(asset),
                         icon: const Icon(Icons.delete_outline),
                       ),
+                    ),
+                ],
+              );
+            },
+          ),
+          FutureBuilder(
+            future: _allocation,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const LinearProgressIndicator();
+              }
+              if (snapshot.hasError)
+                return ListTile(
+                    title: Text(
+                  _label('Could not load allocation.',
+                      'تعذّر تحميل توزيع الأصول.'),
+                ));
+              final allocation = snapshot.data!;
+              if (allocation.isEmpty) return const SizedBox.shrink();
+              final totals = <(String, bool), double>{};
+              for (final row in allocation) {
+                totals.update(
+                    (row.currency, row.liability), (total) => total + row.value,
+                    ifAbsent: () => row.value);
+              }
+              return ExpansionTile(
+                title: Text(_label('Allocation by type', 'التوزيع حسب النوع')),
+                children: [
+                  for (final row in allocation)
+                    ListTile(
+                      title: Text(row.type),
+                      subtitle: Text(row.liability
+                          ? _label('Liabilities', 'الالتزامات')
+                          : _label('Assets', 'الأصول')),
+                      trailing: Text([
+                        _amount(row.value, row.currency),
+                        if (totals[(row.currency, row.liability)]! > 0)
+                          '${(row.value / totals[(
+                                row.currency,
+                                row.liability
+                              )]! * 100).toStringAsFixed(1)}%',
+                      ].join(' · ')),
                     ),
                 ],
               );

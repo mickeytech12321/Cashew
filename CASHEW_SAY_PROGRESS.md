@@ -26,7 +26,7 @@
 - CODED: account editor localizes account types and credit metadata in English and Arabic and validates credit fields before saving.
 - PARTIAL: debit/prepaid/e-wallet account types and reusable automation identifiers; richer card metadata still required.
 - PARTIAL: account editor supports linking a repayment account and recording a repayment as a paired balance transfer. Verify balances and double-count behavior across all reports.
-- PARTIAL: saved cards expose outstanding balance, available credit and next configured statement and due dates. Statement lifecycle, minimum due calculation, refunds and fees remain.
+- PARTIAL: saved cards expose outstanding balance, available credit and next configured statement and due dates. The card editor also estimates the latest closed statement balance, its due date, and what remains after credits recorded in Cashew. Bank statement reconciliation, minimum due calculation, refunds and fees remain.
 - PARTIAL: homepage Net Worth now excludes archived / exclude-from-net-worth accounts; remaining reports still need the same policy.
 
 ## Phase 03 — Bank Automation / Egypt
@@ -40,7 +40,7 @@
 - TODO: bills/subscriptions planning UI and goals improvements.
 
 ## Phase 05 — Wealth
-- PARTIAL: Settings → Assets and liabilities supports local entry creation, editing, deletion, quantity × unit value and a net recorded value per currency. Consolidated valuation uses known rates only, and offline snapshots preserve the value and currency at capture time. Price history, investment lots and allocation analytics remain.
+- PARTIAL: Settings → Assets and liabilities supports local entry creation, editing, deletion, quantity × unit value and a net recorded value per currency. Consolidated valuation uses known rates only, and offline snapshots preserve the value and currency at capture time. Allocation groups assets and liabilities separately by currency and type. Price history and investment lots remain.
 
 ## Phase 06 — AI & Voice
 - PARTIAL: deterministic Arabic/English local intent parser plus optional provider abstraction; write intents are marked confirmation-required.
@@ -52,7 +52,7 @@
 - TODO: household UI, remote membership transport, conflict resolution UI and integration into existing sync.
 
 ## Phase 08 — UI / Analytics / Widgets
-- PARTIAL: bilingual financial screens are accessible from Settings. English/LTR and Arabic/RTL label rendering have widget tests. Broader dashboards, insights, widgets and device RTL review remain.
+- PARTIAL: bilingual financial screens are accessible from Settings. English/LTR and Arabic/RTL label rendering have widget tests. Financial insights show monthly paid income, expenses, net cash flow and category spending for each currency. Widgets and device RTL review remain.
 
 ## Phase 09 — Security / Release
 - PARTIAL: bank message review strips staged raw text on future approval/ignore/duplicate transitions. Existing backup configuration can retain pending text or earlier database copies. Migration and financial regression tests are in the suite. Broader privacy/security review, release notes and APK validation remain.

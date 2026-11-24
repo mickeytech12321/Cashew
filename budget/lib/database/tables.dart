@@ -4061,6 +4061,30 @@ class FinanceDatabase extends _$FinanceDatabase {
     );
   }
 
+  Future<List<({String currency, String? category, double income, double expenses})>>
+      getFinancialInsights(DateTime start, DateTime end) async {
+    if (!start.isBefore(end)) throw ArgumentError('Invalid insights period');
+    final rows = await customSelect(
+      'SELECT LOWER(TRIM(w.currency)) AS currency, c.name AS category, '
+      'SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income, '
+      'SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS expenses '
+      'FROM transactions t JOIN wallets w ON w.wallet_pk = t.wallet_fk '
+      'LEFT JOIN categories c ON c.category_pk = t.category_fk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      "WHERE t.paid = 1 AND t.skip_paid = 0 AND t.category_fk != '0' "
+      'AND COALESCE(d.archived, 0) = 0 AND t.date_created >= ? AND t.date_created < ? '
+      'GROUP BY LOWER(TRIM(w.currency)), c.category_pk, c.name '
+      'ORDER BY currency, expenses DESC, c.name',
+      variables: [Variable<DateTime>(start), Variable<DateTime>(end)],
+    ).get();
+    return rows.map((row) => (
+      currency: row.readNullable<String>('currency') ?? '',
+      category: row.readNullable<String>('category'),
+      income: row.read<double>('income'),
+      expenses: row.read<double>('expenses'),
+    )).toList();
+  }
+
   Future<List<Map<String, dynamic>>> getAssistantAccountTotals({
     required bool monthlySpending,
     required DateTime asOf,
@@ -4086,45 +4110,70 @@ class FinanceDatabase extends _$FinanceDatabase {
     return rows.map((row) => row.data).toList();
   }
 
-  Future<Map<String, dynamic>> getCreditCardSummary(String walletPk) async {
+  Future<Map<String, dynamic>> getCreditCardSummary(String walletPk, {DateTime? asOf}) async {
     final details = await getCreditCardDetails(walletPk);
     if (details == null) throw StateError('Credit card details not found');
-    final wallet = await getWalletInstanceOrNull(walletPk);
-    if (wallet == null) throw StateError('Wallet not found');
-    final balanceRow = await customSelect(
-      'SELECT COALESCE(SUM(amount), 0) AS balance FROM transactions '
-      'WHERE wallet_fk = ? AND paid = 1',
-      variables: [Variable<String>(walletPk)],
-    ).getSingle();
-    final balance = (balanceRow.data['balance'] as num?)?.toDouble() ?? 0;
-    // Credit-card purchases are normally negative in Cashew. Debt is therefore
-    // the absolute negative side; overpayments do not consume the limit.
-    final outstanding = balance < 0 ? -balance : 0.0;
-    final limit = (details['credit_limit'] as num?)?.toDouble();
-    final available = limit == null ? null : (limit - outstanding).clamp(0.0, limit);
-    DateTime? nextStatement;
-    DateTime? nextDue;
-    DateTime nextDay(int day) {
-      final now = DateTime.now();
-      DateTime make(int y, int m) {
-        final last = DateTime(y, m + 1, 0).day;
-        return DateTime(y, m, day > last ? last : day, 23, 59, 59);
-      }
-      var result = make(now.year, now.month);
-      if (!result.isAfter(now)) result = make(now.year, now.month + 1);
-      return result;
+    if (await getWalletInstanceOrNull(walletPk) == null) {
+      throw StateError('Wallet not found');
     }
+
+    final now = asOf ?? DateTime.now();
+    DateTime monthDay(int year, int month, int day) {
+      final last = DateTime(year, month + 1, 0).day;
+      return DateTime(year, month, day > last ? last : day);
+    }
+    DateTime dayEnd(DateTime date) =>
+        DateTime(date.year, date.month, date.day + 1).subtract(const Duration(seconds: 1));
+    DateTime nextDay(int day) {
+      final current = dayEnd(monthDay(now.year, now.month, day));
+      return current.isAfter(now)
+          ? current
+          : dayEnd(monthDay(now.year, now.month + 1, day));
+    }
+
     final statementDay = details['statement_day'] as int?;
     final dueDay = details['due_day'] as int?;
-    if (statementDay != null) nextStatement = nextDay(statementDay);
-    if (dueDay != null) nextDue = nextDay(dueDay);
+    final nextStatement = statementDay == null ? null : nextDay(statementDay);
+    final nextDue = dueDay == null ? null : nextDay(dueDay);
+    final closing = nextStatement == null ? null
+        : dayEnd(monthDay(nextStatement.year, nextStatement.month - 1, statementDay!));
+    DateTime? statementDue;
+    if (closing != null && dueDay != null) {
+      statementDue = dayEnd(monthDay(closing.year, closing.month, dueDay));
+      if (!statementDue.isAfter(closing)) {
+        statementDue = dayEnd(monthDay(closing.year, closing.month + 1, dueDay));
+      }
+    }
+
+    final balances = await customSelect(
+      'SELECT COALESCE(SUM(amount), 0) AS balance, '
+      'COALESCE(SUM(CASE WHEN date_created <= ? THEN amount ELSE 0 END), 0) AS closing_balance, '
+      'COALESCE(SUM(CASE WHEN date_created > ? AND amount > 0 THEN amount ELSE 0 END), 0) AS later_credits '
+      'FROM transactions WHERE wallet_fk = ? AND paid = 1 AND date_created <= ?',
+      variables: [
+        Variable<DateTime>(closing),
+        Variable<DateTime>(closing),
+        Variable<String>(walletPk),
+        Variable<DateTime>(now),
+      ],
+    ).getSingle();
+    final balance = balances.read<double>('balance');
+    final outstanding = balance < 0 ? -balance : 0.0;
+    final limit = (details['credit_limit'] as num?)?.toDouble();
+    final endingDebt = (-balances.read<double>('closing_balance')).clamp(0.0, double.infinity);
+    final remaining = (endingDebt - balances.read<double>('later_credits'))
+        .clamp(0.0, endingDebt);
     return {
       ...details,
       'current_balance': balance,
       'outstanding': outstanding,
-      'available_credit': available,
+      'available_credit': limit == null ? null : (limit - outstanding).clamp(0.0, limit),
       'next_statement_date': nextStatement,
       'next_due_date': nextDue,
+      'last_statement_date': closing,
+      'last_statement_due_date': statementDue,
+      'estimated_statement_balance': closing == null ? null : endingDebt,
+      'estimated_statement_remaining': closing == null ? null : remaining,
     };
   }
 
@@ -4673,6 +4722,22 @@ class FinanceDatabase extends _$FinanceDatabase {
       total: balances.isNotEmpty && missing.isEmpty && total.isFinite ? total : null,
       missingCurrencies: missing,
     );
+  }
+
+  Future<List<({String type, String currency, bool liability, double value})>>
+      getWealthAllocation() async {
+    final rows = await customSelect(
+      'SELECT asset_type, LOWER(TRIM(currency)) AS currency, liability, '
+      'SUM(quantity * unit_value) AS value FROM wealth_assets '
+      'GROUP BY asset_type, LOWER(TRIM(currency)), liability '
+      'ORDER BY currency, liability, value DESC, asset_type',
+    ).get();
+    return rows.map((row) => (
+      type: row.read<String>('asset_type'),
+      currency: row.read<String>('currency'),
+      liability: row.read<int>('liability') == 1,
+      value: row.read<double>('value'),
+    )).toList();
   }
 
   Future<bool> captureWealthSnapshot({
