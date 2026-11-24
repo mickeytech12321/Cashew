@@ -4392,10 +4392,13 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Future<List<({DateTime closed, DateTime due, double balance, double minimum, String currency,
       double? ledgerBalance, double? credits, double? remaining,
-      double? minimumRemaining, bool overdue})>> getCreditCardStatements(
+      double? minimumRemaining, bool overdue, bool superseded})>> getCreditCardStatements(
         String walletPk, {DateTime? asOf}) async {
     final now = asOf ?? DateTime.now();
     final rows = await customSelect(
+      'WITH statement_windows AS ('
+      'SELECT *, LEAD(closes_at) OVER (PARTITION BY wallet_fk, currency ORDER BY closes_at) AS next_close '
+      'FROM credit_card_statements WHERE wallet_fk = ?) '
       'SELECT s.*, CASE WHEN LOWER(w.currency) = s.currency THEN '
       '(SELECT COALESCE(SUM(amount), 0) FROM transactions '
       'WHERE wallet_fk = s.wallet_fk AND paid = 1 AND skip_paid = 0 '
@@ -4404,10 +4407,11 @@ class FinanceDatabase extends _$FinanceDatabase {
       '(SELECT COALESCE(SUM(amount), 0) FROM transactions '
       'WHERE wallet_fk = s.wallet_fk AND paid = 1 AND skip_paid = 0 AND amount > 0 '
       'AND date_created >= CAST(s.closes_at / 1000 AS INTEGER) '
+      'AND (s.next_close IS NULL OR date_created < CAST(s.next_close / 1000 AS INTEGER)) '
       'AND date_created <= ?) END AS statement_credits '
-      'FROM credit_card_statements s JOIN wallets w ON w.wallet_pk = s.wallet_fk '
-      'WHERE s.wallet_fk = ? ORDER BY s.closes_at DESC LIMIT 36',
-      variables: [Variable<DateTime>(now), Variable<DateTime>(now), Variable<String>(walletPk)],
+      'FROM statement_windows s JOIN wallets w ON w.wallet_pk = s.wallet_fk '
+      'ORDER BY s.closes_at DESC LIMIT 36',
+      variables: [Variable<String>(walletPk), Variable<DateTime>(now), Variable<DateTime>(now)],
     ).get();
     DateTime dayLabel(int milliseconds) {
       final cutoff = DateTime.fromMillisecondsSinceEpoch(milliseconds);
@@ -4419,6 +4423,8 @@ class FinanceDatabase extends _$FinanceDatabase {
       final balance = row.read<double>('statement_balance');
       final minimum = row.read<double>('minimum_due');
       final due = row.read<int>('due_at');
+      final nextClose = row.readNullable<int>('next_close');
+      final superseded = nextClose != null && now.millisecondsSinceEpoch >= nextClose;
       final remaining = credits == null ? null : (balance - credits).clamp(0.0, balance);
       final minimumRemaining = credits == null ? null : (minimum - credits).clamp(0.0, minimum);
       return (
@@ -4431,7 +4437,8 @@ class FinanceDatabase extends _$FinanceDatabase {
         credits: credits,
         remaining: remaining,
         minimumRemaining: minimumRemaining,
-        overdue: minimumRemaining != null && minimumRemaining > 0 &&
+        superseded: superseded,
+        overdue: !superseded && minimumRemaining != null && minimumRemaining > 0 &&
             now.millisecondsSinceEpoch >= due,
       );
     }).toList();

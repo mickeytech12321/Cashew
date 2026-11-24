@@ -216,10 +216,26 @@ void main() {
     expect(statement.minimum, 30);
     expect(statement.ledgerBalance, 100);
     expect(await db.select(db.transactions).get(), hasLength(3));
+    final nextClosing = DateTime(2027, 3, 31);
+    await db.saveCreditCardStatement(
+      walletPk: 'card', closingDate: nextClosing, dueDate: DateTime(2027, 4, 15),
+      statementBalance: 90, minimumDue: 25,
+    );
+    await db.into(db.transactions).insert(Transaction(
+      transactionPk: 'later-credit', name: 'Later credit', amount: 15, note: '',
+      categoryFk: 'daily', walletFk: 'card', dateCreated: DateTime(2027, 4, 1),
+      income: true, paid: true, skipPaid: false,
+    ));
+    final rows = await db.getCreditCardStatements('card', asOf: DateTime(2027, 4, 2));
+    expect(rows.map((row) => row.credits), [15, 20]);
+    expect(rows.first.superseded, isFalse);
+    expect(rows.last.superseded, isTrue);
+    expect(rows.last.overdue, isFalse);
+    expect(await db.deleteCreditCardStatement('card', nextClosing), isTrue);
     expect(await db.deleteCreditCardStatement('other', closing), isFalse);
     expect(await db.deleteCreditCardStatement('card', closing), isTrue);
     expect(await db.getCreditCardStatements('card'), isEmpty);
-    expect(await db.select(db.transactions).get(), hasLength(3));
+    expect(await db.select(db.transactions).get(), hasLength(4));
   });
 
   test('stale sync preserves edits, exposes conflicts and applies explicit choices', () async {

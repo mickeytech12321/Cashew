@@ -295,7 +295,7 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
               ));
             final rows = snapshot.data!;
             final visible =
-                rows.where((row) => !_onlyUnpaid || (row.remaining ?? 0) > 0);
+                rows.where((row) => !_onlyUnpaid || (!row.superseded && (row.remaining ?? 0) > 0));
             final export = [
               for (final row in rows)
                 if (row.currency == widget.wallet.currency?.toLowerCase())
@@ -308,8 +308,8 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
             ];
             return Column(children: [
               SwitchListTile(
-                title: Text(_label('Show estimated unpaid statements only',
-                    'عرض الكشوف غير المسددة تقديريًا فقط')),
+                title: Text(_label('Show current unpaid statements only',
+                    'عرض الكشوف الحالية غير المسددة فقط')),
                 value: _onlyUnpaid,
                 onChanged: (value) => setState(() => _onlyUnpaid = value),
               ),
@@ -329,8 +329,10 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
                   subtitle: Text([
                     '${_label('Due', 'الاستحقاق')} ${dates.formatMediumDate(row.due)}',
                     '${_label('Bank minimum due', 'الحد الأدنى للسداد')} ${_amount(row.minimum, row.currency)}',
+                    if (row.superseded)
+                      _label('Closed by a newer statement', 'انتهت الفترة بكشف أحدث'),
                     if (row.credits != null)
-                      '${_label('Recorded credits after closing', 'المبالغ الدائنة بعد الإقفال')} ${_amount(row.credits!, row.currency)}',
+                      '${_label('Credits in statement window', 'المبالغ الدائنة في فترة الكشف')} ${_amount(row.credits!, row.currency)}',
                     if (row.remaining != null)
                       '${_label('Estimated remaining balance', 'الرصيد المتبقي التقديري')} ${_amount(row.remaining!, row.currency)}',
                     if (row.minimumRemaining != null)
