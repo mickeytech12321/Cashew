@@ -2,6 +2,12 @@
 
 This branch uses a Google Cloud OAuth project owned by the app publisher. Basic Drive backup and device sync use the Google Drive API app data folder. Firebase and Gmail are separate services.
 
+## Current project setup
+
+The [Cashew Free Edition project](https://console.cloud.google.com/auth/overview?project=cashew-free-edition) has the Drive API enabled. The OAuth consent screen uses External / Testing, the project owner's account is on the test-user list, and Data Access declares `drive.appdata`. The Web OAuth client is registered and its client ID is configured in the GitHub Actions repository variable `CASHEW_GOOGLE_WEB_CLIENT_ID`.
+
+Android OAuth registration is pending the certificate SHA-1 for the intended test or release signer. Complete that registration before verifying Google sign-in and the Drive backup and restore flows on a device. Keep the app in Testing until those checks pass.
+
 ## Configure Google Cloud
 
 1. Create or select a project in [Google Cloud Console](https://console.cloud.google.com/).

@@ -48,6 +48,7 @@
 - Constraint: no mandatory AI subscription.
 
 ## Phase 07 — Household & Sync
+- PARTIAL: publisher-owned Google Drive API, OAuth consent screen, owner test account, `drive.appdata` scope, and Web client are configured. GitHub Actions has the Web client ID. Android OAuth registration needs the intended signer's certificate SHA-1. Sign-in, backup, restore and two-device sync still require verification on Android.
 - PARTIAL: local household profiles can be added, edited and removed. The owner can configure per-account access for viewers and editors and preview visible balances. Archived accounts and remote profiles are excluded locally. Incoming transaction updates that would overwrite a newer local edit are staged in the sync-conflict ledger. The Settings review screen can retain the current row or apply an eligible incoming version after rechecking the saved local snapshot.
 - TODO: authenticated remote membership, device invitations and access enforcement, plus reconciliation for linked transfers and other synced record types.
 
