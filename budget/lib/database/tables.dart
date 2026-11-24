@@ -813,6 +813,25 @@ class FinanceDatabase extends _$FinanceDatabase {
       UNIQUE(identifier_type, identifier_value)
     )''');
     await customStatement('CREATE INDEX IF NOT EXISTS account_identifiers_wallet_idx ON account_identifiers(wallet_fk)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS imported_financial_events (
+      event_pk TEXT PRIMARY KEY NOT NULL,
+      source_type TEXT NOT NULL,
+      source_sender TEXT,
+      raw_text TEXT NOT NULL,
+      occurred_at INTEGER NOT NULL,
+      amount REAL,
+      currency TEXT,
+      direction TEXT CHECK (direction IS NULL OR direction IN ('debit','credit')),
+      merchant TEXT,
+      identifier_last4 TEXT,
+      wallet_fk TEXT REFERENCES wallets(wallet_pk) ON DELETE SET NULL,
+      confidence REAL NOT NULL DEFAULT 0 CHECK (confidence BETWEEN 0 AND 1),
+      status TEXT NOT NULL DEFAULT 'review' CHECK (status IN ('review','approved','ignored','duplicate')),
+      fingerprint TEXT NOT NULL UNIQUE,
+      transaction_fk TEXT REFERENCES transactions(transaction_pk) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS imported_financial_events_status_idx ON imported_financial_events(status, occurred_at)');
   }
 
   @override
@@ -8055,6 +8074,92 @@ class TransactionAssociatedTitleWithCategory {
       ],
     ).getSingleOrNull();
     return row?.data['wallet_fk'] as String?;
+  }
+
+  String financialImportFingerprint({
+    required String sourceType,
+    String? sender,
+    required String rawText,
+    required DateTime occurredAt,
+  }) {
+    // Stable, deterministic local fingerprint without adding a crypto dependency.
+    final normalized = [
+      sourceType.trim().toLowerCase(),
+      sender?.trim().toLowerCase() ?? '',
+      rawText.replaceAll(RegExp(r'\\s+'), ' ').trim().toLowerCase(),
+      occurredAt.millisecondsSinceEpoch.toString(),
+    ].join('|');
+    var hash = 0xcbf29ce484222325;
+    for (final unit in utf8.encode(normalized)) {
+      hash ^= unit;
+      hash = (hash * 0x100000001b3) & 0x7fffffffffffffff;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  Future<bool> stageImportedFinancialEvent({
+    required String eventPk,
+    required String sourceType,
+    String? sourceSender,
+    required String rawText,
+    required DateTime occurredAt,
+    double? amount,
+    String? currency,
+    String? direction,
+    String? merchant,
+    String? identifierLast4,
+    String? walletFk,
+    double confidence = 0,
+  }) async {
+    if (eventPk.trim().isEmpty || rawText.trim().isEmpty ||
+        !confidence.isFinite || confidence < 0 || confidence > 1 ||
+        amount != null && (!amount.isFinite || amount < 0) ||
+        direction != null && !{'debit', 'credit'}.contains(direction)) {
+      throw ArgumentError('Invalid imported financial event');
+    }
+    final fingerprint = financialImportFingerprint(
+      sourceType: sourceType, sender: sourceSender,
+      rawText: rawText, occurredAt: occurredAt);
+    final existing = await customSelect(
+      'SELECT event_pk FROM imported_financial_events WHERE fingerprint = ?',
+      variables: [Variable<String>(fingerprint)],
+    ).getSingleOrNull();
+    if (existing != null) return false;
+    await customStatement(
+      'INSERT INTO imported_financial_events '
+      '(event_pk, source_type, source_sender, raw_text, occurred_at, amount, currency, direction, merchant, identifier_last4, wallet_fk, confidence, fingerprint, created_at) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [eventPk, sourceType.trim().toLowerCase(), sourceSender?.trim(), rawText,
+        occurredAt.millisecondsSinceEpoch, amount, currency?.toLowerCase(),
+        direction, merchant?.trim(), identifierLast4, walletFk, confidence,
+        fingerprint, DateTime.now().millisecondsSinceEpoch],
+    );
+    return true;
+  }
+
+  Future<List<Map<String, dynamic>>> getImportedFinancialEvents({
+    String status = 'review',
+    int limit = 100,
+  }) async {
+    if (!{'review', 'approved', 'ignored', 'duplicate'}.contains(status) ||
+        limit < 1 || limit > 500) throw ArgumentError('Invalid import query');
+    final rows = await customSelect(
+      'SELECT * FROM imported_financial_events WHERE status = ? '
+      'ORDER BY occurred_at DESC LIMIT ?',
+      variables: [Variable<String>(status), Variable<int>(limit)],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
+  Future<void> setImportedFinancialEventStatus(
+      String eventPk, String status, {String? transactionFk}) async {
+    if (!{'review', 'approved', 'ignored', 'duplicate'}.contains(status)) {
+      throw ArgumentError.value(status, 'status');
+    }
+    await customStatement(
+      'UPDATE imported_financial_events SET status = ?, transaction_fk = ? WHERE event_pk = ?',
+      [status, transactionFk, eventPk],
+    );
   }
 
   Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
