@@ -4033,6 +4033,48 @@ class FinanceDatabase extends _$FinanceDatabase {
     );
   }
 
+  Future<Map<String, dynamic>> getCreditCardSummary(String walletPk) async {
+    final details = await getCreditCardDetails(walletPk);
+    if (details == null) throw StateError('Credit card details not found');
+    final wallet = await getWalletInstanceOrNull(walletPk);
+    if (wallet == null) throw StateError('Wallet not found');
+    final balanceRow = await customSelect(
+      'SELECT COALESCE(SUM(amount), 0) AS balance FROM transactions '
+      'WHERE wallet_fk = ? AND paid = 1',
+      variables: [Variable<String>(walletPk)],
+    ).getSingle();
+    final balance = (balanceRow.data['balance'] as num?)?.toDouble() ?? 0;
+    // Credit-card purchases are normally negative in Cashew. Debt is therefore
+    // the absolute negative side; overpayments do not consume the limit.
+    final outstanding = balance < 0 ? -balance : 0.0;
+    final limit = (details['credit_limit'] as num?)?.toDouble();
+    final available = limit == null ? null : (limit - outstanding).clamp(0.0, limit);
+    DateTime? nextStatement;
+    DateTime? nextDue;
+    DateTime nextDay(int day) {
+      final now = DateTime.now();
+      DateTime make(int y, int m) {
+        final last = DateTime(y, m + 1, 0).day;
+        return DateTime(y, m, day > last ? last : day, 23, 59, 59);
+      }
+      var result = make(now.year, now.month);
+      if (!result.isAfter(now)) result = make(now.year, now.month + 1);
+      return result;
+    }
+    final statementDay = details['statement_day'] as int?;
+    final dueDay = details['due_day'] as int?;
+    if (statementDay != null) nextStatement = nextDay(statementDay);
+    if (dueDay != null) nextDue = nextDay(dueDay);
+    return {
+      ...details,
+      'current_balance': balance,
+      'outstanding': outstanding,
+      'available_credit': available,
+      'next_statement_date': nextStatement,
+      'next_due_date': nextDue,
+    };
+  }
+
   Future<void> saveAccountIdentifier({
     required String identifierPk,
     required String walletPk,
@@ -4155,6 +4197,80 @@ class FinanceDatabase extends _$FinanceDatabase {
       'UPDATE imported_financial_events SET status = ?, transaction_fk = ? WHERE event_pk = ?',
       [status, transactionFk, eventPk],
     );
+  }
+
+  Future<String> approveImportedFinancialEvent({
+    required String eventPk,
+    required String transactionPk,
+    required String categoryFk,
+    String? walletPk,
+    String? title,
+  }) async {
+    if (transactionPk.trim().isEmpty || categoryFk.trim().isEmpty) {
+      throw ArgumentError('Invalid approval target');
+    }
+    return transaction(() async {
+      final row = await customSelect(
+        'SELECT * FROM imported_financial_events WHERE event_pk = ?',
+        variables: [Variable<String>(eventPk)],
+      ).getSingleOrNull();
+      if (row == null) throw StateError('Imported event not found');
+      final event = row.data;
+      if (event['status'] != 'review') throw StateError('Event already reviewed');
+      final amount = (event['amount'] as num?)?.toDouble();
+      final direction = event['direction'] as String?;
+      final resolvedWallet = walletPk ?? event['wallet_fk'] as String?;
+      if (amount == null || amount <= 0 || direction == null ||
+          resolvedWallet == null) {
+        throw StateError('Imported event needs manual details');
+      }
+      if (await getWalletInstanceOrNull(resolvedWallet) == null) {
+        throw StateError('Wallet not found');
+      }
+      final occurredAt =
+          DateTime.fromMillisecondsSinceEpoch(event['occurred_at'] as int);
+      final signedAmount = direction == 'credit' ? amount : -amount;
+      final duplicate = await customSelect(
+        'SELECT transaction_pk FROM transactions WHERE wallet_fk = ? '
+        'AND amount BETWEEN ? AND ? AND date_created BETWEEN ? AND ? LIMIT 1',
+        variables: [
+          Variable<String>(resolvedWallet),
+          Variable<double>(signedAmount - 0.00000001),
+          Variable<double>(signedAmount + 0.00000001),
+          Variable<DateTime>(occurredAt.subtract(const Duration(minutes: 2))),
+          Variable<DateTime>(occurredAt.add(const Duration(minutes: 2))),
+        ],
+      ).getSingleOrNull();
+      if (duplicate != null) {
+        await setImportedFinancialEventStatus(eventPk, 'duplicate',
+            transactionFk: duplicate.data['transaction_pk'] as String?);
+        return 'duplicate';
+      }
+      final saved = await createOrUpdateTransaction(
+        Transaction(
+          transactionPk: transactionPk,
+          name: (title?.trim().isNotEmpty == true
+                  ? title!.trim()
+                  : (event['merchant'] as String?)?.trim().isNotEmpty == true
+                      ? (event['merchant'] as String).trim()
+                      : 'Imported transaction'),
+          amount: signedAmount,
+          note: event['raw_text'] as String?,
+          categoryFk: categoryFk,
+          walletFk: resolvedWallet,
+          dateCreated: occurredAt,
+          dateTimeModified: null,
+          income: direction == 'credit',
+          paid: true,
+          skipPaid: false,
+        ),
+        updateSharedEntry: false,
+      );
+      if (saved == null) throw StateError('Imported transaction write failed');
+      await setImportedFinancialEventStatus(
+          eventPk, 'approved', transactionFk: transactionPk);
+      return 'approved';
+    });
   }
 
   Future<void> savePlanningScenario({
