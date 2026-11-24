@@ -4000,13 +4000,40 @@ class FinanceDatabase extends _$FinanceDatabase {
     String? lastFour,
     String? linkedBankWalletFk,
   }) async {
-    if (creditLimit != null && (!creditLimit.isFinite || creditLimit < 0) ||
-        minimumPayment != null &&
-            (!minimumPayment.isFinite || minimumPayment < 0) ||
-        aprPercent != null && (!aprPercent.isFinite || aprPercent < 0) ||
-        statementDay != null && (statementDay < 1 || statementDay > 31) ||
-        dueDay != null && (dueDay < 1 || dueDay > 31) ||
-        lastFour != null && !RegExp(r'^\\d{4}List<SyncLog> syncLogs) async {
+    if ((creditLimit != null && (!creditLimit.isFinite || creditLimit < 0)) ||
+        (minimumPayment != null &&
+            (!minimumPayment.isFinite || minimumPayment < 0)) ||
+        (aprPercent != null && (!aprPercent.isFinite || aprPercent < 0)) ||
+        (statementDay != null && (statementDay < 1 || statementDay > 31)) ||
+        (dueDay != null && (dueDay < 1 || dueDay > 31)) ||
+        (lastFour != null && !RegExp(r'^\\d{4}$').hasMatch(lastFour))) {
+      throw ArgumentError('Invalid credit card details');
+    }
+    final account = await getAccountDetails(walletPk);
+    if (account == null || account['account_type'] != 'credit') {
+      throw StateError('Wallet is not a credit card account');
+    }
+    if (linkedBankWalletFk == walletPk) {
+      throw ArgumentError('Credit card cannot link to itself');
+    }
+    if (linkedBankWalletFk != null &&
+        await getWalletInstanceOrNull(linkedBankWalletFk) == null) {
+      throw StateError('Linked bank account does not exist');
+    }
+    await customStatement(
+      'INSERT INTO credit_card_details '
+      '(wallet_fk, credit_limit, statement_day, due_day, minimum_payment, apr_percent, last_four, linked_bank_wallet_fk) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
+      'credit_limit=excluded.credit_limit, statement_day=excluded.statement_day, '
+      'due_day=excluded.due_day, minimum_payment=excluded.minimum_payment, '
+      'apr_percent=excluded.apr_percent, last_four=excluded.last_four, '
+      'linked_bank_wallet_fk=excluded.linked_bank_wallet_fk',
+      [walletPk, creditLimit, statementDay, dueDay, minimumPayment,
+       aprPercent, lastFour, linkedBankWalletFk],
+    );
+  }
+
+  Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
     // We want InsertMode.insertOrReplace because
     // if null values are inserted we want to overwrite it with a null
     // For example when a transactions subCategoryPk is set to null
