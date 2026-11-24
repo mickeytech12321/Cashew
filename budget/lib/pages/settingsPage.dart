@@ -1,3 +1,4 @@
+import 'package:budget/pages/syncConflictsPage.dart';
 import 'package:budget/pages/householdPage.dart';
 import 'package:budget/pages/investmentsPage.dart';
 import 'package:budget/pages/transferHistoryPage.dart';
@@ -567,6 +568,14 @@ class SettingsPageContent extends StatelessWidget {
               ? 'سيناريوهات التدفق النقدي'
               : 'Cash-flow scenarios',
           icon: Icons.timeline_outlined,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const SyncConflictsPage(),
+          title: Localizations.localeOf(context).languageCode == 'ar'
+              ? 'تعارضات المزامنة'
+              : 'Sync conflicts',
+          icon: Icons.sync_problem_outlined,
         ),
 
         SettingsContainerOpenPage(

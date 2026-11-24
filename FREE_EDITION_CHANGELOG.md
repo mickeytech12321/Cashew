@@ -2,6 +2,18 @@
 
 Branch: `feature/free-edition` (not merged into main).
 
+## 2026-11-24 — Cashew × Say feature branch
+
+- Offline account and credit metadata, linked card repayments, transfer review and undo/restore, and manual bank-statement reconciliation.
+- Review-first bank message import with editable time, account matching, Arabic and English parsing, and opt-in Android notification intake.
+- Cash-flow forecasts with goals, recurring entries and known-rate conversion. Wealth and investment tracking with price history and opt-in investment valuation.
+- Offline assistant drafts and Android on-device dictation where supported. Monthly spending insights and an opt-in Android launcher widget.
+- Local household profiles and account previews. Device-to-device transaction sync preserves newer edits, exposes eligible conflicts for review and retains deletion history.
+- New Drive snapshots keep parsed import metadata without raw message bodies, and replace a previous backup only after upload completes. Restore validates the candidate before replacing local data.
+- Schema remains at 47. Additional local tables are initialized on open. Flutter and SQLite verification cover fresh, v46-upgrade and partial-v47 scenarios.
+
+Android build and device verification, authenticated household sharing, and live Drive round-trip verification remain pending. The [progress tracker](CASHEW_SAY_PROGRESS.md) records implementation status and outstanding release checks.
+
 ## 2026-11-23 — JVM target alignment for charset detector
 
 - [Android build #68](https://github.com/mickeytech12321/Cashew/actions/runs/45206369283) **failed** at `:flutter_charset_detector_android:compileDebugKotlin`: Java target 1.8 versus Kotlin target 17.

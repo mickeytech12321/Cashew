@@ -6,6 +6,6 @@ Future<FinanceDatabase> constructDb(String dbName,
         {Uint8List? initialDataWeb}) =>
     throw UnimplementedError();
 
-Future<DBFileInfo> getCurrentDBFileInfo() => throw UnimplementedError();
+Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) => throw UnimplementedError();
 
 Future overwriteDefaultDB(Uint8List dataStore) => throw UnimplementedError();

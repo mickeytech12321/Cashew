@@ -1,3 +1,6 @@
+import 'package:budget/database/backupValidation.dart';
+import 'dart:typed_data';
+import 'package:budget/struct/syncClient.dart' show SyncLog;
 import 'package:budget/struct/investmentLedger.dart';
 import 'package:budget/struct/bankNotificationInbox.dart';
 import 'dart:io';
@@ -21,6 +24,134 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('restore validation rejects invalid and future files before replacement', () async {
+    expect(() => validateCashewBackupHeader(Uint8List.fromList([1, 2, 3])),
+        throwsFormatException);
+    final folder = await Directory.systemTemp.createTemp('cashew-validate-');
+    final original = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(() async {
+      await original.close();
+      await folder.delete(recursive: true);
+    });
+    final file = File('${folder.path}/validation.sqlite');
+    await original.customStatement('VACUUM INTO ?', [file.path]);
+    final bytes = await file.readAsBytes();
+    validateCashewBackupHeader(bytes);
+    ByteData.sublistView(bytes).setUint32(60, schemaVersionGlobal + 1);
+    expect(() => validateCashewBackupHeader(bytes), throwsFormatException);
+    await validateCashewBackupDatabase(original);
+    await original.customStatement('DROP TABLE categories');
+    await expectLater(validateCashewBackupDatabase(original), throwsFormatException);
+  });
+
+  test('bank card statement reconciliation uses the closing ledger without posting entries', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.into(db.wallets).insert(WalletsCompanion.insert(
+      walletPk: const Value('card'), name: 'Card', order: 0, currency: const Value('egp'),
+    ));
+    await db.saveAccountDetails(walletPk: 'card', accountType: 'credit');
+    final closing = DateTime(2027, 2, 28);
+    final due = DateTime(2027, 3, 12);
+    for (final (id, date, amount) in [
+      ('included', DateTime(2027, 2, 28, 21), -100.0),
+      ('later', DateTime(2027, 3, 1), -20.0),
+    ]) {
+      await db.into(db.transactions).insert(Transaction(
+        transactionPk: id, name: id, amount: amount, note: '',
+        categoryFk: 'daily', walletFk: 'card', dateCreated: date,
+        income: false, paid: true, skipPaid: false,
+      ));
+    }
+    Future<void> record(double minimum) => db.saveCreditCardStatement(
+      walletPk: 'card', closingDate: closing, dueDate: due,
+      statementBalance: 105, minimumDue: minimum,
+    );
+    await expectLater(record(120), throwsArgumentError);
+    await record(25);
+    await record(30);
+    final statement = (await db.getCreditCardStatements('card')).single;
+    expect(statement.closed, closing);
+    expect(statement.due, due);
+    expect(statement.balance, 105);
+    expect(statement.minimum, 30);
+    expect(statement.ledgerBalance, 100);
+    expect(await db.select(db.transactions).get(), hasLength(2));
+  });
+
+  test('stale sync preserves edits, exposes conflicts and applies explicit choices', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final early = DateTime(2026, 11, 24, 10);
+    final late = DateTime(2026, 11, 24, 11);
+    await db.into(db.wallets).insert(WalletsCompanion.insert(
+      walletPk: const Value('wallet'), name: 'Account', order: 0,
+    ));
+    await db.into(db.categories).insert(CategoriesCompanion.insert(
+      categoryPk: const Value('daily'), name: 'Daily', order: 0,
+    ));
+    final local = Transaction(
+      transactionPk: 'row', name: 'Local', amount: -20, note: '',
+      categoryFk: 'daily', walletFk: 'wallet', dateCreated: early,
+      dateTimeModified: late, income: false, paid: true, skipPaid: false,
+    );
+    await db.into(db.transactions).insert(local);
+    final remote = local.copyWith(name: 'Incoming', amount: -10,
+        dateTimeModified: Value(early));
+    final sync = SyncLog(updateLogType: UpdateLogType.Transaction,
+        pk: 'row', transactionDateTime: early, itemToUpdate: remote);
+    await db.processSyncLogs([sync]);
+    await db.processSyncLogs([sync]);
+    expect((await db.select(db.transactions).get()).single.amount, -20);
+    final conflict = (await db.getOpenSyncConflicts()).single['conflict_pk'] as String;
+    expect(await db.resolveTransactionSyncConflict(conflict, useRemote: true), isTrue);
+    expect((await db.select(db.transactions).get()).single.amount, -10);
+    expect(await db.getOpenSyncConflicts(), isEmpty);
+  });
+
+  test('a synced transaction deletion blocks stale recreation in a later pull', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final early = DateTime(2026, 11, 24, 10);
+    final late = DateTime(2026, 11, 24, 11);
+    final row = Transaction(
+      transactionPk: 'row', name: 'Remote', amount: -20, note: '',
+      categoryFk: 'daily', walletFk: 'wallet', dateCreated: early,
+      dateTimeModified: early, income: false, paid: true, skipPaid: false,
+    );
+    final sync = SyncLog(updateLogType: UpdateLogType.Transaction,
+        pk: 'row', transactionDateTime: early, itemToUpdate: row);
+    await db.processSyncLogs([sync]);
+    await db.processSyncLogs([SyncLog(deleteLogType: DeleteLogType.Transaction,
+        pk: 'row', transactionDateTime: late)]);
+    await db.processSyncLogs([sync]);
+    expect(await db.select(db.transactions).get(), isEmpty);
+  });
+
+  test('backup redaction preserves parsed review fields and clears raw bytes', () async {
+    final folder = await Directory.systemTemp.createTemp('cashew-backup-test-');
+    final original = File('${folder.path}/original.sqlite');
+    final file = File('${folder.path}/snapshot.sqlite');
+    final db = FinanceDatabase(NativeDatabase(original));
+    addTearDown(() async {
+      await db.close();
+      await folder.delete(recursive: true);
+    });
+    const message = 'private-bank-message-should-not-exist-in-snapshot';
+    await db.stageImportedFinancialEvent(eventPk: 'event', sourceType: 'manual',
+        rawText: message, occurredAt: DateTime(2026, 11, 24),
+        amount: 10, currency: 'egp', direction: 'debit');
+    await db.customStatement('VACUUM INTO ?', [file.path]);
+    final snapshot = FinanceDatabase(NativeDatabase(file));
+    addTearDown(snapshot.close);
+    await snapshot.omitImportMessageBodiesFromBackup();
+    final item = (await snapshot.getImportedFinancialEvents()).single;
+    expect((await db.getImportedFinancialEvents()).single['raw_text'], message);
+    expect(item['raw_text'], isEmpty);
+    expect(item['amount'], 10);
+    expect(String.fromCharCodes(await file.readAsBytes()), isNot(contains(message)));
+  });
+
   test('household previews enforce account visibility and role limits', () async {
     final db = FinanceDatabase(NativeDatabase.memory());
     addTearDown(db.close);
@@ -445,6 +576,8 @@ void main() {
         rows.map(
             (row) => (row.currency, row.category, row.income, row.expenses)),
         [('egp', 'Daily', 200.0, 30.0), ('usd', 'Daily', 0.0, 4.0)]);
+    expect(await db.watchMonthlySpendingInCurrency('egp', DateTime(2027, 2, 1)).first, 30);
+    expect(await db.watchMonthlySpendingInCurrency('usd', DateTime(2027, 2, 1)).first, 4);
   });
 
   test('credit statement separates closing balance from later card activity',

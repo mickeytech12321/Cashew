@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'dart:async';
 import 'package:budget/colors.dart';
 import 'package:budget/database/generatePreviewData.dart';
@@ -382,7 +383,7 @@ bool openDatabaseCorruptedPopup(BuildContext context) {
   return false;
 }
 
-Future<void> createBackup(
+Future<String?> createBackup(
   context, {
   bool? silentBackup,
   bool deleteOldBackups = false,
@@ -407,11 +408,7 @@ Future<void> createBackup(
   }
 
   try {
-    if (deleteOldBackups)
-      await deleteRecentBackups(context, appStateSettings["backupLimit"],
-          silentDelete: true);
-
-    DBFileInfo currentDBFileInfo = await getCurrentDBFileInfo();
+    DBFileInfo currentDBFileInfo = await getCurrentDBFileInfo(omitImportMessageBodies: true);
 
     final authHeaders = await googleUser!.authorizationClient.authorizationHeaders(googleScopes) ?? <String, String>{};
     final authenticateClient = GoogleAuthClient(authHeaders);
@@ -432,7 +429,13 @@ Future<void> createBackup(
     driveFile.modifiedTime = DateTime.now().toUtc();
     driveFile.parents = ["appDataFolder"];
 
-    await driveApi.files.create(driveFile, uploadMedia: media);
+    final uploaded = await driveApi.files.create(
+      driveFile, uploadMedia: media, $fields: 'id',
+    );
+    if (deleteOldBackups && clientIDForSync == null && uploaded.id != null) {
+      await deleteRecentBackups(context, appStateSettings["backupLimit"],
+          silentDelete: true, preserveId: uploaded.id);
+    }
 
     if (clientIDForSync == null)
       openSnackbar(
@@ -451,6 +454,7 @@ Future<void> createBackup(
     if (silentBackup == false || silentBackup == null) {
       loadingIndeterminateKey.currentState?.setVisibility(false);
     }
+    return uploaded.id;
   } catch (e) {
     if (silentBackup == false || silentBackup == null) {
       loadingIndeterminateKey.currentState?.setVisibility(false);
@@ -468,11 +472,12 @@ Future<void> createBackup(
                 : Icons.error_rounded),
       );
     }
+    return null;
   }
 }
 
 Future<void> deleteRecentBackups(context, amountToKeep,
-    {bool? silentDelete}) async {
+    {bool? silentDelete, String? preserveId}) async {
   try {
     if (silentDelete == false || silentDelete == null) {
       loadingIndeterminateKey.currentState?.setVisibility(true);
@@ -485,21 +490,25 @@ Future<void> deleteRecentBackups(context, amountToKeep,
     drive.FileList fileList = await driveApi.files.list(
       spaces: 'appDataFolder',
       $fields: 'files(id, name, modifiedTime, size)',
+      orderBy: 'modifiedTime desc',
     );
     List<drive.File>? files = fileList.files;
     if (files == null) {
       throw "No backups found.";
     }
 
-    int index = 0;
-    files.forEach((file) {
-      // subtract 1 because we just made a backup
-      if (index >= amountToKeep - 1) {
-        // only delete excess backups that don't belong to a client sync
-        if (!isSyncBackupFile(file.name)) deleteBackup(driveApi, file.id ?? "");
+    final keep = amountToKeep is int && amountToKeep > 0 ? amountToKeep : 1;
+    var remaining = preserveId == null ? keep : keep - 1;
+    for (final file in files) {
+      final id = file.id;
+      if (id == null || id == preserveId || isSyncBackupFile(file.name) ||
+          !(file.name?.startsWith('db-v') ?? false)) continue;
+      if (remaining > 0) {
+        remaining--;
+      } else {
+        await deleteBackup(driveApi, id);
       }
-      if (!isSyncBackupFile(file.name)) index++;
-    });
+    }
     if (silentDelete == false || silentDelete == null) {
       loadingIndeterminateKey.currentState?.setVisibility(false);
     }
@@ -557,57 +566,37 @@ Future<void> loadBackup(
 
     await cancelAndPreventSyncOperation();
 
-    List<int> dataStore = [];
-    dynamic response = await driveApi.files
-        .get(file.id ?? "", downloadOptions: drive.DownloadOptions.fullMedia);
-    response.stream.listen(
-      (data) {
-        // print("Data: ${data.length}");
-        dataStore.insertAll(dataStore.length, data);
-      },
-      onDone: () async {
-        await overwriteDefaultDB(Uint8List.fromList(dataStore));
+    final fileId = file.id;
+    if (fileId == null) throw StateError('Backup identifier is missing');
+    final response = await driveApi.files.get(
+      fileId, downloadOptions: drive.DownloadOptions.fullMedia,
+    ) as drive.Media;
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.stream) {
+      bytes.add(chunk);
+    }
+    await overwriteDefaultDB(bytes.takeBytes());
 
-        // if this is added, it doesn't restore the database properly on web
-        // await database.close();
-        popRoute(context);
-        await resetLanguageToSystem(context);
-        await updateSettings("databaseJustImported", true,
-            pagesNeedingRefresh: [], updateGlobalState: false);
-        print(appStateSettings);
-        openSnackbar(
-          SnackbarMessage(
-              title: "backup-restored".tr(),
-              icon: appStateSettings["outlinedIcons"]
-                  ? Icons.settings_backup_restore_outlined
-                  : Icons.settings_backup_restore_rounded),
-        );
-        popRoute(context);
-        restartAppPopup(
-          context,
-          description: kIsWeb
-              ? "refresh-required-to-load-backup".tr()
-              : "restart-required-to-load-backup".tr(),
-          // codeBlock: file.name.toString() +
-          //     (file.modifiedTime == null
-          //         ? ""
-          //         : ("\n" +
-          //             getWordedDateShort(
-          //               file.modifiedTime!,
-          //               showTodayTomorrow: false,
-          //               includeYear: true,
-          //             ))),
-        );
-      },
-      onError: (error) {
-        openSnackbar(
-          SnackbarMessage(
-              title: error.toString(),
-              icon: appStateSettings["outlinedIcons"]
-                  ? Icons.error_outlined
-                  : Icons.error_rounded),
-        );
-      },
+    if (!context.mounted) return;
+    popRoute(context);
+    await resetLanguageToSystem(context);
+    await updateSettings("databaseJustImported", true,
+        pagesNeedingRefresh: [], updateGlobalState: false);
+    openSnackbar(
+      SnackbarMessage(
+        title: "backup-restored".tr(),
+        icon: appStateSettings["outlinedIcons"]
+            ? Icons.settings_backup_restore_outlined
+            : Icons.settings_backup_restore_rounded,
+      ),
+    );
+    if (!context.mounted) return;
+    popRoute(context);
+    restartAppPopup(
+      context,
+      description: kIsWeb
+          ? "refresh-required-to-load-backup".tr()
+          : "restart-required-to-load-backup".tr(),
     );
   } catch (e) {
     popRoute(context);

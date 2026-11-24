@@ -26,7 +26,7 @@
 - CODED: account editor localizes account types and credit metadata in English and Arabic and validates credit fields before saving.
 - PARTIAL: debit/prepaid/e-wallet account types and reusable automation identifiers; richer card metadata still required.
 - PARTIAL: account editor supports linking a repayment account and recording a repayment as a paired balance transfer. Verify balances and double-count behavior across all reports.
-- PARTIAL: saved cards expose outstanding balance, available credit and next configured statement and due dates. The card editor also estimates the latest closed statement balance, its due date, and what remains after credits recorded in Cashew. Bank statement reconciliation, minimum due calculation, refunds and fees remain.
+- PARTIAL: saved cards expose outstanding balance, available credit and next configured statement and due dates. The card editor also estimates the latest closed statement balance, its due date, and what remains after credits recorded in Cashew. Saved credit cards can record the bank’s statement balance, due date and minimum due, and compare the recorded amount with the ledger at close. Issuer-specific fee and minimum-due calculations and importing statements remain.
 - PARTIAL: homepage Net Worth now excludes archived / exclude-from-net-worth accounts; remaining reports still need the same policy.
 
 ## Phase 03 — Bank Automation / Egypt
@@ -48,21 +48,21 @@
 - Constraint: no mandatory AI subscription.
 
 ## Phase 07 — Household & Sync
-- PARTIAL: local household profiles can be added, edited and removed. The owner can configure per-account access for viewers and editors and preview visible balances. Archived accounts and remote profiles are excluded locally. The sync-conflict ledger remains separate.
-- TODO: authenticated remote membership, device invitations and access enforcement, conflict resolution UI and integration into existing sync.
+- PARTIAL: local household profiles can be added, edited and removed. The owner can configure per-account access for viewers and editors and preview visible balances. Archived accounts and remote profiles are excluded locally. Incoming transaction updates that would overwrite a newer local edit are staged in the sync-conflict ledger. The Settings review screen can retain the current row or apply an eligible incoming version after rechecking the saved local snapshot.
+- TODO: authenticated remote membership, device invitations and access enforcement, plus reconciliation for linked transfers and other synced record types.
 
 ## Phase 08 — UI / Analytics / Widgets
-- PARTIAL: bilingual financial screens are accessible from Settings. English/LTR and Arabic/RTL label rendering have widget tests. Financial insights show monthly paid income, expenses, net cash flow and category spending for each currency. Widgets and device RTL review remain.
+- PARTIAL: bilingual financial screens are accessible from Settings. English/LTR and Arabic/RTL label rendering have widget tests. Financial insights show monthly paid income, expenses, net cash flow and category spending for each currency. An Android launcher widget shows current-month spending in the selected account’s currency after explicit opt-in. It opens Financial insights and hides snapshots from previous months at refresh. Android build and RTL device review remain.
 
 ## Phase 09 — Security / Release
-- PARTIAL: bank message review strips staged raw text on future approval/ignore/duplicate transitions. Existing backup configuration can retain pending text or earlier database copies. Migration and financial regression tests are in the suite. Broader privacy/security review, release notes and APK validation remain.
+- PARTIAL: bank message review strips staged raw text on future approval/ignore/duplicate transitions. New Drive backups and sync snapshots omit raw import message bodies from an isolated database copy while retaining parsed review metadata. Earlier backups can retain the old data. Drive replacement uploads complete before pruning old backups, and sync cancellation waits for the active read to stop before restore. Restore validates the SQLite header, schema version, integrity and expected tables in an isolated copy before replacing local data. Migration and financial regression tests are in the suite. Broader privacy/security review, release notes and APK validation remain.
 
 ## Verification still required
 
 - Flutter 3.50.1 tests run with the existing CI `value_layout_builder` compatibility patch and a native SQLite library. Static analysis reported no compile errors in the preceding run; lint diagnostics remain.
-- Validate upgrade from real v46 and early v47 backups, fresh install, reopen, restore and data preservation.
+- Synthetic v46 upgrade, partial-v47 reopen, and restore format/integrity checks run locally. Verify real backups and the restart path on device.
 - Exercise bank-message review and assistant drafts in Arabic RTL and English. Confirm no writes before approval, retry behavior, currency mismatches, and duplicate handling. Manual import accepts a transaction date and time, defaults to the current time, and displays the saved timestamp during review. Review the retention of pending imports and existing backups before release.
-- Exercise original Cashew transaction, transfer, account, budget, backup and sync paths before a release.
+- Exercise original Cashew transaction, transfer, account, budget, backup and sync paths before a release, including cross-device Drive replacement and restored-message review. Native Android Kotlin entry points were compiled against API 36 with local resource fixtures; this does not validate Android app packaging or device behavior.
 
 ## Non-negotiable invariants
 1. Preserve existing Cashew data and features.

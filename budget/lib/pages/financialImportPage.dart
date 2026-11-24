@@ -351,7 +351,9 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                     title: Text(_amountLabel(event)),
                     subtitle: Text(event['source_type'] == 'notification'
                         ? '${label('Android notification', 'إشعار أندرويد')} · ${event['source_sender']}'
-                        : event['raw_text'] as String),
+                        : (event['raw_text'] as String).isEmpty
+                            ? label('Message body omitted from backup', 'نص الرسالة مستبعد من النسخة الاحتياطية')
+                            : event['raw_text'] as String),
                     onTap: _busy ? null : () => _review(event),
                     trailing: IconButton(
                       tooltip: label('Ignore message', 'تجاهل الرسالة'),

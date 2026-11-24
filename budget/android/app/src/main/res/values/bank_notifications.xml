@@ -1,3 +1,4 @@
 <resources>
     <string name="bank_notification_listener">Cashew bank import</string>
+    <string name="monthly_spending_widget">Monthly spending</string>
 </resources>

@@ -1,3 +1,4 @@
+import 'package:budget/widgets/util/monthlySpendingWidget.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:flutter/material.dart';
@@ -44,7 +45,26 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
         title: _label('Financial insights', 'التحليلات المالية'),
         capitalizeTitle: false,
         listWidgets: [
-          Padding(
+          if (supportsMonthlySpendingWidget)
+        ValueListenableBuilder<bool>(
+          valueListenable: monthlySpendingWidgetEnabled,
+          builder: (context, enabled, _) => SwitchListTile(
+            title: Text(_label('Show spending on Android home screen', 'عرض المصروفات على شاشة أندرويد الرئيسية')),
+            subtitle: Text(_label('Add the Monthly spending widget in your launcher.',
+                'أضف ويدجت مصروفات الشهر من إعدادات الشاشة الرئيسية.')),
+            value: enabled,
+            onChanged: (value) async {
+              try {
+                await setMonthlySpendingVisibility(value);
+              } catch (_) {
+                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(_label('Could not update the widget.', 'تعذّر تحديث الويدجت.'))),
+                );
+              }
+            },
+          ),
+        ),
+      Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: DropdownButton<int>(
               isExpanded: true,

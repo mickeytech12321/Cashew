@@ -1,3 +1,4 @@
+import 'package:budget/database/backupValidation.dart';
 // web.dart
 import 'dart:typed_data';
 import 'package:budget/database/binary_string_conversion.dart';
@@ -20,7 +21,7 @@ Future<FinanceDatabase> constructDb(String dbName,
   );
 }
 
-Future<DBFileInfo> getCurrentDBFileInfo() async {
+Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) async {
   Uint8List dbFileBytes;
   late Stream<List<int>> mediaStream;
   bool supportIndexedDb = await DriftWebStorage.supportsIndexedDb();
@@ -36,10 +37,31 @@ Future<DBFileInfo> getCurrentDBFileInfo() async {
     mediaStream = Stream.value(dbFileBytes);
   }
 
+  if (omitImportMessageBodies) {
+    final storage = InMemoryWebStorage(dbFileBytes);
+    final backup = FinanceDatabase(WebDatabase.withStorage(storage));
+    try {
+      await backup.omitImportMessageBodiesFromBackup();
+    } finally {
+      await backup.close();
+    }
+    final bytes = await storage.restore();
+    if (bytes == null || bytes.isEmpty) throw StateError('Backup snapshot could not be read');
+    return DBFileInfo(bytes, Stream.value(bytes));
+  }
   return DBFileInfo(dbFileBytes, mediaStream);
 }
 
 Future overwriteDefaultDB(Uint8List dataStore) async {
+  validateCashewBackupHeader(dataStore);
+  final candidate = FinanceDatabase(
+    WebDatabase.withStorage(InMemoryWebStorage(Uint8List.fromList(dataStore))),
+  );
+  try {
+    await validateCashewBackupDatabase(candidate);
+  } finally {
+    await candidate.close();
+  }
   bool supportIndexedDb = await DriftWebStorage.supportsIndexedDb();
   if (supportIndexedDb) {
     DriftWebStorage storage = await DriftWebStorage.indexedDbIfSupported('db');

@@ -1,3 +1,5 @@
+import 'package:budget/pages/financialInsightsPage.dart';
+import 'package:budget/widgets/util/monthlySpendingWidget.dart';
 import 'dart:async';
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
@@ -56,7 +58,7 @@ class _CheckWidgetLaunchState extends State<CheckWidgetLaunch> {
   // has this been fixed with: android:launchMode="singleInstance" ?
   void _launchedFromWidget(Uri? uri) async {
     // Only perform one widget action per launch/continue of the app
-    if (!widgetActionThrottler.canProceed()) return;
+    if (!mounted || !widgetActionThrottler.canProceed()) return;
 
     String widgetPayload = (uri ?? "").toString();
     if (widgetPayload == "addTransactionWidget") {
@@ -87,6 +89,8 @@ class _CheckWidgetLaunchState extends State<CheckWidgetLaunch> {
           showAllEditDetails: true,
         ),
       );
+    } else if (widgetPayload == "monthlySpendingWidget") {
+      pushRoute(context, const FinancialInsightsPage());
     } else if (widgetPayload == "netWorthLaunchWidget") {
       pushRoute(
         context,
@@ -175,7 +179,12 @@ class RenderHomePageWidgetsState extends State<RenderHomePageWidgets> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<TransactionWallet>>(
+    return Stack(children: [
+      MonthlySpendingWidgetPublisher(
+        wallet: Provider.of<AllWallets>(context)
+            .indexedByPk[appStateSettings["selectedWalletPk"]],
+      ),
+      StreamBuilder<List<TransactionWallet>>(
       stream: database.getAllPinnedWallets(HomePageWidgetDisplay.NetWorth).$1,
       builder: (context, snapshot) {
         List<String>? walletPks =
@@ -225,6 +234,7 @@ class RenderHomePageWidgetsState extends State<RenderHomePageWidgets> {
           ),
         );
       },
-    );
+      ),
+    ]);
   }
 }

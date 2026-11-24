@@ -1,3 +1,4 @@
+import 'package:budget/database/backupValidation.dart';
 // native.dart
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
@@ -23,7 +24,25 @@ Future<FinanceDatabase> constructDb(String dbName,
   return FinanceDatabase(db);
 }
 
-Future<DBFileInfo> getCurrentDBFileInfo() async {
+Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) async {
+  if (omitImportMessageBodies) {
+    final folder = await (await getTemporaryDirectory()).createTemp('cashew-drive-');
+    try {
+      final file = File(p.join(folder.path, 'snapshot.sqlite'));
+      await database.customStatement('VACUUM INTO ?', [file.path]);
+      final backup = FinanceDatabase(NativeDatabase.createInBackground(file));
+      try {
+        await backup.omitImportMessageBodiesFromBackup();
+      } finally {
+        await backup.close();
+      }
+      final bytes = await file.readAsBytes();
+      return DBFileInfo(bytes, Stream.value(bytes));
+    } finally {
+      await folder.delete(recursive: true);
+    }
+  }
+
   Uint8List dbFileBytes;
   late Stream<List<int>> mediaStream;
 
@@ -37,6 +56,19 @@ Future<DBFileInfo> getCurrentDBFileInfo() async {
 }
 
 Future overwriteDefaultDB(Uint8List dataStore) async {
+  validateCashewBackupHeader(dataStore);
+  final scratch = await (await getTemporaryDirectory()).createTemp('cashew-restore-');
+  try {
+    final file = await File(p.join(scratch.path, 'candidate.sqlite')).writeAsBytes(dataStore);
+    final candidate = FinanceDatabase(NativeDatabase.createInBackground(file));
+    try {
+      await validateCashewBackupDatabase(candidate);
+    } finally {
+      await candidate.close();
+    }
+  } finally {
+    await scratch.delete(recursive: true);
+  }
   final dbFolder = await getApplicationDocumentsDirectory();
   final dbFile = File(p.join(dbFolder.path, 'db.sqlite'));
   await dbFile.writeAsBytes(dataStore);

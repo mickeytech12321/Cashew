@@ -824,6 +824,15 @@ class FinanceDatabase extends _$FinanceDatabase {
       last_four TEXT CHECK (last_four IS NULL OR length(last_four) = 4),
       linked_bank_wallet_fk TEXT REFERENCES wallets(wallet_pk) ON DELETE SET NULL
     )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS credit_card_statements (
+      wallet_fk TEXT NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      closes_at INTEGER NOT NULL,
+      due_at INTEGER NOT NULL,
+      statement_balance REAL NOT NULL CHECK (statement_balance >= 0),
+      minimum_due REAL NOT NULL CHECK (minimum_due >= 0 AND minimum_due <= statement_balance),
+      currency TEXT NOT NULL,
+      PRIMARY KEY(wallet_fk, closes_at)
+    )''');
     await customStatement('''CREATE TABLE IF NOT EXISTS account_identifiers (
       identifier_pk TEXT PRIMARY KEY NOT NULL,
       wallet_fk TEXT NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
@@ -4125,6 +4134,22 @@ class FinanceDatabase extends _$FinanceDatabase {
     )).toList();
   }
 
+  Stream<double> watchMonthlySpendingInCurrency(String currency, DateTime day) {
+    final start = DateTime(day.year, day.month);
+    final end = DateTime(day.year, day.month, day.day + 1);
+    return customSelect(
+      'SELECT COALESCE(SUM(-t.amount), 0) AS amount FROM transactions t '
+      'JOIN wallets w ON t.wallet_fk = w.wallet_pk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      "WHERE LOWER(w.currency) = ? AND t.paid = 1 AND t.skip_paid = 0 "
+      "AND COALESCE(d.archived, 0) = 0 AND t.amount < 0 AND t.category_fk != '0' "
+      'AND t.date_created >= ? AND t.date_created < ?',
+      variables: [Variable<String>(currency.toLowerCase()),
+        Variable<DateTime>(start), Variable<DateTime>(end)],
+      readsFrom: {transactions, wallets},
+    ).watchSingle().map((row) => row.read<double>('amount')).distinct();
+  }
+
   Future<List<Map<String, dynamic>>> getAssistantAccountTotals({
     required bool monthlySpending,
     required DateTime asOf,
@@ -4215,6 +4240,67 @@ class FinanceDatabase extends _$FinanceDatabase {
       'estimated_statement_balance': closing == null ? null : endingDebt,
       'estimated_statement_remaining': closing == null ? null : remaining,
     };
+  }
+
+  Future<void> saveCreditCardStatement({
+    required String walletPk,
+    required DateTime closingDate,
+    required DateTime dueDate,
+    required double statementBalance,
+    required double minimumDue,
+  }) async {
+    final closes = DateTime(closingDate.year, closingDate.month, closingDate.day + 1);
+    final due = DateTime(dueDate.year, dueDate.month, dueDate.day + 1);
+    if (!due.isAfter(closes) || !statementBalance.isFinite || statementBalance < 0 ||
+        statementBalance > 999999999999 || !minimumDue.isFinite ||
+        minimumDue < 0 || minimumDue > statementBalance) {
+      throw ArgumentError('Invalid credit statement');
+    }
+    await transaction(() async {
+      final wallet = await getWalletInstanceOrNull(walletPk);
+      final currency = wallet?.currency?.toLowerCase();
+      if (currency == null || currency.isEmpty ||
+          (await getAccountDetails(walletPk))?['account_type'] != 'credit') {
+        throw StateError('Select a saved credit card with a currency');
+      }
+      await customStatement(
+        'INSERT INTO credit_card_statements '
+        '(wallet_fk,closes_at,due_at,statement_balance,minimum_due,currency) VALUES (?,?,?,?,?,?) '
+        'ON CONFLICT(wallet_fk,closes_at) DO UPDATE SET '
+        'due_at=excluded.due_at,statement_balance=excluded.statement_balance,'
+        'minimum_due=excluded.minimum_due,currency=excluded.currency',
+        [walletPk, closes.millisecondsSinceEpoch, due.millisecondsSinceEpoch,
+         statementBalance, minimumDue, currency],
+      );
+    });
+  }
+
+  Future<List<({DateTime closed, DateTime due, double balance, double minimum, String currency,
+      double? ledgerBalance})>> getCreditCardStatements(String walletPk) async {
+    final rows = await customSelect(
+      'SELECT s.*, CASE WHEN LOWER(w.currency) = s.currency THEN '
+      '(SELECT COALESCE(SUM(amount), 0) FROM transactions '
+      'WHERE wallet_fk = s.wallet_fk AND paid = 1 AND skip_paid = 0 '
+      'AND date_created < CAST(s.closes_at / 1000 AS INTEGER)) END AS ledger_total '
+      'FROM credit_card_statements s JOIN wallets w ON w.wallet_pk = s.wallet_fk '
+      'WHERE s.wallet_fk = ? ORDER BY s.closes_at DESC LIMIT 36',
+      variables: [Variable<String>(walletPk)],
+    ).get();
+    DateTime dayLabel(int milliseconds) {
+      final cutoff = DateTime.fromMillisecondsSinceEpoch(milliseconds);
+      return DateTime(cutoff.year, cutoff.month, cutoff.day - 1);
+    }
+    return rows.map((row) {
+      final signed = row.readNullable<double>('ledger_total');
+      return (
+        closed: dayLabel(row.read<int>('closes_at')),
+        due: dayLabel(row.read<int>('due_at')),
+        balance: row.read<double>('statement_balance'),
+        minimum: row.read<double>('minimum_due'),
+        currency: row.read<String>('currency'),
+        ledgerBalance: signed == null ? null : (signed < 0 ? -signed : 0.0),
+      );
+    }).toList();
   }
 
   Future<void> saveAccountIdentifier({
@@ -4378,6 +4464,12 @@ class FinanceDatabase extends _$FinanceDatabase {
       final result = await customSelect('SELECT changes() AS count').getSingle();
       return result.read<int>('count') == 1;
     });
+  }
+
+  /// Call on an isolated backup connection so the local review inbox is preserved.
+  Future<void> omitImportMessageBodiesFromBackup() async {
+    await customStatement("UPDATE imported_financial_events SET raw_text = '' WHERE raw_text != ''");
+    await customStatement('VACUUM');
   }
 
   Future<List<Map<String, dynamic>>> getImportedFinancialEvents({
@@ -5260,206 +5352,276 @@ class FinanceDatabase extends _$FinanceDatabase {
     return rows.map((r) => r.data).toList();
   }
 
+  Future<bool> resolveTransactionSyncConflict(String conflictPk, {required bool useRemote}) =>
+      transaction(() async {
+    final conflict = await customSelect(
+      'SELECT * FROM sync_conflicts WHERE conflict_pk = ? AND resolved_at IS NULL '
+      "AND entity_type = 'transaction'",
+      variables: [Variable<String>(conflictPk)],
+    ).getSingleOrNull();
+    if (conflict == null) return false;
+    final now = DateTime.now();
+    if (useRemote) {
+      final id = conflict.read<String>('entity_pk');
+      final local = await (select(transactions)
+            ..where((row) => row.transactionPk.equals(id))).getSingleOrNull();
+      if (local == null || jsonEncode(local.toJson()) != conflict.read<String>('local_json')) {
+        throw StateError('Local transaction changed after this conflict');
+      }
+      final remote = Transaction.fromJson(
+        jsonDecode(conflict.read<String>('remote_json')) as Map<String, dynamic>,
+      );
+      bool isOrdinary(Transaction row) => row.pairedTransactionFk == null &&
+          row.sharedKey == null && row.sharedReferenceBudgetPk == null &&
+          row.objectiveLoanFk == null && row.categoryFk != '0' &&
+          row.type == null;
+      if (remote.transactionPk != id || !isOrdinary(remote) || !isOrdinary(local) ||
+          !remote.amount.isFinite || remote.amount.abs() > 999999999999 ||
+          await getWalletInstanceOrNull(remote.walletFk) == null ||
+          await getCategoryInstanceOrNull(remote.categoryFk) == null ||
+          (remote.subCategoryFk != null &&
+              await getCategoryInstanceOrNull(remote.subCategoryFk!) == null)) {
+        throw StateError('Remote version cannot be applied safely');
+      }
+      final lastEdit = local.dateTimeModified;
+      final nextEdit = lastEdit != null && !now.isAfter(lastEdit.add(const Duration(seconds: 1)))
+          ? lastEdit.add(const Duration(seconds: 1)) : now;
+      final updated = await (update(transactions)
+            ..where((row) => row.transactionPk.equals(id)))
+          .write(remote.copyWith(dateTimeModified: Value(nextEdit)).toCompanion(true));
+      if (updated != 1) throw StateError('Transaction changed during resolution');
+    }
+    await customStatement(
+      'UPDATE sync_conflicts SET resolved_at = ?, resolution = ? WHERE conflict_pk = ?',
+      [now.millisecondsSinceEpoch, useRemote ? 'remote' : 'local', conflictPk],
+    );
+    return true;
+  });
+
   Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
-    // We want InsertMode.insertOrReplace because
-    // if null values are inserted we want to overwrite it with a null
-    // For example when a transactions subCategoryPk is set to null
-    // We need to set it to null, nt keep the default when syncing!
-
-    syncLogs.sort(
-        (a, b) => a.transactionDateTime!.compareTo(b.transactionDateTime!));
-
-    await batch((batch) {
-      for (SyncLog syncLog in syncLogs) {
-        if (syncLog.deleteLogType != null) {
-          print("Sync Log: Deleting " +
-              syncLog.deleteLogType.toString() +
-              " " +
-              syncLog.pk.toString());
-        } else if (syncLog.updateLogType != null) {
-          String name = "";
-          try {
-            name = syncLog.itemToUpdate?.title;
-          } catch (e) {}
-          try {
-            name = syncLog.itemToUpdate?.name;
-          } catch (e) {}
-          print(
-            "Sync Log: Creating " +
-                syncLog.updateLogType.toString() +
-                " " +
-                name,
-          );
-        }
-
-        if (syncLog.deleteLogType == DeleteLogType.TransactionWallet) {
-          batch.deleteWhere(
-            wallets,
-            (tbl) =>
-                tbl.walletPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.TransactionCategory) {
-          batch.deleteWhere(
-            categories,
-            (tbl) =>
-                tbl.categoryPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.Budget) {
-          batch.deleteWhere(
-            budgets,
-            (tbl) =>
-                tbl.budgetPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.CategoryBudgetLimit) {
-          batch.deleteWhere(
-            categoryBudgetLimits,
-            (tbl) =>
-                tbl.categoryLimitPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.Transaction) {
-          batch.deleteWhere(
-            transactions,
-            (tbl) =>
-                tbl.transactionPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType ==
-            DeleteLogType.TransactionAssociatedTitle) {
-          batch.deleteWhere(
-            associatedTitles,
-            (tbl) =>
-                tbl.associatedTitlePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.ScannerTemplate) {
-          batch.deleteWhere(scannerTemplates,
-              (tbl) => tbl.scannerTemplatePk.equals(syncLog.pk));
-        } else if (syncLog.deleteLogType == DeleteLogType.Objective) {
-          batch.deleteWhere(
-            objectives,
-            (tbl) =>
-                tbl.objectivePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.updateLogType == UpdateLogType.TransactionWallet) {
-          batch.update(
-            wallets,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.walletPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(wallets, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.TransactionCategory) {
-          batch.update(
-            categories,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.categoryPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(categories, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.Budget) {
-          batch.update(
-            budgets,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.budgetPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(budgets, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.CategoryBudgetLimit) {
-          batch.update(
-            categoryBudgetLimits,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.categoryLimitPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(categoryBudgetLimits, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.Transaction) {
-          batch.update(
-            transactions,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.transactionPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(transactions, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType ==
-            UpdateLogType.TransactionAssociatedTitle) {
-          batch.update(
-            associatedTitles,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.associatedTitlePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(associatedTitles, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.ScannerTemplate) {
-          batch.update(
-            scannerTemplates,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.scannerTemplatePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(scannerTemplates, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.Objective) {
-          batch.update(
-            objectives,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.objectivePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(objectives, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
+    final ordered = syncLogs.toList()..sort(
+      (a, b) => (a.transactionDateTime ?? DateTime(0))
+          .compareTo(b.transactionDateTime ?? DateTime(0)),
+    );
+    return transaction(() async {
+      final transactionIds = ordered
+          .where((log) => log.updateLogType == UpdateLogType.Transaction ||
+              log.deleteLogType == DeleteLogType.Transaction)
+          .map((log) => log.pk).toSet().toList();
+      final current = <String, Transaction>{};
+      final tombstones = <String, DateTime>{};
+      for (var offset = 0; offset < transactionIds.length; offset += 400) {
+        final keys = transactionIds.skip(offset).take(400);
+        final found = await (select(transactions)
+              ..where((row) => row.transactionPk.isIn(keys))).get();
+        current.addEntries(found.map((row) => MapEntry(row.transactionPk, row)));
+        final removed = await (select(deleteLogs)
+              ..where((row) => row.entryPk.isIn(keys) &
+                  row.type.equalsValue(DeleteLogType.Transaction))).get();
+        for (final log in removed) {
+          final previous = tombstones[log.entryPk];
+          if (previous == null || log.dateTimeModified.isAfter(previous)) {
+            tombstones[log.entryPk] = log.dateTimeModified;
+          }
         }
       }
+
+      await batch((batch) async {
+        for (final syncLog in ordered) {
+          final date = syncLog.transactionDateTime ?? DateTime(0);
+          if (syncLog.deleteLogType == DeleteLogType.TransactionWallet) {
+            batch.deleteWhere(
+              wallets,
+              (tbl) =>
+                  tbl.walletPk.equals(syncLog.pk) &
+                  tbl.dateTimeModified.isSmallerThanValue(
+                    date,
+                  ),
+            );
+          } else if (syncLog.deleteLogType == DeleteLogType.TransactionCategory) {
+            batch.deleteWhere(
+              categories,
+              (tbl) =>
+                  tbl.categoryPk.equals(syncLog.pk) &
+                  tbl.dateTimeModified.isSmallerThanValue(
+                    date,
+                  ),
+            );
+          } else if (syncLog.deleteLogType == DeleteLogType.Budget) {
+            batch.deleteWhere(
+              budgets,
+              (tbl) =>
+                  tbl.budgetPk.equals(syncLog.pk) &
+                  tbl.dateTimeModified.isSmallerThanValue(
+                    date,
+                  ),
+            );
+          } else if (syncLog.deleteLogType == DeleteLogType.CategoryBudgetLimit) {
+            batch.deleteWhere(
+              categoryBudgetLimits,
+              (tbl) =>
+                  tbl.categoryLimitPk.equals(syncLog.pk) &
+                  tbl.dateTimeModified.isSmallerThanValue(
+                    date,
+                  ),
+            );
+          } else if (syncLog.deleteLogType == DeleteLogType.Transaction) {
+            final local = current[syncLog.pk];
+            if (local != null && !(local.dateTimeModified ?? DateTime(0)).isAfter(date)) {
+              batch.deleteWhere(transactions, (row) => row.transactionPk.equals(syncLog.pk));
+              current.remove(syncLog.pk);
+            }
+            final previous = tombstones[syncLog.pk];
+            if (previous == null || date.isAfter(previous)) {
+              tombstones[syncLog.pk] = date;
+              batch.insert(deleteLogs, DeleteLogsCompanion.insert(
+                entryPk: syncLog.pk, type: DeleteLogType.Transaction,
+                dateTimeModified: Value(date),
+              ));
+            }
+          } else if (syncLog.deleteLogType ==
+              DeleteLogType.TransactionAssociatedTitle) {
+            batch.deleteWhere(
+              associatedTitles,
+              (tbl) =>
+                  tbl.associatedTitlePk.equals(syncLog.pk) &
+                  tbl.dateTimeModified.isSmallerThanValue(
+                    date,
+                  ),
+            );
+          } else if (syncLog.deleteLogType == DeleteLogType.ScannerTemplate) {
+            batch.deleteWhere(scannerTemplates,
+                (tbl) => tbl.scannerTemplatePk.equals(syncLog.pk));
+          } else if (syncLog.deleteLogType == DeleteLogType.Objective) {
+            batch.deleteWhere(
+              objectives,
+              (tbl) =>
+                  tbl.objectivePk.equals(syncLog.pk) &
+                  tbl.dateTimeModified.isSmallerThanValue(
+                    date,
+                  ),
+            );
+          } else if (syncLog.updateLogType == UpdateLogType.TransactionWallet) {
+            batch.update(
+              wallets,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.walletPk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(wallets, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.TransactionCategory) {
+            batch.update(
+              categories,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.categoryPk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(categories, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.Budget) {
+            batch.update(
+              budgets,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.budgetPk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(budgets, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.CategoryBudgetLimit) {
+            batch.update(
+              categoryBudgetLimits,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.categoryLimitPk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(categoryBudgetLimits, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.Transaction) {
+            final remote = syncLog.itemToUpdate as Transaction;
+            if (remote.transactionPk != syncLog.pk) {
+              throw ArgumentError('Transaction sync identifier mismatch');
+            }
+            final removedAt = tombstones[syncLog.pk];
+            if (removedAt != null && !date.isAfter(removedAt)) continue;
+            final local = current[syncLog.pk];
+            if (local != null && local.dateTimeModified != null &&
+                !date.isAfter(local.dateTimeModified!)) {
+              final localJson = jsonEncode(local.toJson());
+              // Revision timestamps alone do not make otherwise identical rows conflict.
+              final sameRevision = remote.copyWith(dateTimeModified: Value(local.dateTimeModified));
+              if (jsonEncode(sameRevision.toJson()) != localJson) {
+                final remoteJson = jsonEncode(remote.toJson());
+                if (remoteJson != localJson) {
+                  await recordSyncConflict(
+                    conflictPk: financialImportFingerprint(
+                      sourceType: 'sync-transaction', sender: syncLog.pk,
+                      rawText: jsonEncode([localJson, remoteJson]), occurredAt: date,
+                    ),
+                    entityType: 'transaction',
+                    entityPk: syncLog.pk,
+                    localJson: localJson,
+                    remoteJson: remoteJson,
+                  );
+                }
+              }
+              continue;
+            }
+            final incoming = remote.copyWith(dateTimeModified: Value(date));
+            if (local == null) {
+              batch.insert(transactions, incoming);
+            } else {
+              batch.update(transactions, incoming,
+                  where: (row) => row.transactionPk.equals(syncLog.pk));
+            }
+            current[syncLog.pk] = incoming;
+          } else if (syncLog.updateLogType ==
+              UpdateLogType.TransactionAssociatedTitle) {
+            batch.update(
+              associatedTitles,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.associatedTitlePk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(associatedTitles, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.ScannerTemplate) {
+            batch.update(
+              scannerTemplates,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.scannerTemplatePk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(scannerTemplates, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.Objective) {
+            batch.update(
+              objectives,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.objectivePk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(objectives, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          }
+        }
+      });
+      return true;
     });
-    return true;
   }
 
   // This doesn't handle shared transactions!

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:async/async.dart';
 import 'dart:convert';
 import 'package:budget/database/binary_string_conversion.dart';
 import 'package:budget/database/tables.dart';
@@ -136,20 +135,19 @@ Future<bool> createSyncBackup(
       spaces: 'appDataFolder', $fields: 'files(id, name, modifiedTime, size)');
   List<drive.File>? files = fileList.files;
 
-  for (drive.File file in files ?? []) {
-    if (isCurrentDeviceSyncBackupFile(file.name)) {
-      try {
-        await deleteBackup(driveApi, file.id ?? "");
-      } catch (e) {
-        print(e.toString());
+  final createdId = await createBackup(null,
+      silentBackup: true, clientIDForSync: clientID);
+  if (createdId != null) {
+    for (final file in files ?? <drive.File>[]) {
+      final id = file.id;
+      if (id != null && id != createdId && isCurrentDeviceSyncBackupFile(file.name)) {
+        await deleteBackup(driveApi, id);
       }
     }
   }
-  await createBackup(null,
-      silentBackup: true, deleteOldBackups: true, clientIDForSync: clientID);
   if (changeMadeSync)
     loadingIndeterminateKey.currentState?.setVisibility(false);
-  return true;
+  return createdId != null;
 }
 
 class SyncLog {
@@ -178,13 +176,13 @@ bool canSyncData = true;
 
 bool requestSyncDataCancel = false;
 
-CancelableCompleter<bool> syncDataCompleter = CancelableCompleter(onCancel: () {
-  requestSyncDataCancel = true;
-});
+Future<bool>? _runningSync;
 
-Future<dynamic> cancelAndPreventSyncOperation() async {
+Future<void> cancelAndPreventSyncOperation() async {
+  final pending = _runningSync;
+  if (pending == null) return;
   requestSyncDataCancel = true;
-  return await syncDataCompleter.operation.cancel();
+  await pending;
 }
 
 Future<bool> runForceSignIn(BuildContext context) async {
@@ -198,16 +196,24 @@ Future<bool> runForceSignIn(BuildContext context) async {
   );
 }
 
-Future<bool> syncData(BuildContext context) async {
-  // Create a new instance of the completer
-  if (syncDataCompleter.isCompleted) {
-    syncDataCompleter = CancelableCompleter(onCancel: () {
-      requestSyncDataCancel = true;
-    });
-  }
-
-  syncDataCompleter.complete(Future.value(_syncData(context)));
-  return syncDataCompleter.operation.value;
+Future<bool> syncData(BuildContext context) {
+  final current = _runningSync;
+  if (current != null) return current;
+  final run = _syncData(context).catchError((Object _) {
+    if (context.mounted && !requestSyncDataCancel) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text("syncing-failed".tr())));
+    }
+    return false;
+  }).whenComplete(() {
+    loadingProgressKey.currentState?.setProgressPercentage(1);
+    loadingIndeterminateKey.currentState?.setVisibility(false);
+    requestSyncDataCancel = false;
+    canSyncData = true;
+    _runningSync = null;
+  });
+  _runningSync = run;
+  return run;
 }
 
 // load the latest backup and import any newly modified data into the db
@@ -515,10 +521,12 @@ Future<bool> _syncData(BuildContext context) async {
     await databaseSync.close();
   }
 
+  if (requestSyncDataCancel) return false;
   await database.processSyncLogs(syncLogs);
-  for (drive.File file in filesSyncing)
-    setDateOfLastSyncedWithClient(getDeviceFromSyncBackupFileName(file.name),
+  for (final file in filesSyncing) {
+    await setDateOfLastSyncedWithClient(getDeviceFromSyncBackupFileName(file.name),
         file.modifiedTime?.toLocal() ?? DateTime(0));
+  }
 
   try {
     print("UPDATED WALLET CURRENCY");

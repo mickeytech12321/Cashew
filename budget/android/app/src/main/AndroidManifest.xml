@@ -130,6 +130,14 @@
             <meta-data android:name="android.appwidget.provider"
                 android:resource="@xml/net_worth_plus_widget" />
         </receiver>
+        <receiver android:name=".MonthlySpendingWidgetProvider"
+            android:exported="true" android:label="@string/monthly_spending_widget">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider"
+                android:resource="@xml/monthly_spending_widget" />
+        </receiver>
         <receiver android:name="NetWorthWidgetProvider"
             android:exported="true" android:label="Net Total">
             <intent-filter>

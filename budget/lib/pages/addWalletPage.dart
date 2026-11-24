@@ -1,3 +1,4 @@
+import 'package:budget/pages/cardStatementsPage.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
@@ -167,6 +168,13 @@ class _AddWalletPageState extends State<AddWalletPage> {
                     subtitle: Text(summary.join('\n')),
                   );
                 },
+              ),
+            if (widget.wallet != null && _creditSummary != null)
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => CardStatementsPage(wallet: widget.wallet!)),
+                ),
+                child: Text(_accountLabel('Card statements', 'كشوف البطاقة')),
               ),
             if (linkedWallet != null && widget.wallet != null && _creditSummary != null)
               OutlinedButton(
