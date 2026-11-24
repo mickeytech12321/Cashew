@@ -248,6 +248,15 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              OutlinedButton(
+                onPressed: _busy
+                    ? null
+                    : () => showDialog<void>(
+                          context: context,
+                          builder: (_) => const _ImportCardLinks(),
+                        ),
+                child: Text(label('Manage card links', 'إدارة ربط البطاقات')),
+              ),
               TextField(
                 controller: _message,
                 minLines: 2,
@@ -338,4 +347,147 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
       ],
     );
   }
+}
+
+class _ImportCardLinks extends StatefulWidget {
+  const _ImportCardLinks();
+
+  @override
+  State<_ImportCardLinks> createState() => _ImportCardLinksState();
+}
+
+class _ImportCardLinksState extends State<_ImportCardLinks> {
+  final _digits = TextEditingController();
+  late final _wallets = database.getAllWallets();
+  late var _links = database.getImportCardLinks();
+  String? _wallet;
+  String? _error;
+  bool _busy = false;
+
+  String _label(String english, String arabic) =>
+      FinancialImportPage.label(context, english, arabic);
+
+  @override
+  void dispose() {
+    _digits.dispose();
+    super.dispose();
+  }
+
+  Future<void> _change({String? removeId}) async {
+    if (_busy) return;
+    final digits = FinancialMessageParser.normalize(_digits.text.trim());
+    if (removeId == null &&
+        (_wallet == null || !RegExp(r'^[0-9]{4}$').hasMatch(digits))) {
+      setState(() => _error = _label('Select an account and enter four digits.',
+          'اختر حسابًا وأدخل أربعة أرقام.'));
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      if (removeId != null) {
+        await database.removeImportCardLink(removeId);
+      } else if (!await database.addImportCardLink(_wallet!, digits)) {
+        if (mounted)
+          setState(() => _error = _label(
+                'These digits are already linked. Remove that link before reassigning them.',
+                'هذه الأرقام مرتبطة بالفعل. احذف الربط الحالي قبل إعادة تعيينها.',
+              ));
+        return;
+      } else if (mounted) {
+        _digits.clear();
+      }
+      if (mounted) setState(() => _links = database.getImportCardLinks());
+    } catch (_) {
+      if (mounted)
+        setState(() => _error = _label(
+              'Could not update card links.',
+              'تعذّر تحديث ربط البطاقات.',
+            ));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        scrollable: true,
+        title: Text(_label('Manage card links', 'إدارة ربط البطاقات')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FutureBuilder<List<TransactionWallet>>(
+              future: _wallets,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Text(_label(
+                      'Could not load accounts.', 'تعذّر تحميل الحسابات.'));
+                }
+                if (!snapshot.hasData) return const LinearProgressIndicator();
+                return DropdownButton<String>(
+                  isExpanded: true,
+                  hint: Text(_label('Account', 'الحساب')),
+                  value: _wallet,
+                  items: [
+                    for (final wallet in snapshot.data!)
+                      DropdownMenuItem(
+                          value: wallet.walletPk,
+                          child: Text(wallet.name,
+                              overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged:
+                      _busy ? null : (value) => setState(() => _wallet = value),
+                );
+              },
+            ),
+            TextField(
+              controller: _digits,
+              enabled: !_busy,
+              keyboardType: TextInputType.number,
+              maxLength: 4,
+              decoration: InputDecoration(
+                  labelText: _label(
+                      'Last four card digits', 'آخر أربعة أرقام من البطاقة')),
+            ),
+            if (_error != null) Text(_error!),
+            OutlinedButton(
+              onPressed: _busy ? null : () => _change(),
+              child: Text(_label('Link card', 'ربط البطاقة')),
+            ),
+            FutureBuilder(
+              future: _links,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Text(_label('Could not load card links.',
+                      'تعذّر تحميل ربط البطاقات.'));
+                }
+                if (!snapshot.hasData) return const LinearProgressIndicator();
+                return Column(children: [
+                  for (final link in snapshot.data!)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(link.account),
+                      subtitle: Text(link.digits),
+                      trailing: IconButton(
+                        tooltip:
+                            _label('Remove card link', 'إزالة ربط البطاقة'),
+                        icon: const Icon(Icons.link_off),
+                        onPressed:
+                            _busy ? null : () => _change(removeId: link.id),
+                      ),
+                    ),
+                ]);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: Text(_label('Done', 'تم')),
+          ),
+        ],
+      );
 }

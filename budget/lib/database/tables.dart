@@ -4153,6 +4153,44 @@ class FinanceDatabase extends _$FinanceDatabase {
     );
   }
 
+  Future<List<({String id, String account, String digits})>> getImportCardLinks() async {
+    final rows = await customSelect(
+      'SELECT i.identifier_pk, w.name, i.identifier_value '
+      'FROM account_identifiers i JOIN wallets w ON w.wallet_pk = i.wallet_fk '
+      "WHERE i.identifier_type = 'card_last4' ORDER BY w.name, i.identifier_value",
+    ).get();
+    return rows.map((row) => (
+      id: row.read<String>('identifier_pk'),
+      account: row.read<String>('name'),
+      digits: row.read<String>('identifier_value'),
+    )).toList();
+  }
+
+  Future<bool> addImportCardLink(String walletPk, String digits) {
+    if (!RegExp(r'^[0-9]{4}$').hasMatch(digits)) {
+      throw ArgumentError.value(digits, 'digits');
+    }
+    return transaction(() async {
+      if (await getWalletInstanceOrNull(walletPk) == null) {
+        throw StateError('Account no longer exists');
+      }
+      await customStatement(
+        'INSERT INTO account_identifiers '
+        '(identifier_pk, wallet_fk, identifier_type, identifier_value) '
+        "VALUES (?, ?, 'card_last4', ?) "
+        'ON CONFLICT(identifier_type, identifier_value) DO NOTHING',
+        [uuid.v4(), walletPk, digits],
+      );
+      final result = await customSelect('SELECT changes() AS count').getSingle();
+      return result.read<int>('count') == 1;
+    });
+  }
+
+  Future<void> removeImportCardLink(String id) => customStatement(
+    "DELETE FROM account_identifiers WHERE identifier_pk = ? AND identifier_type = 'card_last4'",
+    [id],
+  );
+
   Future<String?> resolveWalletByIdentifier(
       String identifierType, String identifierValue) async {
     final row = await customSelect(

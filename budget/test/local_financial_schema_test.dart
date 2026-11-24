@@ -45,6 +45,12 @@ void main() {
     await db.saveAccountDetails(
         walletPk: 'credit', accountType: 'credit', archived: true);
     expect(await db.suggestImportedCardWallet('1234', 'egp'), 'debit');
+    expect(await db.addImportCardLink('foreign', '1234'), isFalse);
+    expect((await db.getImportCardLinks()).single.account, 'debit');
+    await db.removeImportCardLink((await db.getImportCardLinks()).single.id);
+    expect(await db.suggestImportedCardWallet('1234', 'egp'), isNull);
+    expect(await db.addImportCardLink('debit', '1234'), isTrue);
+    expect(await db.suggestImportedCardWallet('1234', 'egp'), 'debit');
     expect(await db.suggestImportedCardWallet('123', 'egp'), isNull);
   });
 
