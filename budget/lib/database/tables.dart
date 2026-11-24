@@ -4542,6 +4542,66 @@ class FinanceDatabase extends _$FinanceDatabase {
     return matches.length == 1 ? matches.single.read<String>('wallet_pk') : null;
   }
 
+  Future<bool> addImportNotificationLink(String walletPk, String package) =>
+      transaction(() async {
+    if (!RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$')
+            .hasMatch(package) || package.length > 255) {
+      throw ArgumentError('Invalid notification package');
+    }
+    final wallet = await getWalletInstanceOrNull(walletPk);
+    final currency = wallet?.currency?.trim().toLowerCase();
+    if (currency == null || currency.isEmpty ||
+        (await getAccountDetails(walletPk))?['archived'] == 1) {
+      throw StateError('Select an active account with a currency');
+    }
+    final changed = await customUpdate(
+      'INSERT INTO account_identifiers '
+      '(identifier_pk, wallet_fk, identifier_type, identifier_value) '
+      "VALUES (?, ?, 'sender', ?) "
+      'ON CONFLICT(identifier_type, identifier_value) DO NOTHING',
+      variables: [Variable<String>(uuid.v4()), Variable<String>(walletPk),
+        Variable<String>('notification:$package:$currency')],
+    );
+    return changed == 1;
+  });
+
+  Future<List<({String id, String account, String package, String currency})>>
+      getImportNotificationLinks() async {
+    final rows = await customSelect(
+      'SELECT i.identifier_pk, i.identifier_value, w.name '
+      'FROM account_identifiers i JOIN wallets w ON w.wallet_pk = i.wallet_fk '
+      "WHERE i.identifier_type = 'sender' AND i.identifier_value LIKE 'notification:%' "
+      'ORDER BY w.name, i.identifier_value',
+    ).get();
+    return [
+      for (final row in rows)
+        if (row.read<String>('identifier_value').split(':') case [_, final package, final currency])
+          (id: row.read<String>('identifier_pk'), account: row.read<String>('name'),
+           package: package, currency: currency),
+    ];
+  }
+
+  Future<void> removeImportNotificationLink(String id) => customStatement(
+    "DELETE FROM account_identifiers WHERE identifier_pk = ? "
+    "AND identifier_type = 'sender' AND identifier_value LIKE 'notification:%'",
+    [id],
+  );
+
+  Future<String?> suggestImportedNotificationWallet(
+      String? package, String? currency) async {
+    final code = currency?.trim().toLowerCase();
+    if (package == null || code == null || code.isEmpty) return null;
+    final row = await customSelect(
+      'SELECT w.wallet_pk FROM account_identifiers i '
+      'JOIN wallets w ON w.wallet_pk = i.wallet_fk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      "WHERE i.identifier_type = 'sender' AND i.identifier_value = ? "
+      'AND LOWER(TRIM(w.currency)) = ? AND COALESCE(d.archived, 0) = 0',
+      variables: [Variable<String>('notification:$package:$code'), Variable<String>(code)],
+    ).getSingleOrNull();
+    return row?.read<String>('wallet_pk');
+  }
+
   String financialImportFingerprint({
     required String sourceType,
     String? sender,

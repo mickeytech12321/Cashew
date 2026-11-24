@@ -44,6 +44,8 @@
 
 - CODED: Bank imports have paginated review, approved, ignored and duplicate history, with source and direction filters. Ignored items can return to review without restoring stripped text. Approval supports editable titles and checks for archived accounts again when saving. Flutter regression coverage passed.
 
+- CODED: Selected Android notification apps can be linked to an active account per currency. When no card suffix is detected, review suggests the linked account. Links use exact package names, cannot overwrite another link, and are removable. Parse and approval requirements remain in place. Flutter tests passed.
+
 ## Phase 04 — Financial Planning
 - PARTIAL: offline scenario calculations skip occurrences before the forecast base date and order simultaneous entries consistently. Settings → Cash-flow scenarios can create and reopen single-currency scenarios, add one-off or fixed-day recurring events and show a chronological running balance. Saved scenarios and entries can be edited or deleted with confirmation. Forecasts can include already-scheduled unpaid bills and recurring entries for a chosen account. Opt-in projections extend active subscriptions and repeating transactions using Cashew’s calendar rules and end dates without writing ledger entries. Scenarios can store a base currency and convert selected scheduled transactions using known rates. Older scenarios keep their original calculation until a currency is assigned. Multiple dated goals can be saved per scenario and reopen with the forecast. Each preview reflects remaining cash flow after recorded contributions and relevant included scheduled transactions.
 - CODED: Planning links to the existing bill, subscription and goal editors and refreshes the preview after returning. Currency-based scenarios can preview multiple scheduled accounts using known rates. Legacy scenarios continue to support one scheduled account. The preview shows the lowest balance and first shortfall. Scheduled account selections and recurrence projection are saved per scenario on the current device. Forecast entries can be paged beyond the initial 100. Flutter and device validation remain.
@@ -78,7 +80,7 @@
 
 ## Latest verification
 
-- All 64 Flutter tests passed with Flutter 3.50.1, the existing layout compatibility patch, a reconstructed local dependency cache and native SQLite. The test process used a network-isolated environment with loopback only. No APK was built. Android device checks remain.
+- All 65 Flutter tests passed with Flutter 3.50.1, the existing layout compatibility patch, a reconstructed local dependency cache and native SQLite. The test process used a network-isolated environment with loopback only. No APK was built. Android device checks remain.
 
 ## Verification still required
 

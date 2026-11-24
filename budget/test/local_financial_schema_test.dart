@@ -29,6 +29,28 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('notification account links are app and currency scoped', () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    for (final (id, currency) in [('bank', 'egp'), ('other', 'egp'), ('card', 'usd')]) {
+      await db.into(db.wallets).insert(WalletsCompanion.insert(
+          walletPk: Value(id), name: id, order: 0, currency: Value(currency)));
+    }
+    const package = 'com.example.Wallet';
+    expect(await db.addImportNotificationLink('bank', package), isTrue);
+    expect(await db.addImportNotificationLink('other', package), isFalse);
+    expect(await db.addImportNotificationLink('card', package), isTrue);
+    expect(await db.suggestImportedNotificationWallet(package, 'EGP'), 'bank');
+    expect(await db.suggestImportedNotificationWallet(package, 'usd'), 'card');
+    expect(await db.suggestImportedNotificationWallet(package.toLowerCase(), 'egp'), isNull);
+    await db.setAccountArchived('bank', true);
+    expect(await db.suggestImportedNotificationWallet(package, 'egp'), isNull);
+    final links = await db.getImportNotificationLinks();
+    expect(links, hasLength(2));
+    await db.removeImportNotificationLink(links.firstWhere((l) => l.currency == 'usd').id);
+    expect(await db.suggestImportedNotificationWallet(package, 'usd'), isNull);
+  });
+
   test('import history pages deterministically and only restores ignored entries',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());

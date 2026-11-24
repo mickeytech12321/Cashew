@@ -26,14 +26,18 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
 
   Future<List<Map<String, dynamic>>> _loadImports() =>
       database.getImportedFinancialEvents(
-        status: _status, direction: _direction, sourceType: _source,
-        limit: _pageSize + 1, offset: _offset,
+        status: _status,
+        direction: _direction,
+        sourceType: _source,
+        limit: _pageSize + 1,
+        offset: _offset,
       );
 
   void _reloadFirstPage() {
     _offset = 0;
     _imports = _loadImports();
   }
+
   bool _busy = false;
   DateTime? _occurredAt;
 
@@ -47,8 +51,7 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
   }
 
   void _refreshInbox() {
-    if (mounted)
-      setState(_reloadFirstPage);
+    if (mounted) setState(_reloadFirstPage);
   }
 
   @override
@@ -65,8 +68,7 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
     setState(() => _busy = true);
     try {
       await action();
-      if (mounted)
-        setState(_reloadFirstPage);
+      if (mounted) setState(_reloadFirstPage);
     } catch (_) {
       if (mounted)
         _notify(label('Could not save the import.', 'تعذّر حفظ الاستيراد.'));
@@ -143,7 +145,8 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
   Future<void> _review(Map<String, dynamic> event) => _run(() async {
         final archived = await database.getAllAccountDetails();
         final wallets = (await database.getAllWallets())
-            .where((wallet) => wallet.currency?.toLowerCase() == event['currency'] &&
+            .where((wallet) =>
+                wallet.currency?.toLowerCase() == event['currency'] &&
                 archived[wallet.walletPk]?['archived'] != 1)
             .toList();
         final categories = (await database.getAllCategories())
@@ -163,10 +166,13 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
           );
           return;
         }
-        final suggestedWallet = await database.suggestImportedCardWallet(
-          event['identifier_last4'] as String?,
-          event['currency'] as String?,
-        );
+        final lastFour = event['identifier_last4'] as String?;
+        final currency = event['currency'] as String?;
+        final suggestedWallet =
+            lastFour == null && event['source_type'] == 'notification'
+                ? await database.suggestImportedNotificationWallet(
+                    event['source_sender'] as String?, currency)
+                : await database.suggestImportedCardWallet(lastFour, currency);
         if (!mounted) return;
         String? walletPk =
             wallets.any((wallet) => wallet.walletPk == suggestedWallet)
@@ -198,7 +204,8 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                     initialValue: initialTitle,
                     maxLength: NAME_LIMIT,
                     onChanged: (value) => title = value,
-                    decoration: InputDecoration(labelText: label('Title', 'العنوان')),
+                    decoration:
+                        InputDecoration(labelText: label('Title', 'العنوان')),
                   ),
                   DropdownButton<String>(
                     isExpanded: true,
@@ -302,6 +309,17 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                       ? null
                       : () => showDialog<void>(
                             context: context,
+                            builder: (_) => const _ImportNotificationLinks(),
+                          ),
+                  child: Text(label('Link notification apps to accounts',
+                      'ربط تطبيقات الإشعارات بالحسابات')),
+                ),
+              if (BankNotificationInbox.supported)
+                OutlinedButton(
+                  onPressed: _busy
+                      ? null
+                      : () => showDialog<void>(
+                            context: context,
                             builder: (_) => const _BankNotificationSettings(),
                           ),
                   child: Text(label('Android notification import',
@@ -353,41 +371,68 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
               isExpanded: true,
               value: _status,
               items: [
-                DropdownMenuItem(value: 'review', child: Text(label('Needs review', 'بانتظار المراجعة'))),
-                DropdownMenuItem(value: 'approved', child: Text(label('Approved', 'تم الاعتماد'))),
-                DropdownMenuItem(value: 'ignored', child: Text(label('Ignored', 'تم التجاهل'))),
-                DropdownMenuItem(value: 'duplicate', child: Text(label('Duplicates', 'المكررات'))),
+                DropdownMenuItem(
+                    value: 'review',
+                    child: Text(label('Needs review', 'بانتظار المراجعة'))),
+                DropdownMenuItem(
+                    value: 'approved',
+                    child: Text(label('Approved', 'تم الاعتماد'))),
+                DropdownMenuItem(
+                    value: 'ignored',
+                    child: Text(label('Ignored', 'تم التجاهل'))),
+                DropdownMenuItem(
+                    value: 'duplicate',
+                    child: Text(label('Duplicates', 'المكررات'))),
               ],
-              onChanged: _busy ? null : (value) => setState(() {
-                _status = value ?? 'review';
-                _reloadFirstPage();
-              }),
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(() {
+                        _status = value ?? 'review';
+                        _reloadFirstPage();
+                      }),
             ),
             DropdownButton<String>(
               isExpanded: true,
               value: _source ?? '',
               items: [
-                DropdownMenuItem(value: '', child: Text(label('All sources', 'كل المصادر'))),
-                DropdownMenuItem(value: 'manual', child: Text(label('Pasted messages', 'الرسائل الملصوقة'))),
-                DropdownMenuItem(value: 'notification', child: Text(label('Android notifications', 'إشعارات أندرويد'))),
+                DropdownMenuItem(
+                    value: '', child: Text(label('All sources', 'كل المصادر'))),
+                DropdownMenuItem(
+                    value: 'manual',
+                    child: Text(label('Pasted messages', 'الرسائل الملصوقة'))),
+                DropdownMenuItem(
+                    value: 'notification',
+                    child: Text(
+                        label('Android notifications', 'إشعارات أندرويد'))),
               ],
-              onChanged: _busy ? null : (value) => setState(() {
-                _source = value == '' ? null : value;
-                _reloadFirstPage();
-              }),
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(() {
+                        _source = value == '' ? null : value;
+                        _reloadFirstPage();
+                      }),
             ),
             DropdownButton<String>(
               isExpanded: true,
               value: _direction ?? '',
               items: [
-                DropdownMenuItem(value: '', child: Text(label('All transaction types', 'كل أنواع المعاملات'))),
-                DropdownMenuItem(value: 'debit', child: Text(label('Money out', 'مبالغ خارجة'))),
-                DropdownMenuItem(value: 'credit', child: Text(label('Money in', 'مبالغ واردة'))),
+                DropdownMenuItem(
+                    value: '',
+                    child: Text(
+                        label('All transaction types', 'كل أنواع المعاملات'))),
+                DropdownMenuItem(
+                    value: 'debit',
+                    child: Text(label('Money out', 'مبالغ خارجة'))),
+                DropdownMenuItem(
+                    value: 'credit',
+                    child: Text(label('Money in', 'مبالغ واردة'))),
               ],
-              onChanged: _busy ? null : (value) => setState(() {
-                _direction = value == '' ? null : value;
-                _reloadFirstPage();
-              }),
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(() {
+                        _direction = value == '' ? null : value;
+                        _reloadFirstPage();
+                      }),
             ),
           ]),
         ),
@@ -424,47 +469,62 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                   ListTile(
                     title: Text(_amountLabel(event)),
                     subtitle: Text([
-                      _formatTimestamp(DateTime.fromMillisecondsSinceEpoch(event['occurred_at'] as int)),
+                      _formatTimestamp(DateTime.fromMillisecondsSinceEpoch(
+                          event['occurred_at'] as int)),
                       if (event['source_type'] == 'notification')
                         '${label('Android notification', 'إشعار أندرويد')} · ${event['source_sender']}'
-                      else if (event['raw_text'] case final String text when text.isNotEmpty)
+                      else if (event['raw_text'] case final String text
+                          when text.isNotEmpty)
                         text,
                     ].join('\n')),
-                    onTap: _status == 'review' && !_busy ? () => _review(event) : null,
+                    onTap: _status == 'review' && !_busy
+                        ? () => _review(event)
+                        : null,
                     trailing: switch (_status) {
                       'review' => IconButton(
-                        tooltip: label('Ignore message', 'تجاهل الرسالة'),
-                        icon: const Icon(Icons.close),
-                        onPressed: _busy ? null : () => _run(
-                          () => database.setImportedFinancialEventStatus(
-                            event['event_pk'] as String, 'ignored',
-                          ),
+                          tooltip: label('Ignore message', 'تجاهل الرسالة'),
+                          icon: const Icon(Icons.close),
+                          onPressed: _busy
+                              ? null
+                              : () => _run(
+                                    () => database
+                                        .setImportedFinancialEventStatus(
+                                      event['event_pk'] as String,
+                                      'ignored',
+                                    ),
+                                  ),
                         ),
-                      ),
                       'ignored' => IconButton(
-                        tooltip: label('Return to review', 'إعادة للمراجعة'),
-                        icon: const Icon(Icons.undo),
-                        onPressed: _busy ? null : () => _run(() async {
-                          await database.restoreIgnoredFinancialEvent(event['event_pk'] as String);
-                        }),
-                      ),
+                          tooltip: label('Return to review', 'إعادة للمراجعة'),
+                          icon: const Icon(Icons.undo),
+                          onPressed: _busy
+                              ? null
+                              : () => _run(() async {
+                                    await database.restoreIgnoredFinancialEvent(
+                                        event['event_pk'] as String);
+                                  }),
+                        ),
                       _ => null,
                     },
                   ),
                 if (_offset > 0 || events.length > _pageSize)
                   Wrap(children: [
                     TextButton(
-                      onPressed: _offset == 0 ? null : () => setState(() {
-                        _offset -= _pageSize;
-                        _imports = _loadImports();
-                      }),
+                      onPressed: _offset == 0
+                          ? null
+                          : () => setState(() {
+                                _offset -= _pageSize;
+                                _imports = _loadImports();
+                              }),
                       child: Text(label('Newer', 'الأحدث')),
                     ),
                     TextButton(
-                      onPressed: events.length <= _pageSize ? null : () => setState(() {
-                        _offset += _pageSize;
-                        _imports = _loadImports();
-                      }),
+                      onPressed: events.length <= _pageSize
+                          ? null
+                          : () => setState(() {
+                                _offset += _pageSize;
+                                _imports = _loadImports();
+                              }),
                       child: Text(label('Older', 'الأقدم')),
                     ),
                   ]),
@@ -616,6 +676,139 @@ class _ImportCardLinksState extends State<_ImportCardLinks> {
             onPressed: _busy ? null : () => Navigator.pop(context),
             child: Text(_label('Done', 'تم')),
           ),
+        ],
+      );
+}
+
+class _ImportNotificationLinks extends StatefulWidget {
+  const _ImportNotificationLinks();
+
+  @override
+  State<_ImportNotificationLinks> createState() =>
+      _ImportNotificationLinksState();
+}
+
+class _ImportNotificationLinksState extends State<_ImportNotificationLinks> {
+  late final _accounts = database.getFinancialInsightsAccounts();
+  late var _links = database.getImportNotificationLinks();
+  final _packages = bankNotificationInbox.packages;
+  String? _package;
+  String? _account;
+  String? _message;
+  bool _busy = false;
+
+  String _label(String en, String ar) =>
+      FinancialImportPage.label(context, en, ar);
+
+  Future<void> _change({String? remove}) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      if (remove != null) {
+        await database.removeImportNotificationLink(remove);
+      } else if (!await database.addImportNotificationLink(
+          _account!, _package!)) {
+        if (mounted)
+          _message = _label('This app already has a link for this currency.',
+              'هذا التطبيق مرتبط بالفعل بحساب بهذه العملة.');
+      }
+      if (mounted) _links = database.getImportNotificationLinks();
+    } catch (_) {
+      if (mounted)
+        _message = _label('Could not update links.', 'تعذّر تحديث الربط.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        scrollable: true,
+        title: Text(
+            _label('Notification account links', 'ربط الإشعارات بالحسابات')),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (_packages.isEmpty)
+            Text(_label('Choose apps in Android notification import first.',
+                'اختر التطبيقات من إعدادات استيراد إشعارات أندرويد أولًا.'))
+          else
+            DropdownButton<String>(
+              isExpanded: true,
+              hint: Text(_label('Notification app', 'تطبيق الإشعارات')),
+              value: _package,
+              items: [
+                for (final name in _packages)
+                  DropdownMenuItem(
+                    value: name,
+                    child: Text(name, overflow: TextOverflow.ellipsis),
+                  )
+              ],
+              onChanged:
+                  _busy ? null : (value) => setState(() => _package = value),
+            ),
+          FutureBuilder(
+            future: _accounts,
+            builder: (context, snapshot) {
+              if (snapshot.hasError)
+                return Text(_label(
+                    'Could not load accounts.', 'تعذّر تحميل الحسابات.'));
+              if (!snapshot.hasData) return const LinearProgressIndicator();
+              return DropdownButton<String>(
+                isExpanded: true,
+                hint: Text(_label('Account', 'الحساب')),
+                value: _account,
+                items: [
+                  for (final account in snapshot.data!)
+                    if (account.currency.isNotEmpty)
+                      DropdownMenuItem(
+                        value: account.id,
+                        child: Text(
+                            '${account.name} · ${account.currency.toUpperCase()}',
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                ],
+                onChanged:
+                    _busy ? null : (value) => setState(() => _account = value),
+              );
+            },
+          ),
+          if (_message != null) Text(_message!),
+          OutlinedButton(
+            onPressed: _busy || _account == null || _package == null
+                ? null
+                : () => _change(),
+            child: Text(_label('Link app', 'ربط التطبيق')),
+          ),
+          FutureBuilder(
+            future: _links,
+            builder: (context, snapshot) {
+              if (snapshot.hasError)
+                return Text(
+                    _label('Could not load links.', 'تعذّر تحميل الربط.'));
+              if (!snapshot.hasData) return const LinearProgressIndicator();
+              return Column(children: [
+                for (final link in snapshot.data!)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                        '${link.account} · ${link.currency.toUpperCase()}'),
+                    subtitle: Text(link.package),
+                    trailing: IconButton(
+                      tooltip: _label('Remove link', 'إزالة الربط'),
+                      icon: const Icon(Icons.link_off),
+                      onPressed: _busy ? null : () => _change(remove: link.id),
+                    ),
+                  ),
+              ]);
+            },
+          ),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: _busy ? null : () => Navigator.pop(context),
+              child: Text(_label('Done', 'تم'))),
         ],
       );
 }
