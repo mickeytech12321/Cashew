@@ -18,7 +18,7 @@
 - CODED: journal-backed redo for unchanged, previously undone local transfers.
 - PARTIAL: generalized duplicate detection beyond idempotency keys.
 - PARTIAL: recurring transaction correctness and due-day edge cases.
-- PARTIAL: route existing transfer UI through the atomic API.
+- CODED: existing transfer UI routes through the atomic journaled API.
 - TODO: integration tests after the batch.
 
 ## Phase 02 — Advanced Accounts & Credit
@@ -36,17 +36,20 @@
 - TODO: Egyptian bank/e-wallet rules.
 
 ## Phase 04 — Financial Planning
-- TODO: cash-flow forecast, bills/subscriptions planning, goals improvements, scenarios.
+- PARTIAL: offline scenario model and chronological cash-flow calculation engine; UI and direct recurring/bill integration still required.
+- TODO: bills/subscriptions planning UI and goals improvements.
 
 ## Phase 05 — Wealth
-- TODO: asset/liability model, investments, net worth history and allocation.
+- PARTIAL: offline asset/liability model and asset API; valuation/rates, snapshots UI, investments and allocation analytics still required.
 
 ## Phase 06 — AI & Voice
-- TODO: optional provider abstraction, local-first intent/actions, confirmations for writes, voice UI.
+- PARTIAL: deterministic Arabic/English local intent parser plus optional provider abstraction; write intents are marked confirmation-required.
+- TODO: assistant UI, action executor with confirmation, speech-to-text/voice UI.
 - Constraint: no mandatory AI subscription.
 
 ## Phase 07 — Household & Sync
-- TODO: household roles/shared financial model and conflict-safe sync integration.
+- PARTIAL: local household roles/account permissions and explicit sync-conflict ledger.
+- TODO: household UI, remote membership transport, conflict resolution UI and integration into existing sync.
 
 ## Phase 08 — UI / Analytics / Widgets
 - TODO: dashboards, insights, account/credit screens, widgets and RTL audit.
