@@ -3,6 +3,8 @@ import 'dart:math' as math;
 
 enum InvestmentCostBasis { weightedAverage, fifo }
 
+typedef InvestmentLot = ({DateTime date, double units, double cost});
+
 class InvestmentTrade {
   const InvestmentTrade({
     required this.id,
@@ -26,23 +28,29 @@ class InvestmentBalance {
     required this.units,
     required this.cost,
     required this.realized,
+    this.openLots = const [],
+    this.realizedBySale = const {},
   });
 
   final double units;
   final double cost;
   final double realized;
+  final List<InvestmentLot> openLots;
+  final Map<String, double> realizedBySale;
 
   /// Replays trades in ledger order, including the insertion order on a date.
   factory InvestmentBalance.fromTrades(
     Iterable<InvestmentTrade> trades, {
     InvestmentCostBasis method = InvestmentCostBasis.weightedAverage,
+    bool includeBreakdown = false,
   }) {
     var units = 0.0;
     var cost = 0.0;
     var realized = 0.0;
     final lots = method == InvestmentCostBasis.fifo
-        ? Queue<({double units, double cost})>()
+        ? Queue<InvestmentLot>()
         : null;
+    final saleResults = <String, double>{};
     for (final trade in trades) {
       final gross = trade.units * trade.price;
       if (!trade.units.isFinite ||
@@ -59,7 +67,7 @@ class InvestmentBalance {
         final purchaseCost = gross + trade.fees;
         units += trade.units;
         cost += purchaseCost;
-        lots?.addLast((units: trade.units, cost: purchaseCost));
+        lots?.addLast((date: trade.date, units: trade.units, cost: purchaseCost));
       } else {
         // Allow only rounding noise when liquidating a fractional holding.
         final tolerance = units.abs() * 1e-12;
@@ -70,7 +78,9 @@ class InvestmentBalance {
         final basis = lots == null || units - sold <= tolerance
             ? cost * (sold / units)
             : _consumeOldestLots(lots, sold);
-        realized += sold * trade.price - trade.fees - basis;
+        final gain = sold * trade.price - trade.fees - basis;
+        realized += gain;
+        if (includeBreakdown) saleResults[trade.id] = gain;
         units -= sold;
         cost = units <= tolerance ? 0 : cost - basis;
         if (units <= tolerance) {
@@ -82,11 +92,17 @@ class InvestmentBalance {
         throw StateError('Investment balance is outside the supported range');
       }
     }
-    return InvestmentBalance(units: units, cost: cost, realized: realized);
+    return InvestmentBalance(
+      units: units,
+      cost: cost,
+      realized: realized,
+      openLots: includeBreakdown && lots != null ? List.unmodifiable(lots) : const [],
+      realizedBySale: Map.unmodifiable(saleResults),
+    );
   }
 
   static double _consumeOldestLots(
-    Queue<({double units, double cost})> lots,
+    Queue<InvestmentLot> lots,
     double units,
   ) {
     var remaining = units;
@@ -98,7 +114,11 @@ class InvestmentBalance {
       basis += lotBasis;
       remaining -= consumed;
       if (consumed < lot.units) {
-        lots.addFirst((units: lot.units - consumed, cost: lot.cost - lotBasis));
+        lots.addFirst((
+          date: lot.date,
+          units: lot.units - consumed,
+          cost: lot.cost - lotBasis,
+        ));
       }
     }
     return basis;

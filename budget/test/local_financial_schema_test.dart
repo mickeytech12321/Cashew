@@ -451,20 +451,26 @@ void main() {
     final partial = InvestmentBalance.fromTrades(
       trades,
       method: InvestmentCostBasis.fifo,
+      includeBreakdown: true,
     );
     expect(partial.units, 0.25);
     expect(partial.cost, 5);
     expect(partial.realized, 29.5);
+    expect(partial.openLots, [(date: day, units: 0.25, cost: 5.0)]);
+    expect(partial.realizedBySale, {'c': 14.0, 'd': 15.5});
 
     trades.add(InvestmentTrade(
         id: 'e', date: day, buy: false, units: 0.25, price: 40, fees: 1));
     final closed = InvestmentBalance.fromTrades(
       trades,
       method: InvestmentCostBasis.fifo,
+      includeBreakdown: true,
     );
     expect(closed.units, 0);
     expect(closed.cost, 0);
     expect(closed.realized, 33.5);
+    expect(closed.openLots, isEmpty);
+    expect(closed.realizedBySale['e'], 4.0);
   });
 
   test('goal forecast offsets past contributions and scheduled payments once',

@@ -26,7 +26,27 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
   Future<List<({DateTime date, double price})>>? _prices;
   String? _selected;
   bool _busy = false;
-  InvestmentCostBasis _costBasis = InvestmentCostBasis.weightedAverage;
+
+  String _costBasisKey(String id) => 'investmentCostBasis.$id';
+
+  Future<void> _saveCostBasis(String id, InvestmentCostBasis method) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      if (!await sharedPreferences.setString(_costBasisKey(id), method.name)) {
+        throw StateError('Could not save investment view');
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          _label('Could not save the cost basis method.',
+              'تعذّر حفظ طريقة حساب التكلفة.'),
+        )));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   String _label(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
@@ -123,9 +143,14 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
               'تعذّر تحميل الصفقات.',
             )));
           final trades = snapshot.data!;
+          final method = sharedPreferences.getString(_costBasisKey(holding.id)) ==
+                  InvestmentCostBasis.fifo.name
+              ? InvestmentCostBasis.fifo
+              : InvestmentCostBasis.weightedAverage;
           final InvestmentBalance balance;
           try {
-            balance = InvestmentBalance.fromTrades(trades, method: _costBasis);
+            balance = InvestmentBalance.fromTrades(trades,
+                method: method, includeBreakdown: true);
           } on StateError {
             return ListTile(
               title: Text(_label('Could not calculate holdings.',
@@ -139,7 +164,7 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
             ListTile(
               title: Text(_label('Cost basis method', 'طريقة حساب التكلفة')),
               trailing: DropdownButton<InvestmentCostBasis>(
-                value: _costBasis,
+                value: method,
                 items: [
                   DropdownMenuItem(
                     value: InvestmentCostBasis.weightedAverage,
@@ -150,8 +175,8 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
                     child: Text(_label('FIFO', 'الأقدم أولًا')),
                   ),
                 ],
-                onChanged: (value) {
-                  if (value != null) setState(() => _costBasis = value);
+                onChanged: _busy ? null : (value) {
+                  if (value != null) _saveCostBasis(holding.id, value);
                 },
               ),
             ),
@@ -169,6 +194,18 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
                   _label('Realized gain or loss', 'الربح أو الخسارة المحققة')),
               trailing: Text(_money(balance.realized, holding.currency)),
             ),
+            if (balance.openLots.isNotEmpty)
+              ExpansionTile(
+                title: Text(_label('Open purchase lots', 'دفعات الشراء المتبقية')),
+                children: [
+                  for (final lot in balance.openLots)
+                    ListTile(
+                      title: Text(dates.formatMediumDate(lot.date)),
+                      subtitle: Text(lot.units.toStringAsFixed(6)),
+                      trailing: Text(_money(lot.cost, holding.currency)),
+                    ),
+                ],
+              ),
             if (valuation != null && valuation.isFinite) ...[
               ListTile(
                 title: Text(_label('Market value', 'القيمة السوقية')),
@@ -222,8 +259,12 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
               ListTile(
                 title: Text(
                     '${trade.buy ? _label('Buy', 'شراء') : _label('Sell', 'بيع')} · ${trade.units}'),
-                subtitle: Text(
-                    '${dates.formatMediumDate(trade.date)} · ${_money(trade.price, holding.currency)}'),
+                subtitle: Text([
+                  '${dates.formatMediumDate(trade.date)} · ${_money(trade.price, holding.currency)}',
+                  if (balance.realizedBySale[trade.id] case final gain?)
+                    '${_label('Realized gain or loss', 'الربح أو الخسارة المحققة')} '
+                        '${_money(gain, holding.currency)}',
+                ].join('\n')),
                 trailing: IconButton(
                   tooltip: _label('Remove trade', 'حذف الصفقة'),
                   onPressed: _busy ? null : () => _remove(trade),
