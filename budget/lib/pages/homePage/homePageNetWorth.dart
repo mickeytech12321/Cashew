@@ -47,6 +47,11 @@ class HomePageNetWorth extends StatelessWidget {
                               .toList())
                       .where((pk) => !excluded.contains(pk))
                       .toList();
+                  // Empty wallet filters mean "all" in Cashew. Use an
+                  // impossible key when every account is excluded.
+                  if (includedWalletPks.isEmpty && excluded.isNotEmpty) {
+                    includedWalletPks.add('__excluded_all_wallets__');
+                  }
                   return Padding(
                 padding: const EdgeInsetsDirectional.only(
                     bottom: 13, start: 13, end: 13),
