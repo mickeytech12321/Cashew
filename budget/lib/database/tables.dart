@@ -3717,7 +3717,11 @@ class FinanceDatabase extends _$FinanceDatabase {
         'INSERT INTO financial_actions (action_pk, action_type, created_at, idempotency_key) VALUES (?, ?, ?, ?)',
         [outgoing.transactionPk, 'transfer', DateTime.now().millisecondsSinceEpoch, idempotencyKey],
       );
-      for (final leg in [debit, credit]) {
+      final savedLegs = await (select(transactions)
+        ..where((t) => t.transactionPk.isIn(
+          [debit.transactionPk, credit.transactionPk]))).get();
+      if (savedLegs.length != 2) throw StateError('Transfer legs missing');
+      for (final leg in savedLegs) {
         await customStatement(
           'INSERT INTO financial_action_changes (change_pk, action_fk, entity_type, entity_pk, after_json) VALUES (?, ?, ?, ?, ?)',
           [leg.transactionPk, outgoing.transactionPk, 'transaction', leg.transactionPk, jsonEncode(leg.toJson())],
@@ -3725,6 +3729,30 @@ class FinanceDatabase extends _$FinanceDatabase {
       }
       return true;
     });
+  }
+
+  Future<List<Map<String, dynamic>>> getLocalFinancialActions({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (limit < 1 || limit > 500 || offset < 0) {
+      throw ArgumentError('Invalid action history pagination');
+    }
+    final rows = await customSelect(
+      'SELECT * FROM financial_actions ORDER BY created_at DESC, action_pk DESC LIMIT ? OFFSET ?',
+      variables: [Variable<int>(limit), Variable<int>(offset)],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getLocalFinancialActionChanges(
+    String actionPk,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM financial_action_changes WHERE action_fk = ? ORDER BY change_pk',
+      variables: [Variable<String>(actionPk)],
+    ).get();
+    return rows.map((row) => row.data).toList();
   }
 
   Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
