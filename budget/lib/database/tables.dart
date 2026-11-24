@@ -7469,20 +7469,20 @@ class FinanceDatabase extends _$FinanceDatabase {
     bool isOtherIncome = !originalBalanceCorrection.income;
     DateTime otherDateTime = originalBalanceCorrection.dateCreated;
     try {
-      // In the future can take advantage of pairedTransactionFk!
-      Transaction? pairedTransaction = await (select(transactions)
+      if (originalBalanceCorrection.categoryFk != "0") return null;
+      final paired = await (select(transactions)
             ..where((t) =>
-                t.pairedTransactionFk
-                    .equals(originalBalanceCorrection.transactionPk) |
-                t.transactionPk.equals(
-                    originalBalanceCorrection.pairedTransactionFk ?? "")))
-          .getSingleOrNull();
-      if (pairedTransaction != null) {
-        print("Found related transaction with pairing!");
-        return pairedTransaction;
-      }
+                (t.pairedTransactionFk.equals(originalBalanceCorrection.transactionPk) |
+                t.transactionPk.equals(originalBalanceCorrection.pairedTransactionFk ?? "")) &
+                t.transactionPk.equals(originalBalanceCorrection.transactionPk).not() &
+                t.walletFk.equals(originalBalanceCorrection.walletFk).not() &
+                t.categoryFk.equals("0") &
+                t.income.equals(isOtherIncome)))
+          .get();
+      if (paired.length == 1) return paired.single;
+      if (paired.isNotEmpty || originalBalanceCorrection.pairedTransactionFk != null) return null;
 
-      return (await (select(transactions)
+      final candidates = await (select(transactions)
                 ..where(
                   (t) =>
                       t.categoryFk.equals("0") &
@@ -7495,6 +7495,8 @@ class FinanceDatabase extends _$FinanceDatabase {
                       t.transactionPk
                           .equals(originalBalanceCorrection.transactionPk)
                           .not() &
+                      t.walletFk.equals(originalBalanceCorrection.walletFk).not() &
+                      t.pairedTransactionFk.isNull() &
                       t.income.equals(isOtherIncome) &
                       t.dateCreated.isBetweenValues(
                         DateTime(
@@ -7515,8 +7517,8 @@ class FinanceDatabase extends _$FinanceDatabase {
                         ),
                       ),
                 ))
-              .get())
-          .firstOrNull;
+              .get();
+      return candidates.length == 1 ? candidates.single : null;
     } catch (e) {
       print("No relating transfer transaction found");
     }
