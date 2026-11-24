@@ -65,6 +65,21 @@ jobs:
           if any(name.startswith('in_app_purchase') for name in plugins):
               raise SystemExit('Free edition must not include billing plugins')
           PY
+      - name: Replace removed JCenter repository declarations
+        working-directory: budget
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          cache = Path.home() / '.pub-cache' / 'hosted' / 'pub.dev'
+          for pattern in ('*/android/**/*.gradle', '*/android/**/*.gradle.kts'):
+              for path in cache.glob(pattern):
+                  source = path.read_text()
+                  patched = re.sub(r'\bjcenter\s*\(\s*\)', 'mavenCentral()', source)
+                  if patched != source:
+                      path.write_text(patched)
+                      print(f'Replaced JCenter in {path}')
+          PY
       - name: Add namespaces to legacy Android Flutter plugins
         working-directory: budget
         run: |
