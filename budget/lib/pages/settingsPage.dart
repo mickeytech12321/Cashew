@@ -1,3 +1,5 @@
+import 'package:budget/pages/financialAssistantPage.dart';
+import 'package:budget/pages/financialImportPage.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart' hide AppSettings;
 import 'package:budget/pages/aboutPage.dart';
@@ -505,6 +507,21 @@ class SettingsPageContent extends StatelessWidget {
 
         // EnterName(),
         SettingsHeader(title: "preferences".tr()),
+
+        SettingsContainerOpenPage(
+          openPage: const FinancialImportPage(),
+          title: FinancialImportPage.label(
+              context, 'Bank message import', 'استيراد الرسائل البنكية'),
+          icon: Icons.sms_outlined,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const FinancialAssistantPage(),
+          title: Localizations.localeOf(context).languageCode == 'ar'
+              ? 'المساعد دون اتصال'
+              : 'Offline assistant',
+          icon: Icons.edit_note_outlined,
+        ),
 
         SettingsContainerOpenPage(
           openPage: EditHomePage(),

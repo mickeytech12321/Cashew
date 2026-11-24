@@ -1,3 +1,5 @@
+import 'financialMessageParser.dart';
+
 enum FinancialAssistantIntentType {
   addExpense,
   addIncome,
@@ -32,38 +34,34 @@ class FinancialAssistant {
   FinancialAssistantIntent parse(String input) {
     final raw = input.trim();
     final lower = raw.toLowerCase();
-    final amountMatch = RegExp(r'([0-9][0-9,]*(?:\\.[0-9]{1,2})?)')
-        .firstMatch(raw);
-    final amount =
-        double.tryParse((amountMatch?.group(1) ?? '').replaceAll(',', ''));
-    String? currency;
-    if (RegExp(r'\\begp\\b|جنيه|ج\\.م', caseSensitive: false)
-        .hasMatch(raw)) currency = 'egp';
-    if (RegExp(r'\\busd\\b|دولار', caseSensitive: false)
-        .hasMatch(raw)) currency = 'usd';
+    final parsed = FinancialMessageParser.parse(raw);
 
     FinancialAssistantIntentType type = FinancialAssistantIntentType.unknown;
     if (RegExp(r'حول|حوّل|transfer', caseSensitive: false).hasMatch(lower)) {
       type = FinancialAssistantIntentType.transfer;
-    } else if (RegExp(r'قبضت|استلمت|دخل|income|received|salary',
-            caseSensitive: false).hasMatch(lower)) {
-      type = FinancialAssistantIntentType.addIncome;
-    } else if (RegExp(r'دفعت|اشتريت|صرف|expense|spent|paid|bought',
-            caseSensitive: false).hasMatch(lower)) {
-      type = FinancialAssistantIntentType.addExpense;
-    } else if (RegExp(r'رصيد|balance', caseSensitive: false).hasMatch(lower)) {
+    } else if (RegExp(r'رصيد|\bbalance\b').hasMatch(lower)) {
       type = FinancialAssistantIntentType.queryBalance;
-    } else if (RegExp(r'صرف.*كام|spend|spending', caseSensitive: false)
+    } else if (RegExp(r'صرف.*كام|كام.*صرف|\b(?:spend|spending)\b')
         .hasMatch(lower)) {
       type = FinancialAssistantIntentType.querySpending;
+    } else if (RegExp(
+      r'قبضت|استلمت|دخل|income|received|salary',
+      caseSensitive: false,
+    ).hasMatch(lower)) {
+      type = FinancialAssistantIntentType.addIncome;
+    } else if (RegExp(
+      r'دفعت|اشتريت|صرف|expense|spent|paid|bought',
+      caseSensitive: false,
+    ).hasMatch(lower)) {
+      type = FinancialAssistantIntentType.addExpense;
     }
 
     return FinancialAssistantIntent(
       type: type,
       rawText: raw,
-      amount: amount,
-      currency: currency,
-      merchantOrTitle: null,
+      amount: parsed.amount,
+      currency: parsed.currency,
+      merchantOrTitle: parsed.merchant,
       requiresConfirmation: {
         FinancialAssistantIntentType.addExpense,
         FinancialAssistantIntentType.addIncome,

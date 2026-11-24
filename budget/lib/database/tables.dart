@@ -914,7 +914,6 @@ class FinanceDatabase extends _$FinanceDatabase {
     return MigrationStrategy(
       onCreate: (Migrator m) async {
         await m.createAll();
-        await createLocalFinancialSchema47();
       },
       // import 'package:drift_dev/api/migrations.dart';
       // beforeOpen: (details) async {
@@ -1379,11 +1378,10 @@ class FinanceDatabase extends _$FinanceDatabase {
             },
           ),
         );
-        if (from < 47 && to >= 47) {
-          await transaction(() async { await createLocalFinancialSchema47(); });
-        }
       },
       beforeOpen: (details) async {
+        // Earlier schema-47 releases shipped only a subset of these tables.
+        await transaction(createLocalFinancialSchema47);
         // This code exists because migration 42to43 may have not run correctly...
         // See explanation in 41to42
         try {
@@ -4134,6 +4132,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     final normalized = [
       sourceType.trim().toLowerCase(),
       sender?.trim().toLowerCase() ?? '',
+      // Preserve the canonical input used by existing schema-47 fingerprints.
       rawText.replaceAll(RegExp(r'\\s+'), ' ').trim().toLowerCase(),
       occurredAt.millisecondsSinceEpoch.toString(),
     ].join('|');
@@ -4168,21 +4167,24 @@ class FinanceDatabase extends _$FinanceDatabase {
     final fingerprint = financialImportFingerprint(
       sourceType: sourceType, sender: sourceSender,
       rawText: rawText, occurredAt: occurredAt);
-    final existing = await customSelect(
-      'SELECT event_pk FROM imported_financial_events WHERE fingerprint = ?',
-      variables: [Variable<String>(fingerprint)],
-    ).getSingleOrNull();
-    if (existing != null) return false;
-    await customStatement(
-      'INSERT INTO imported_financial_events '
-      '(event_pk, source_type, source_sender, raw_text, occurred_at, amount, currency, direction, merchant, identifier_last4, wallet_fk, confidence, fingerprint, created_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [eventPk, sourceType.trim().toLowerCase(), sourceSender?.trim(), rawText,
-        occurredAt.millisecondsSinceEpoch, amount, currency?.toLowerCase(),
-        direction, merchant?.trim(), identifierLast4, walletFk, confidence,
-        fingerprint, DateTime.now().millisecondsSinceEpoch],
-    );
-    return true;
+    return transaction(() async {
+      await customStatement(
+        'INSERT INTO imported_financial_events '
+        '(event_pk, source_type, source_sender, raw_text, occurred_at, amount, '
+        'currency, direction, merchant, identifier_last4, wallet_fk, confidence, '
+        'fingerprint, created_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+        'ON CONFLICT(fingerprint) DO NOTHING',
+        [
+          eventPk, sourceType.trim().toLowerCase(), sourceSender?.trim(), rawText,
+          occurredAt.millisecondsSinceEpoch, amount, currency?.toLowerCase(),
+          direction, merchant?.trim(), identifierLast4, walletFk, confidence,
+          fingerprint, DateTime.now().millisecondsSinceEpoch,
+        ],
+      );
+      final result = await customSelect('SELECT changes() AS count').getSingle();
+      return result.read<int>('count') == 1;
+    });
   }
 
   Future<List<Map<String, dynamic>>> getImportedFinancialEvents({
@@ -4231,12 +4233,23 @@ class FinanceDatabase extends _$FinanceDatabase {
       final amount = (event['amount'] as num?)?.toDouble();
       final direction = event['direction'] as String?;
       final resolvedWallet = walletPk ?? event['wallet_fk'] as String?;
-      if (amount == null || amount <= 0 || direction == null ||
-          resolvedWallet == null) {
+      if (amount == null || !amount.isFinite || amount <= 0 ||
+          amount > 999999999999 || direction == null || resolvedWallet == null) {
         throw StateError('Imported event needs manual details');
       }
-      if (await getWalletInstanceOrNull(resolvedWallet) == null) {
-        throw StateError('Wallet not found');
+      final wallet = await getWalletInstanceOrNull(resolvedWallet);
+      if (wallet == null) throw StateError('Wallet not found');
+      if (event['currency'] == null ||
+          event['currency'] != wallet.currency?.toLowerCase()) {
+        throw StateError('Import currency must match the wallet currency');
+      }
+      if (categoryFk == '0') {
+        throw ArgumentError('Select a regular transaction category');
+      }
+      if (await (select(transactions)
+            ..where((row) => row.transactionPk.equals(transactionPk)))
+          .getSingleOrNull() != null) {
+        throw StateError('Transaction already exists');
       }
       final occurredAt =
           DateTime.fromMillisecondsSinceEpoch(event['occurred_at'] as int);
@@ -4266,7 +4279,6 @@ class FinanceDatabase extends _$FinanceDatabase {
                       ? (event['merchant'] as String).trim()
                       : 'Imported transaction'),
           amount: signedAmount,
-          note: event['raw_text'] as String?,
           categoryFk: categoryFk,
           walletFk: resolvedWallet,
           dateCreated: occurredAt,
@@ -4343,15 +4355,15 @@ class FinanceDatabase extends _$FinanceDatabase {
       variables: [Variable<String>(scenarioPk)]).getSingleOrNull();
     if (scenario == null) throw StateError('Planning scenario not found');
     final items = await customSelect(
-      'SELECT * FROM planning_scenario_items WHERE scenario_fk = ? ORDER BY first_date',
+      'SELECT * FROM planning_scenario_items WHERE scenario_fk = ? '
+      'ORDER BY first_date, item_pk',
       variables: [Variable<String>(scenarioPk)]).get();
     final base = DateTime.fromMillisecondsSinceEpoch(
         scenario.data['base_date'] as int);
     final horizon = base.add(Duration(days: scenario.data['horizon_days'] as int));
-    var balance = (scenario.data['starting_balance'] as num).toDouble();
-    final points = <Map<String, dynamic>>[
-      {'date': base, 'balance': balance, 'item_pk': null}
-    ];
+    final startingBalance = (scenario.data['starting_balance'] as num).toDouble();
+    var balance = startingBalance;
+    final points = <Map<String, dynamic>>[];
     for (final row in items) {
       final data = row.data;
       var date = DateTime.fromMillisecondsSinceEpoch(data['first_date'] as int);
@@ -4359,23 +4371,40 @@ class FinanceDatabase extends _$FinanceDatabase {
           ? horizon
           : DateTime.fromMillisecondsSinceEpoch(data['end_date'] as int);
       final recurrence = data['recurrence_days'] as int?;
+      if (recurrence != null && recurrence <= 0) {
+        throw StateError('Invalid saved recurrence');
+      }
+      if (date.isBefore(base)) {
+        if (recurrence == null) continue;
+        final interval = Duration(days: recurrence);
+        final elapsed = base.difference(date).inMilliseconds;
+        final intervals = (elapsed + interval.inMilliseconds - 1) ~/
+            interval.inMilliseconds;
+        date = date.add(interval * intervals);
+      }
+      final signed = (data['amount'] as num).toDouble() *
+          (data['direction'] == 'income' ? 1 : -1);
       while (!date.isAfter(horizon) && !date.isAfter(end)) {
-        final signed = (data['amount'] as num).toDouble() *
-            (data['direction'] == 'income' ? 1 : -1);
-        balance += signed;
-        points.add({'date': date, 'balance': balance,
-          'item_pk': data['item_pk'], 'amount': signed, 'name': data['name']});
+        points.add({
+          'date': date,
+          'item_pk': data['item_pk'],
+          'amount': signed,
+          'name': data['name'],
+        });
         if (recurrence == null) break;
         date = date.add(Duration(days: recurrence));
       }
     }
-    points.sort((a,b) => (a['date'] as DateTime).compareTo(b['date'] as DateTime));
-    // Recalculate after chronological sort because items may interleave.
-    balance = (scenario.data['starting_balance'] as num).toDouble();
-    for (final point in points.skip(1)) {
-      balance += (point['amount'] as num).toDouble();
+    points.sort((a, b) {
+      final byDate = (a['date'] as DateTime).compareTo(b['date'] as DateTime);
+      if (byDate != 0) return byDate;
+      return (a['item_pk'] as String).compareTo(b['item_pk'] as String);
+    });
+    for (final point in points) {
+      balance += point['amount'] as double;
       point['balance'] = balance;
     }
+    points.insert(0, {'date': base, 'balance': startingBalance, 'item_pk': null});
     return points;
   }
 

@@ -15,6 +15,11 @@ void main() {
     expect(i.type, FinancialAssistantIntentType.queryBalance);
     expect(i.requiresConfirmation, isFalse);
   });
+  test('Arabic spending question is read only', () {
+    final result = assistant.parse('صرفنا كام الشهر ده؟');
+    expect(result.type, FinancialAssistantIntentType.querySpending);
+    expect(result.requiresConfirmation, isFalse);
+  });
   test('transfer requires confirmation', () {
     final i = assistant.parse('transfer 100 EGP');
     expect(i.type, FinancialAssistantIntentType.transfer);

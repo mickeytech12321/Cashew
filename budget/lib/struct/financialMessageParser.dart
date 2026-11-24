@@ -6,44 +6,75 @@ class ParsedFinancialMessage {
   final String? lastFour;
   final double confidence;
   const ParsedFinancialMessage({
-    this.amount, this.currency, this.direction, this.merchant,
-    this.lastFour, required this.confidence,
+    this.amount,
+    this.currency,
+    this.direction,
+    this.merchant,
+    this.lastFour,
+    required this.confidence,
   });
 }
 
 class FinancialMessageParser {
+  static String normalize(String raw) {
+    const arabicIndic = '٠١٢٣٤٥٦٧٨٩';
+    const easternArabicIndic = '۰۱۲۳۴۵۶۷۸۹';
+    return raw.replaceAllMapped(RegExp(r'[٠-٩۰-۹٬٫]'), (match) {
+      final character = match[0]!;
+      if (character == '٬') return ',';
+      if (character == '٫') return '.';
+      final index = arabicIndic.indexOf(character);
+      return (index >= 0 ? index : easternArabicIndic.indexOf(character))
+          .toString();
+    });
+  }
+
   static ParsedFinancialMessage parse(String raw) {
-    final text = raw.replaceAll(RegExp(r'\\s+'), ' ').trim();
+    final text = normalize(raw).replaceAll(RegExp(r'\s+'), ' ').trim();
     if (text.isEmpty) return const ParsedFinancialMessage(confidence: 0);
     final lower = text.toLowerCase();
-    final amountMatch = RegExp(
-      r'(?:egp|ج(?:\\.?م)?|جنيه|usd|دولار)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)|'
-      r'([0-9][0-9,]*(?:\\.[0-9]{1,2})?)\\s*(egp|ج(?:\\.?م)?|جنيه|usd|دولار)',
+    if (RegExp(
+      r'\b(?:otp|declined|unsuccessful|failed|verification code|one[- ]time password)\b|رمز التحقق|رمز التأكيد|تم رفض|لم تتم',
+    ).hasMatch(lower)) {
+      return const ParsedFinancialMessage(confidence: 0);
+    }
+    const currencyPattern =
+        r'(?:\begp\b|جنيه(?:ًا|ا)?|ج\.?\s*م\.?|\busd\b|دولار)';
+    const numberPattern =
+        r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,2})?';
+    final amountPattern = RegExp(
+      '($currencyPattern)\\s*($numberPattern)(?![0-9]|[.,][0-9])|'
+      '(?<![0-9.,+−-])($numberPattern)\\s*($currencyPattern)',
       caseSensitive: false,
-    ).firstMatch(text);
+    );
+    final matches = amountPattern.allMatches(text).toList();
     double? amount;
     String? currency;
-    if (amountMatch != null) {
-      final number = amountMatch.group(1) ?? amountMatch.group(2);
-      amount = double.tryParse(number?.replaceAll(',', '') ?? '');
-      final token = (amountMatch.group(3) ?? amountMatch.group(0) ?? '').toLowerCase();
-      currency = token.contains('usd') || token.contains('دولار') ? 'usd' : 'egp';
+    if (matches.length == 1) {
+      final match = matches.single;
+      final number = match[2] ?? match[3]!;
+      final token = (match[1] ?? match[4]!).toLowerCase();
+      amount = double.tryParse(number.replaceAll(',', ''));
+      if (amount != null && amount.isFinite && amount > 0) {
+        currency = token == 'usd' || token == 'دولار' ? 'usd' : 'egp';
+      } else {
+        amount = null;
+      }
     }
-    String? direction;
-    if (RegExp(r'purchase|purchased|paid|payment|withdraw|خصم|شراء|سحب|دفعت',
-            caseSensitive: false).hasMatch(lower)) {
-      direction = 'debit';
-    } else if (RegExp(r'received|credited|deposit|refund|استلام|ايداع|إيداع|رد',
-            caseSensitive: false).hasMatch(lower)) {
-      direction = 'credit';
-    }
+    final debit = RegExp(
+      r'\b(?:purchase[ds]?|paid|withdraw(?:al|n)?|debited)\b|خصم|شراء|سحب|دفعت',
+    ).hasMatch(lower);
+    final credit = RegExp(
+      r'\b(?:received|credited|deposit(?:ed)?|refund(?:ed)?)\b|استلام|[إا]يداع|رد مبلغ',
+    ).hasMatch(lower);
+    final direction = debit == credit ? null : (debit ? 'debit' : 'credit');
     final last4 = RegExp(
-      r'(?:ending|ends|card|بطاق(?:ة|تك)|كارت)\\D{0,12}(\\d{4})(?!\\d)',
+      r'(?:ending|ends|card|بطاق(?:ة|تك)|كارت)\D{0,12}(\d{4})(?!\d)',
       caseSensitive: false,
     ).firstMatch(text)?.group(1);
     String? merchant;
     final merchantMatch = RegExp(
-      r'(?:at| لدى | عند |merchant[: ]+)\\s*([^,.;]+)',
+      r'(?:\bat\b|لدى|عند|\bmerchant[: ]+)\s+(.+?)(?=\s+(?:card\b|ending\b|من بطاق|كارت)|[,.;]|$)',
       caseSensitive: false,
     ).firstMatch(text);
     if (merchantMatch != null) merchant = merchantMatch.group(1)?.trim();
@@ -51,10 +82,13 @@ class FinancialMessageParser {
     if (amount != null) confidence += .45;
     if (direction != null) confidence += .25;
     if (last4 != null) confidence += .2;
-    if (merchant != null && merchant!.isNotEmpty) confidence += .1;
+    if (merchant != null && merchant.isNotEmpty) confidence += .1;
     return ParsedFinancialMessage(
-      amount: amount, currency: currency, direction: direction,
-      merchant: merchant, lastFour: last4,
+      amount: amount,
+      currency: currency,
+      direction: direction,
+      merchant: merchant,
+      lastFour: last4,
       confidence: confidence.clamp(0.0, 1.0),
     );
   }

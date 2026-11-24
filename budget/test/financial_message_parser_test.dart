@@ -5,7 +5,8 @@ void main() {
   group('FinancialMessageParser', () {
     test('parses English EGP debit', () {
       final p = FinancialMessageParser.parse(
-          'Purchase EGP 1,250.50 at Carrefour card ending 1234');
+        'Purchase EGP 1,250.50 at Carrefour card ending 1234',
+      );
       expect(p.amount, 1250.50);
       expect(p.currency, 'egp');
       expect(p.direction, 'debit');
@@ -14,12 +15,41 @@ void main() {
     });
     test('parses Arabic debit', () {
       final p = FinancialMessageParser.parse(
-          'تم خصم 250 جنيه من بطاقتك 4321 عند AMAZON');
+        'تم خصم 250 جنيه من بطاقتك 4321 عند AMAZON',
+      );
       expect(p.amount, 250);
       expect(p.currency, 'egp');
       expect(p.direction, 'debit');
       expect(p.lastFour, '4321');
     });
+    test('reads Arabic-Indic currency and card digits', () {
+      final p = FinancialMessageParser.parse(
+        'تم خصم ١٬٢٥٠٫٥٠ ج.م. من بطاقتك ٤٣٢١',
+      );
+      expect(p.amount, 1250.50);
+      expect(p.currency, 'egp');
+      expect(p.lastFour, '4321');
+    });
+    test(
+      'leaves ambiguous amounts and verification messages for manual entry',
+      () {
+        expect(
+          FinancialMessageParser.parse('Purchase EGP 300. New balance EGP 900.')
+              .amount,
+          isNull,
+        );
+        expect(
+          FinancialMessageParser.parse('OTP 123456 for purchase EGP 300')
+              .confidence,
+          0,
+        );
+        expect(
+          FinancialMessageParser.parse('Purchase declined for EGP 300')
+              .confidence,
+          0,
+        );
+      },
+    );
     test('unknown text stays low confidence', () {
       final p = FinancialMessageParser.parse('Welcome to our service');
       expect(p.amount, isNull);
