@@ -4220,23 +4220,27 @@ class FinanceDatabase extends _$FinanceDatabase {
   Future<List<Map<String, dynamic>>> getAssistantAccountTotals({
     required bool monthlySpending,
     required DateTime asOf,
+    DateTime? spendingStart,
+    DateTime? spendingEnd,
   }) async {
     final monthStart = DateTime(asOf.year, asOf.month);
     final spendingFilter = monthlySpending
-        ? "AND t.amount < 0 AND t.category_fk != '0' AND t.date_created >= ? "
+        ? "AND t.skip_paid = 0 AND t.amount < 0 AND t.category_fk != '0' "
+            'AND t.date_created >= ? '
         : '';
+    final pastPeriod = monthlySpending && spendingEnd != null;
     final rows = await customSelect(
       'SELECT w.name, w.currency, w.decimals, '
       'COALESCE(SUM(t.amount), 0) AS total '
       'FROM wallets w LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
       'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk '
-      'AND t.paid = 1 AND t.date_created <= ? '
+      'AND t.paid = 1 AND t.date_created ${pastPeriod ? '<' : '<='} ? '
       '$spendingFilter'
       'WHERE COALESCE(d.archived, 0) = 0 '
       'GROUP BY w.wallet_pk, w.name, w.currency ORDER BY w."order", w.wallet_pk',
       variables: [
-        Variable<DateTime>(asOf),
-        if (monthlySpending) Variable<DateTime>(monthStart),
+        Variable<DateTime>(pastPeriod ? spendingEnd! : asOf),
+        if (monthlySpending) Variable<DateTime>(spendingStart ?? monthStart),
       ],
     ).get();
     return rows.map((row) => row.data).toList();

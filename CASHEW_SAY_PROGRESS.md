@@ -45,7 +45,7 @@
 
 ## Phase 06 — AI & Voice
 - PARTIAL: deterministic Arabic/English local intent parser plus optional provider abstraction; write intents are marked confirmation-required.
-- PARTIAL: Settings → Offline assistant prepares Arabic/English income and expense drafts in the existing transaction editor after account selection. The user saves from that editor. Balance and current-month paid expense queries show separate account totals and exclude internal transfers from expenses. Transfer drafts open the existing review flow with the selected matching-currency source and amount. Android offers optional on-device dictation for Arabic and English where the system recognizer supports them. The transcript opens in the editable assistant field and requires the user to continue. Device verification and optional provider implementation remain.
+- PARTIAL: Settings → Offline assistant prepares Arabic/English income and expense drafts in the existing transaction editor after account selection. The user saves from that editor. Balance and paid expense queries show separate account totals. Expense questions support this or last week, this or last month, and this year, and omit internal transfers and skipped entries. Weeks start on Monday. Transfer drafts open the existing review flow with the selected matching-currency source and amount. Android offers optional on-device dictation for Arabic and English where the system recognizer supports them. The transcript opens in the editable assistant field and requires the user to continue. Device verification and optional provider implementation remain.
 - Constraint: no mandatory AI subscription.
 
 ## Phase 07 — Household & Sync

@@ -2,6 +2,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:budget/struct/financialAssistant.dart';
 
 void main() {
+  test('understands spending periods in Arabic and English', () {
+    const assistant = FinancialAssistant();
+    final arabic = assistant.parse('صرفت كام الشهر اللي فات؟');
+    expect(arabic.type, FinancialAssistantIntentType.querySpending);
+    expect(arabic.spendingPeriod, SpendingPeriod.previousMonth);
+    expect(arabic.requiresConfirmation, isFalse);
+    final english = assistant.parse('How much did I spend last week?');
+    expect(english.type, FinancialAssistantIntentType.querySpending);
+    expect(english.spendingPeriod, SpendingPeriod.previousWeek);
+    expect(assistant.parse('I spent EGP 20').type,
+        FinancialAssistantIntentType.addExpense);
+  });
+
+  test('spending periods respect calendar and year boundaries', () {
+    final now = DateTime(2027, 1, 3, 20);
+    expect(SpendingPeriod.previousMonth.range(now),
+        (start: DateTime(2026, 12), end: DateTime(2027, 1)));
+    expect(SpendingPeriod.previousWeek.range(now),
+        (start: DateTime(2026, 12, 21), end: DateTime(2026, 12, 28)));
+    expect(SpendingPeriod.currentWeek.range(now),
+        (start: DateTime(2026, 12, 28), end: null));
+  });
+
   const assistant = FinancialAssistant();
   test('Arabic expense requires confirmation', () {
     final i = assistant.parse('دفعت 250 جنيه');

@@ -86,13 +86,18 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
   void _interpret() {
     final intent = const FinancialAssistant().parse(_input.text);
     final spending = intent.type == FinancialAssistantIntentType.querySpending;
+    final now = DateTime.now();
+    final period = intent.spendingPeriod.range(now);
     setState(() {
       _intent = intent;
       _wallet = null;
       _accountTotals =
           spending || intent.type == FinancialAssistantIntentType.queryBalance
               ? database.getAssistantAccountTotals(
-                  monthlySpending: spending, asOf: DateTime.now())
+                  monthlySpending: spending,
+                  asOf: now,
+                  spendingStart: period.start,
+                  spendingEnd: period.end)
               : null;
     });
   }
@@ -113,10 +118,17 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(spending
-                  ? _label('Paid expenses this month by account',
-                      'المصروفات المدفوعة هذا الشهر حسب الحساب')
+                  ? _label('Paid expenses by account', 'المصروفات المدفوعة حسب الحساب')
                   : _label('Paid balance by account',
                       'رصيد المعاملات المدفوعة حسب الحساب')),
+              if (spending)
+                Text(switch (_intent!.spendingPeriod) {
+                  SpendingPeriod.currentWeek => _label('This week', 'هذا الأسبوع'),
+                  SpendingPeriod.previousWeek => _label('Last week', 'الأسبوع الماضي'),
+                  SpendingPeriod.currentMonth => _label('This month', 'هذا الشهر'),
+                  SpendingPeriod.previousMonth => _label('Last month', 'الشهر الماضي'),
+                  SpendingPeriod.currentYear => _label('This year', 'هذا العام'),
+                }),
               for (final row in snapshot.data!)
                 ListTile(
                   contentPadding: EdgeInsets.zero,

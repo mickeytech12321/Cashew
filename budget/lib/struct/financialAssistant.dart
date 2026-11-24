@@ -1,5 +1,30 @@
 import 'financialMessageParser.dart';
 
+enum SpendingPeriod {
+  currentMonth,
+  previousMonth,
+  currentWeek,
+  previousWeek,
+  currentYear;
+
+  ({DateTime start, DateTime? end}) range(DateTime now) {
+    final monday = DateTime(now.year, now.month, now.day - now.weekday + 1);
+    return switch (this) {
+      currentMonth => (start: DateTime(now.year, now.month), end: null),
+      previousMonth => (
+          start: DateTime(now.year, now.month - 1),
+          end: DateTime(now.year, now.month),
+        ),
+      currentWeek => (start: monday, end: null),
+      previousWeek => (
+          start: DateTime(monday.year, monday.month, monday.day - 7),
+          end: monday,
+        ),
+      currentYear => (start: DateTime(now.year), end: null),
+    };
+  }
+}
+
 enum FinancialAssistantIntentType {
   addExpense,
   addIncome,
@@ -16,6 +41,7 @@ class FinancialAssistantIntent {
   final String? merchantOrTitle;
   final String rawText;
   final bool requiresConfirmation;
+  final SpendingPeriod spendingPeriod;
 
   const FinancialAssistantIntent({
     required this.type,
@@ -24,6 +50,7 @@ class FinancialAssistantIntent {
     this.currency,
     this.merchantOrTitle,
     required this.requiresConfirmation,
+    this.spendingPeriod = SpendingPeriod.currentMonth,
   });
 }
 
@@ -41,7 +68,7 @@ class FinancialAssistant {
       type = FinancialAssistantIntentType.transfer;
     } else if (RegExp(r'رصيد|\bbalance\b').hasMatch(lower)) {
       type = FinancialAssistantIntentType.queryBalance;
-    } else if (RegExp(r'صرف.*كام|كام.*صرف|\b(?:spend|spending)\b')
+    } else if (RegExp(r'صرف.*(?:كام|قد إيه)|(?:كام|كم|قد إيه).*صرف|مصروفاتي|\b(?:spend|spending)\b|\bhow much\b.*\b(?:spent|expenses)\b')
         .hasMatch(lower)) {
       type = FinancialAssistantIntentType.querySpending;
     } else if (RegExp(
@@ -62,6 +89,13 @@ class FinancialAssistant {
       amount: parsed.amount,
       currency: parsed.currency,
       merchantOrTitle: parsed.merchant,
+      spendingPeriod: switch (lower) {
+        final value when RegExp(r'\blast month\b|الشهر (?:اللي فات|الماضي|السابق)').hasMatch(value) => SpendingPeriod.previousMonth,
+        final value when RegExp(r'\blast week\b|الأسبوع (?:اللي فات|الماضي|السابق)').hasMatch(value) => SpendingPeriod.previousWeek,
+        final value when RegExp(r'\bthis week\b|هذا الأسبوع|الأسبوع ده').hasMatch(value) => SpendingPeriod.currentWeek,
+        final value when RegExp(r'\bthis year\b|هذه السنة|السنة دي|هذا العام').hasMatch(value) => SpendingPeriod.currentYear,
+        _ => SpendingPeriod.currentMonth,
+      },
       requiresConfirmation: {
         FinancialAssistantIntentType.addExpense,
         FinancialAssistantIntentType.addIncome,
