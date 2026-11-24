@@ -13,7 +13,7 @@
 - DONE: finite amount validation / hard amount bounds.
 - CODED: strict currency-rate lookup that never silently assumes parity for financial writes.
 - CODED: atomic two-leg local transfer API with idempotency and pairing.
-- CODED: local financial action journal/history.
+- CODED: local transfer history is available in Settings, with pagination, confirmation and conflict-checked undo or restore.
 - CODED: conflict-checked undo for journaled local transfers.
 - CODED: journal-backed redo refreshes the saved snapshots so a subsequent undo still verifies the persisted records. Undo writes both deletion logs in the same database transaction.
 - PARTIAL: generalized duplicate detection beyond idempotency keys.

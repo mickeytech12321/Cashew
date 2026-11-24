@@ -1,3 +1,4 @@
+import 'package:budget/pages/transferHistoryPage.dart';
 import 'package:budget/pages/financialInsightsPage.dart';
 import 'package:budget/pages/planningScenariosPage.dart';
 import 'package:budget/pages/wealthAssetsPage.dart';
@@ -524,6 +525,14 @@ class SettingsPageContent extends StatelessWidget {
               ? 'المساعد دون اتصال'
               : 'Offline assistant',
           icon: Icons.edit_note_outlined,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const TransferHistoryPage(),
+          title: Localizations.localeOf(context).languageCode == 'ar'
+              ? 'سجل التحويلات'
+              : 'Transfer history',
+          icon: Icons.history,
         ),
 
         SettingsContainerOpenPage(
