@@ -710,6 +710,39 @@ class FinanceDatabase extends _$FinanceDatabase {
     return row?.data;
   }
 
+  Future<Map<String, Map<String, dynamic>>> getAllAccountDetails() async {
+    final rows = await customSelect('SELECT * FROM account_details').get();
+    return {
+      for (final row in rows)
+        if (row.data['wallet_fk'] is String)
+          row.data['wallet_fk'] as String: row.data,
+    };
+  }
+
+  Future<void> setAccountArchived(String walletPk, bool archived) async {
+    final current = await getAccountDetails(walletPk);
+    await saveAccountDetails(
+      walletPk: walletPk,
+      accountType: (current?['account_type'] as String?) ?? 'unspecified',
+      institutionName: current?['institution_name'] as String?,
+      archived: archived,
+      excludeFromNetWorth:
+          ((current?['exclude_from_net_worth'] as int?) ?? 0) == 1,
+    );
+  }
+
+  Future<void> setAccountExcludedFromNetWorth(
+      String walletPk, bool excluded) async {
+    final current = await getAccountDetails(walletPk);
+    await saveAccountDetails(
+      walletPk: walletPk,
+      accountType: (current?['account_type'] as String?) ?? 'unspecified',
+      institutionName: current?['institution_name'] as String?,
+      archived: ((current?['archived'] as int?) ?? 0) == 1,
+      excludeFromNetWorth: excluded,
+    );
+  }
+
   Future<void> saveAccountDetails({
     required String walletPk,
     required String accountType,
