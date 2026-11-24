@@ -15,7 +15,7 @@
 - CODED: atomic two-leg local transfer API with idempotency and pairing.
 - CODED: local financial action journal/history.
 - CODED: conflict-checked undo for journaled local transfers.
-- PARTIAL: redo.
+- CODED: journal-backed redo for unchanged, previously undone local transfers.
 - PARTIAL: generalized duplicate detection beyond idempotency keys.
 - PARTIAL: recurring transaction correctness and due-day edge cases.
 - PARTIAL: route existing transfer UI through the atomic API.
@@ -23,16 +23,16 @@
 
 ## Phase 02 — Advanced Accounts & Credit
 - CODED: local account metadata table/API: account type, institution, archive, exclude from net worth.
-- TODO: account-type UI integration.
-- TODO: debit/prepaid/e-wallet metadata and identifiers.
+- CODED: account-type UI integration in add/edit account screen (localization pass still required).
+- PARTIAL: debit/prepaid/e-wallet account types and reusable automation identifiers; richer card metadata still required.
 - TODO: bank-account/card linking without double-counting balances.
-- TODO: credit-card details, limits, statements, due dates, minimum payment, repayments/refunds/fees.
+- PARTIAL: credit-card details UI/model: limit, statement day, due day, minimum payment, APR, last four; statement engine, repayments/refunds/fees still required.
 - TODO: net-worth filtering in all reports.
 
 ## Phase 03 — Bank Automation / Egypt
-- TODO: import/parse pipeline with explicit user permission.
-- TODO: notification/SMS parser architecture and bank/provider adapters.
-- TODO: duplicate/confidence review queue.
+- PARTIAL: local import staging/review pipeline; Android permission/notification ingestion not wired yet.
+- PARTIAL: conservative Arabic/English parser added; provider-specific adapters not yet implemented.
+- CODED: deterministic fingerprint dedupe, confidence and review/approved/ignored/duplicate states.
 - TODO: Egyptian bank/e-wallet rules.
 
 ## Phase 04 — Financial Planning
