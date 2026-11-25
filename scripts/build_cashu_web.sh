@@ -14,8 +14,19 @@ if ! command -v flutter >/dev/null; then
   export PATH="$cashu_flutter_dir/bin:$PATH"
 fi
 
-cashu_installed_version="$(flutter --version --machine | python3 -c \
-  'import json, sys; print(json.load(sys.stdin)["frameworkVersion"])')"
+# A fresh Flutter install prints tool and dependency setup before the JSON.
+cashu_installed_version="$(flutter --version --machine | python3 -c '
+import json
+import re
+import sys
+
+output = sys.stdin.read()
+match = re.search(r"^\s*\{(?=\s*\"frameworkVersion\")", output, re.M)
+if match is None:
+    sys.exit("Could not read the Flutter version.")
+version, _ = json.JSONDecoder().raw_decode(output, match.end() - 1)
+print(version["frameworkVersion"])
+')"
 if [[ "$cashu_installed_version" != "$cashu_flutter_version" ]]; then
   echo "CashU requires Flutter $cashu_flutter_version (found $cashu_installed_version)." >&2
   exit 1
