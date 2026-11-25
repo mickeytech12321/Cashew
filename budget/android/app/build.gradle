@@ -31,8 +31,15 @@ if (keystorePropertiesFile.exists()) {
 def testRelease = System.getenv('CASHEW_TEST_RELEASE') == 'true'
 def testKeystore = System.getenv('CASHU_TEST_KEYSTORE')
 def isolatedPreview = System.getenv('CASHEW_ISOLATED_PREVIEW') == 'true'
-if (isolatedPreview && !testRelease) {
-    throw new GradleException('CASHEW_ISOLATED_PREVIEW requires CASHEW_TEST_RELEASE')
+def sideBySide = System.getenv('CASHU_SIDE_BY_SIDE_BUILD') == 'true'
+if ((isolatedPreview || sideBySide) && !testRelease) {
+    throw new GradleException('Separate APK packages require CASHEW_TEST_RELEASE')
+}
+if (isolatedPreview && sideBySide) {
+    throw new GradleException('Select only one separate APK package')
+}
+if (sideBySide && !testKeystore) {
+    throw new GradleException('CASHU_SIDE_BY_SIDE_BUILD requires CASHU_TEST_KEYSTORE')
 }
 
 android {
@@ -87,6 +94,8 @@ android {
             signingConfig (testRelease ? signingConfigs.debug : signingConfigs.release)
             if (isolatedPreview) {
                 applicationIdSuffix ".preview"
+            } else if (sideBySide) {
+                applicationIdSuffix ".next"
             }
         }
     }

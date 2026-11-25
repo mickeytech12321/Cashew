@@ -8,7 +8,9 @@ The [Cashew Free Edition project](https://console.cloud.google.com/auth/overview
 
 The **CashU Android Preview** client is registered with package `com.cashu.mickey.preview` and certificate SHA-1 `79:1E:3A:C5:68:49:EA:AB:27:6B:B7:67:EC:35:35:89:F3:A7:B3:68`. The preview can install alongside `com.cashu.mickey` and has its own local database. An APK with a different signing key or Android package needs its own matching OAuth registration. For an in-place update of the earlier test app, use its original signing key and register `com.cashu.mickey` with that certificate (`09:B9:9A:4C:9E:4E:3A:95:3F:D8:8C:51:FE:FF:6D:EB:FC:DF:84:20` for the former ARM64 test build).
 
-From 5.4.7, both variants show **CashU** on the launcher. To upgrade the installed 5.4.6+419 preview in place, keep `com.cashu.mickey.preview` and sign with the original preview key. Verify the signed APK's fingerprint before distribution. The launcher label does not determine whether Android installs the APK as an update.
+From 5.4.7, each variant shows **CashU** on the launcher. To upgrade the installed 5.4.6+419 preview in place, keep `com.cashu.mickey.preview` and sign with the original preview key. Verify the signed APK's fingerprint before distribution. The launcher label does not determine whether Android installs the APK as an update.
+
+**CashU Android** is registered separately with package `com.cashu.mickey.next` and certificate SHA-1 `DD:6D:B2:EA:C9:E6:57:1B:4F:1A:BE:0C:BB:5B:A4:EF:9C:F2:20:0C`. To build this package, set `CASHU_SIDE_BY_SIDE_BUILD=true`, `CASHEW_TEST_RELEASE=true`, and `CASHU_TEST_KEYSTORE` to its signer. Keep the previous CashU installation and its database in place. To move local records, use **Export Cashew Data File** in the old app and **Import Cashew Data File** in the new one, then reopen the new app and check the restored accounts. Configure permissions and the Gemini key separately on the new installation.
 
 ## Configure Google Cloud
 

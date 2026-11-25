@@ -7,6 +7,7 @@
 ## CashU Android launcher label
 
 - **Phase 09 · CODED.** Build 5.4.7+420 displays **CashU** for both Android package variants. An in-place update from 5.4.6+419 needs `com.cashu.mickey.preview` and its existing signing key. The installed preview's package and data location have not changed. No database migration is needed. Packaging an in-place update is blocked pending access to the original signer.
+- **Phase 07 / 09 · CODED.** The approved separate build uses `com.cashu.mickey.next` and the **CashU** launcher name. Its own signing certificate and package are registered in the existing Google Cloud project. The two earlier APKs can stay installed. Use the existing local backup and restore flow to move the ledger. Drive account selection, backup and restore still need verification on an Android device.
 
 ## CashU review, bank inbox and Gemini
 
