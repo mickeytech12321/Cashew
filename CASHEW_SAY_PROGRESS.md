@@ -6,8 +6,9 @@
 
 ## CashU Android launcher label
 
-- **Phase 09 · CODED.** Build 5.4.7+420 displays **CashU** for both Android package variants. An in-place update from 5.4.6+419 needs `com.cashu.mickey.preview` and its existing signing key. The installed preview's package and data location have not changed. No database migration is needed. Packaging an in-place update is blocked pending access to the original signer.
+- **Phase 09 · CODED.** Build 5.4.7+420 displays **CashU** for each Android package variant. An in-place update from 5.4.6+419 needs `com.cashu.mickey.preview` and its existing signing key. The installed preview's package and data location have not changed. No database migration is needed. Packaging an in-place update is blocked pending access to the original signer.
 - **Phase 07 / 09 · CODED.** The approved separate build uses `com.cashu.mickey.next` and the **CashU** launcher name. Its own signing certificate and package are registered in the existing Google Cloud project. The two earlier APKs can stay installed. Use the existing local backup and restore flow to move the ledger. Drive account selection, backup and restore still need verification on an Android device.
+- **Phase 00 / 09 · TESTED.** Flutter 3.50.1 passed 139 tests. Built the ARM64 5.4.7+420 APK from `77fadfb6`. Verified its package, launcher label, signature, ZIP alignment, SQLite and compiled Google Drive and Gemini configuration. APK SHA-256 is `c05c54eceded81a668f702db92e3284997ab12415834cb5a5cf9610c4b1061af`. Installation and live services were not tested on a physical Android device.
 
 ## CashU review, bank inbox and Gemini
 
