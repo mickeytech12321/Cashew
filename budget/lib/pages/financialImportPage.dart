@@ -1,3 +1,4 @@
+import 'package:budget/struct/bankMessageBatch.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/widgets/openPopup.dart' show RoutesToPopAfterDelete;
 import 'package:budget/struct/bankNotificationInbox.dart';
@@ -110,10 +111,30 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
     setState(() => _occurredAt = timestamp);
   }
 
+  Future<bool> _queueMessage(
+          String raw, ParsedFinancialMessage parsed, DateTime occurredAt) =>
+      database.stageImportedFinancialEvent(
+        eventPk: uuid.v4(),
+        sourceType: 'manual',
+        rawText: raw,
+        occurredAt: occurredAt,
+        amount: parsed.amount,
+        currency: parsed.currency,
+        direction: parsed.direction,
+        merchant: parsed.merchant,
+        identifierLast4: parsed.lastFour,
+        confidence: parsed.confidence,
+      );
+
   Future<void> _stage() => _run(() async {
         final raw = _message.text.trim();
+        if (raw.length > maxBankMessageLength) {
+          _notify(label('Use batch review for multiple messages.',
+              'استخدم مراجعة الدفعة لو عندك أكتر من رسالة.'));
+          return;
+        }
         final parsed = FinancialMessageParser.parse(raw);
-        if (parsed.amount == null || parsed.direction == null) {
+        if (!canStageBankMessage(parsed)) {
           _notify(
             label(
               'Enter a message with one amount, its currency, and a transaction type.',
@@ -122,18 +143,8 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
           );
           return;
         }
-        final queued = await database.stageImportedFinancialEvent(
-          eventPk: uuid.v4(),
-          sourceType: 'manual',
-          rawText: raw,
-          occurredAt: _occurredAt ?? DateTime.now(),
-          amount: parsed.amount,
-          currency: parsed.currency,
-          direction: parsed.direction,
-          merchant: parsed.merchant,
-          identifierLast4: parsed.lastFour,
-          confidence: parsed.confidence,
-        );
+        final queued =
+            await _queueMessage(raw, parsed, _occurredAt ?? DateTime.now());
         if (!mounted) return;
         if (!queued) {
           _notify(label('This message has already been imported.',
@@ -142,6 +153,80 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
         }
         _message.clear();
         setState(() => _occurredAt = null);
+      });
+
+  Future<void> _stageBatch() => _run(() async {
+        final List<BankMessageLine> rows;
+        try {
+          rows = parseBankMessageBatch(_message.text);
+        } on FormatException {
+          _notify(label('Paste between 1 and 25 messages, one per line.',
+              'الصق من رسالة إلى ٢٥ رسالة، كل رسالة في سطر.'));
+          return;
+        }
+        final eligible =
+            rows.where((row) => canStageBankMessage(row.parsed)).toList();
+        final selectedTime = _occurredAt ?? DateTime.now();
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            scrollable: true,
+            title:
+                Text(label('Review batch import', 'مراجعة الاستيراد الجماعي')),
+            content: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(label('All messages use the selected date and time.',
+                  'كل الرسائل هتستخدم التاريخ والوقت المحددين.')),
+              Text(_formatTimestamp(selectedTime)),
+              for (final row in rows)
+                ListTile(
+                  title: Text(label('Line ${row.line}', 'السطر ${row.line}')),
+                  subtitle: Text(eligible.contains(row)
+                      ? _amountLabel({
+                          'direction': row.parsed.direction,
+                          'amount': row.parsed.amount,
+                          'currency': row.parsed.currency,
+                        })
+                      : label(
+                          'Could not read this message. It will be skipped.',
+                          'تعذّرت قراءة الرسالة وسيتم تخطيها.')),
+                ),
+            ]),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(label('Cancel', 'إلغاء'))),
+              FilledButton(
+                onPressed: eligible.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, true),
+                child: Text(label('Queue ${eligible.length} for review',
+                    'إضافة ${eligible.length} للمراجعة')),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
+        var added = 0;
+        await database.transaction(() async {
+          for (final row in eligible) {
+            final queued =
+                await _queueMessage(row.raw, row.parsed, selectedTime);
+            if (queued) added++;
+          }
+        });
+        if (!mounted) return;
+        final skipped = eligible.length - added;
+        _notify(label('$added queued. $skipped already imported.',
+            'تمت إضافة $added للمراجعة. $skipped مستوردة مسبقًا.'));
+        if (eligible.length == rows.length) {
+          _message.clear();
+          setState(() => _occurredAt = null);
+        } else {
+          _message.text = rows
+              .where((row) => !eligible.contains(row))
+              .map((row) => row.raw)
+              .join('\n');
+        }
       });
 
   Future<void> _review(Map<String, dynamic> event) => _run(() async {
@@ -256,7 +341,8 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
         );
         if (approved != true || !mounted) return;
         final transactionPk = uuid.v4();
-        Future<String> save(ImportDuplicateAction action, {String? expectedExistingPk}) =>
+        Future<String> save(ImportDuplicateAction action,
+                {String? expectedExistingPk}) =>
             database.approveImportedFinancialEvent(
               eventPk: event['event_pk'] as String,
               transactionPk: transactionPk,
@@ -279,28 +365,35 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
             builder: (context) => AlertDialog(
               title: Text(label('Possible duplicate', 'معاملة محتمل تكرارها')),
               content: Text([
-                label('A paid transaction with this amount is already recorded around this time.',
+                label(
+                    'A paid transaction with this amount is already recorded around this time.',
                     'توجد معاملة مدفوعة بنفس المبلغ في وقت قريب.'),
                 existing.name,
                 _formatTimestamp(existing.dateCreated),
               ].join('\n')),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(context),
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
                     child: Text(label('Cancel', 'إلغاء'))),
                 TextButton(
-                  onPressed: () => Navigator.pop(context, ImportDuplicateAction.linkExisting),
-                  child: Text(label('Use existing', 'استخدم المعاملة الموجودة')),
+                  onPressed: () => Navigator.pop(
+                      context, ImportDuplicateAction.linkExisting),
+                  child:
+                      Text(label('Use existing', 'استخدم المعاملة الموجودة')),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.pop(context, ImportDuplicateAction.saveSeparate),
+                  onPressed: () => Navigator.pop(
+                      context, ImportDuplicateAction.saveSeparate),
                   child: Text(label('Save separately', 'احفظ كمعاملة منفصلة')),
                 ),
               ],
             ),
           );
           if (choice == null || !mounted) return;
-          result = await save(choice, expectedExistingPk:
-              choice == ImportDuplicateAction.linkExisting ? existing.transactionPk : null);
+          result = await save(choice,
+              expectedExistingPk: choice == ImportDuplicateAction.linkExisting
+                  ? existing.transactionPk
+                  : null);
         }
         if (mounted) {
           _notify(
@@ -389,7 +482,7 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                 controller: _message,
                 minLines: 2,
                 maxLines: 4,
-                maxLength: 2000,
+                maxLength: maxBankBatchLength,
                 decoration: InputDecoration(
                   labelText: label(
                     'Paste a transaction message',
@@ -420,6 +513,11 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
               FilledButton(
                 onPressed: _busy ? null : _stage,
                 child: Text(label('Add for review', 'إضافة للمراجعة')),
+              ),
+              OutlinedButton(
+                onPressed: _busy ? null : _stageBatch,
+                child: Text(label('Review batch (one message per line)',
+                    'مراجعة دفعة (رسالة واحدة في كل سطر)')),
               ),
             ],
           ),
@@ -537,11 +635,14 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                           when text.isNotEmpty)
                         text,
                     ].join('\n')),
-                    onTap: _busy ? null : _status == 'review'
-                        ? () => _review(event)
-                        : event['transaction_fk'] is String
-                            ? () => _openLinkedTransaction(event['transaction_fk'] as String)
-                            : null,
+                    onTap: _busy
+                        ? null
+                        : _status == 'review'
+                            ? () => _review(event)
+                            : event['transaction_fk'] is String
+                                ? () => _openLinkedTransaction(
+                                    event['transaction_fk'] as String)
+                                : null,
                     trailing: switch (_status) {
                       'review' => IconButton(
                           tooltip: label('Ignore message', 'تجاهل الرسالة'),
@@ -566,7 +667,8 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                                         event['event_pk'] as String);
                                   }),
                         ),
-                      _ => event['transaction_fk'] == null ? null
+                      _ => event['transaction_fk'] == null
+                          ? null
                           : const Icon(Icons.chevron_right),
                     },
                   ),
