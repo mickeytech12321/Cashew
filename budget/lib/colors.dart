@@ -43,7 +43,7 @@ AppColors getAppColors(
           : appStateSettings["materialYou"]
               ? darkenPastel(accentColor, amount: 0.8)
               : Color(0xFF242424);
-  return brightness == Brightness.light
+  final legacyColors = brightness == Brightness.light
       ? AppColors(
           colors: {
             "white": Colors.white,
@@ -118,6 +118,16 @@ AppColors getAppColors(
                     : lightDarkAccentHeavyLight,
           },
         );
+  final scheme = themeData.colorScheme;
+  return AppColors(colors: {
+    ...legacyColors.colors,
+    'lightDarkAccent': themeData.scaffoldBackgroundColor,
+    'lightDarkAccentHeavyLight': scheme.surfaceContainerLow,
+    'lightDarkAccentHeavy': scheme.surfaceContainerHighest,
+    'canvasContainer': scheme.surfaceContainer,
+    'standardContainerColor': scheme.surfaceContainerLow,
+    'dividerColor': scheme.outlineVariant,
+  });
 }
 
 // Ensure you specify a shade, otherwise type will be of MaterialColor which can't be compared
@@ -382,35 +392,29 @@ bool isGrayScale(Color color, {int threshold = 10}) {
       (green - blue).abs() <= threshold;
 }
 
+Color cashuCanvas(Brightness brightness, {bool pureBlack = false}) =>
+    brightness == Brightness.light
+        ? const Color(0xfff2f5ef)
+        : pureBlack ? Colors.black : const Color(0xff111816);
+
 ColorScheme getColorScheme(Brightness brightness) {
-  if (isGrayScale(
-    getSettingConstants(appStateSettings)["accentColor"],
-    threshold: 15,
-  )) {
-    return getGrayScaleColorScheme(brightness);
-  }
-  if (brightness == Brightness.light) {
-    return ColorScheme.fromSeed(
-      seedColor: getSettingConstants(appStateSettings)["accentColor"],
-      brightness: Brightness.light,
-      background: appStateSettings["materialYou"]
-          ? lightenPastel(getSettingConstants(appStateSettings)["accentColor"],
-              amount: 0.91)
-          : Colors.white,
-    );
-  } else {
-    return ColorScheme.fromSeed(
-      seedColor: getSettingConstants(appStateSettings)["accentColor"],
-      brightness: Brightness.dark,
-      background: appStateSettings["forceFullDarkBackground"] == true
-          ? Colors.black
-          : appStateSettings["materialYou"]
-              ? darkenPastel(
-                  getSettingConstants(appStateSettings)["accentColor"],
-                  amount: 0.92)
-              : Colors.black,
-    );
-  }
+  final dark = brightness == Brightness.dark;
+  final canvas = cashuCanvas(brightness,
+      pureBlack: appStateSettings['forceFullDarkBackground'] == true);
+  return ColorScheme.fromSeed(
+    seedColor: getSettingConstants(appStateSettings)['accentColor'],
+    brightness: brightness,
+  ).copyWith(
+    surface: canvas,
+    surfaceContainerLowest: canvas,
+    surfaceContainerLow: dark ? const Color(0xff202a26) : const Color(0xfffcfdf9),
+    surfaceContainer: dark ? const Color(0xff263630) : const Color(0xffebf1e9),
+    surfaceContainerHigh: dark ? const Color(0xff2c4438) : const Color(0xffe1efe2),
+    surfaceContainerHighest: dark ? const Color(0xff34463e) : const Color(0xffe0e9df),
+    onSurface: dark ? const Color(0xffeff8f0) : const Color(0xff17271f),
+    onSurfaceVariant: dark ? const Color(0xffb5c9be) : const Color(0xff526559),
+    outlineVariant: dark ? const Color(0xff34463e) : const Color(0xffdbe6dc),
+  );
 }
 
 ColorScheme getGrayScaleColorScheme(Brightness brightness) {
@@ -604,6 +608,8 @@ ThemeData generateThemeDataWithExtension(
   return themeData.copyWith(
     extensions: <ThemeExtension<dynamic>>[colors],
     appBarTheme: AppBarTheme(
+      backgroundColor: themeData.scaffoldBackgroundColor,
+      surfaceTintColor: Colors.transparent,
       systemOverlayStyle: getSystemUiOverlayStyle(colors, brightness),
     ),
   );
@@ -622,6 +628,7 @@ ThemeData getLightTheme() {
     fontFamily: appStateSettings["font"],
     fontFamilyFallback: ['Inter'],
     colorScheme: getColorScheme(brightness),
+    scaffoldBackgroundColor: cashuCanvas(brightness),
     useMaterial3: true,
     applyElevationOverlayColor: false,
     typography: Typography.material2014(),
@@ -656,9 +663,8 @@ ThemeData getDarkTheme() {
     fontFamily: appStateSettings["font"],
     fontFamilyFallback: ['Inter'],
     colorScheme: getColorScheme(brightness),
-    scaffoldBackgroundColor: appStateSettings['forceFullDarkBackground'] == true
-        ? Colors.black
-        : null,
+    scaffoldBackgroundColor: cashuCanvas(brightness,
+        pureBlack: appStateSettings['forceFullDarkBackground'] == true),
     useMaterial3: true,
     typography: Typography.material2014(),
     splashColor: getPlatform() == PlatformOS.isIOS

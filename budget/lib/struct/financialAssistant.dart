@@ -31,7 +31,15 @@ enum FinancialAssistantIntentType {
   transfer,
   queryBalance,
   querySpending,
+  openFeature,
   unknown,
+}
+
+enum FinancialAssistantFeature {
+  accounts, addAccount, cards, certificates, addCertificate, bankMessages,
+  transactions, transfer, transferHistory, budgets, categories, subscriptions,
+  scheduled, goals, loans, reports, planning, wealth, investments, household,
+  backup, settings, appearance, notifications, activity, billSplitter,
 }
 
 class FinancialAssistantIntent {
@@ -42,6 +50,7 @@ class FinancialAssistantIntent {
   final String rawText;
   final bool requiresConfirmation;
   final SpendingPeriod spendingPeriod;
+  final FinancialAssistantFeature? feature;
 
   const FinancialAssistantIntent({
     required this.type,
@@ -51,6 +60,7 @@ class FinancialAssistantIntent {
     this.merchantOrTitle,
     required this.requiresConfirmation,
     this.spendingPeriod = SpendingPeriod.currentMonth,
+    this.feature,
   });
 }
 

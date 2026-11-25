@@ -1,6 +1,8 @@
 package com.cashu.mickey
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -15,6 +17,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var assistantSpeech: AssistantSpeechBridge? = null
     private var notificationMethods: MethodChannel? = null
     private var notificationEvents: EventChannel? = null
+    private var smsPermissionResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -28,23 +31,35 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
         assistantSpeech = AssistantSpeechBridge(this, messenger)
-        assistantKeyMethods = secretChannel(messenger, "assistant_key", "assistant-api-key")
+        assistantKeyMethods = secretChannel(messenger, "gemini_key", "gemini-api-key")
         marketKeyMethods = secretChannel(messenger, "market_key", "market-api-key")
         val retained = BankNotificationRetention(this)
+        val sms = BankNotificationRetention(this, sms = true)
         notificationMethods = MethodChannel(messenger, "cashew/bank_notifications/settings")
         notificationMethods?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "hasAccess" -> result.success(BankNotificationRetention.hasAccess(this))
-                "configureRetention", "acknowledge" -> {
+                "hasSmsAccess" -> result.success(BankNotificationRetention.hasSmsAccess(this))
+                "requestSmsAccess" -> when {
+                    BankNotificationRetention.hasSmsAccess(this) -> result.success(true)
+                    smsPermissionResult != null -> result.success(false)
+                    else -> {
+                        smsPermissionResult = result
+                        requestPermissions(arrayOf(Manifest.permission.RECEIVE_SMS), 8316)
+                    }
+                }
+                "configureRetention", "acknowledge", "configureSms", "acknowledgeSms" -> {
                     try {
-                        if (call.method == "configureRetention") {
-                            val packages = call.argument<List<String>>("packages").orEmpty()
-                                .filter { it != packageName && it.length <= 255 }
+                        val isSms = call.method.endsWith("Sms")
+                        val queue = if (isSms) sms else retained
+                        if (call.method.startsWith("configure")) {
+                            val sources = call.argument<List<String>>("packages").orEmpty()
+                                .filter { if (isSms) BankSmsReceiver.validSender.matches(it)
+                                    else it != packageName && it.length <= 255 }
                                 .take(20).toSet()
-                            val since = call.argument<Number>("since")?.toLong() ?: 0L
-                            retained.configure(packages, since)
-                        } else {
-                            call.arguments?.let { retained.acknowledge(it as String) }
+                            queue.configure(sources, call.argument<Number>("since")?.toLong() ?: 0L)
+                        } else if (call.arguments is String) {
+                            queue.acknowledge(call.arguments as String)
                         }
                         result.success(null)
                     } catch (_: Exception) {
@@ -77,12 +92,19 @@ class MainActivity : FlutterFragmentActivity() {
         notificationEvents = EventChannel(messenger, "cashew/bank_notifications/events")
         notificationEvents?.setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
-                if (!BankNotificationRetention.hasAccess(this@MainActivity)) return
                 val options = arguments as? Map<*, *> ?: return
                 val packages = (options["packages"] as? List<*>)
                     ?.filterIsInstance<String>()?.toSet().orEmpty()
                 val from = (options["since"] as? Number)?.toLong() ?: return
-                BankNotificationListener.startStream(packages, from, events)
+                if (BankNotificationRetention.hasAccess(this@MainActivity) && packages.isNotEmpty()) {
+                    BankNotificationListener.startStream(packages, from, events)
+                }
+                if (options["sms"] == true && BankNotificationRetention.hasSmsAccess(this@MainActivity)) {
+                    BankSmsReceiver.sink = events
+                    runCatching { sms.read() }.getOrNull().orEmpty().forEach { record ->
+                        events.success(record.event() + ("source" to "sms"))
+                    }
+                }
             }
 
             override fun onCancel(arguments: Any?) = clearBankNotificationStream()
@@ -147,10 +169,16 @@ class MainActivity : FlutterFragmentActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         assistantSpeech?.onPermissions(requestCode, grantResults)
+        if (requestCode == 8316) {
+            val result = smsPermissionResult
+            smsPermissionResult = null
+            result?.success(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+        }
     }
 
     private fun clearBankNotificationStream() {
         BankNotificationListener.stopStream()
+        BankSmsReceiver.sink = null
     }
 
 }

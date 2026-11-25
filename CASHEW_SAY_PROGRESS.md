@@ -4,6 +4,14 @@
 > Rule: no APK build and no merge to `main` until explicitly requested.
 > DONE records a completed milestone. TESTED records an implemented path with automated verification. CODED indicates implementation with additional verification pending. PARTIAL and TODO indicate incomplete work.
 
+## CashU review, bank inbox and Gemini
+
+- **Phase 08 · TESTED.** The Material theme, original Cashew surface roles, and CashU cards now use the same canvas, surface and text colors. Light, dark, pure black and custom accent selection remain available.
+- **Phase 02 / 04 · TESTED.** A scheduled certificate posts each eligible payout as paid income in the selected account. Due payouts are checked when an automatic certificate is saved, when the app opens or resumes, and when the calendar day changes while running. The writer avoids duplicate payouts and pauses for review if there is already comparable same-day income. This records a scheduled return locally. A bank makes the actual deposit.
+- **Phase 03 · CODED.** Bank message card lists respect the current account. On Android, new eligible SMS from explicitly selected senders and notifications from explicitly selected apps can be staged for review. Independent SMS and notification permissions and encrypted queues protect pending text. SMS is filtered by exact sender and shares the review and deduplication flow. Foreground and closed-app delivery still require verification on Android. Existing SMS can still be pasted for import.
+- **Phase 06 · TESTED.** Optional Gemini replaces OpenAI for new requests. The app uses a locally supplied key and per-command consent. Tap or swipe the Gemini action to use it. The allowlisted navigation catalog covers existing and new tools. Queries run against the local database and write suggestions open the existing forms for review. The Android Gemini key uses its own Keystore-encrypted file. A live API request still needs the user's key.
+- Flutter 3.50.1 passed 139 tests, covering certificate income in account totals, per-account card links, SMS deduplication, Gemini request validation and the swipe consent flow. The Android Kotlin bridges compiled against the Android SDK and Flutter embedding. No schema migration was required.
+
 ## CashU Android Google Drive preview
 
 - **Phase 07 / 09 · CODED.** The CashU Web OAuth client ID is compiled into Android by default. The Android Preview application ID and signing certificate are registered in the existing Google Cloud project, and the consent screen declares only `drive.appdata` for backups. Google sign-in and the Drive grant are separate actions on Android. New installations start with automatic backup and device sync off. Existing settings are retained.
@@ -135,7 +143,7 @@
 
 - CODED: The offline assistant distinguishes explicit Arabic and English transfer commands from expense descriptions that mention a transfer. Flutter regression cases cover the distinction.
 
-- **Coded.** The optional OpenAI provider sends the displayed command and user-supplied API key after per-request consent. Android protects a saved key with Keystore-backed encrypted no-backup storage. Other platforms hold the key in memory for the screen session. Response validation, failure feedback and draft-only behavior have Flutter tests. Live calls, native key storage and Arabic/English dictation need verification. [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses/create)
+- **Tested.** The optional Gemini provider sends the displayed command after per-request consent. Android protects a saved key with Keystore-backed encrypted no-backup storage. Other platforms hold the key in memory for the screen session. Response validation, allowlisted navigation, consent and draft-only behavior have Flutter tests. Live calls, native key storage and Arabic/English dictation need verification. [Gemini API](https://ai.google.dev/api/generate-content)
 
 ## Phase 07 — Household & Sync
 - PARTIAL: publisher-owned Google Drive API, OAuth consent screen, owner test account, `drive.appdata` scope, and Web client are configured. GitHub Actions has the Web client ID. Android OAuth registration needs the intended signer's certificate SHA-1. Sign-in, backup, restore and two-device sync still require verification on Android.

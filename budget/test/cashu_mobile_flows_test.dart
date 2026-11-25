@@ -16,6 +16,8 @@ import 'package:drift/native.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -358,13 +360,43 @@ void main() {
       (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
     await mount(tester, const FinancialAssistantPage(), [checking]);
-    expect(find.text('AI settings'), findsNothing);
+    expect(find.text('Swipe to use Gemini'), findsOneWidget);
     await tester.tap(find.text('Current balances'));
     await tester.pumpAndSettle();
     expect(find.text('Result'), findsOneWidget);
     expect(find.text('Checking'), findsOneWidget);
     expect(await database.getAllTransactionsFromWallet(checking.walletPk),
         isEmpty);
+    await disposeFixture(tester);
+  });
+
+  testWidgets(
+      'swiping the Gemini action opens consent without sending the command',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const channel = MethodChannel('cashew/gemini_key');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+        channel, (call) async => 'fixture-gemini-key');
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await mount(tester, const FinancialAssistantPage(), []);
+    final input = find.byType(TextField);
+    await tester.ensureVisible(input);
+    await tester.enterText(input, 'Open bank certificates');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+    final swipe = find.text('Swipe to use Gemini');
+    await tester.ensureVisible(swipe);
+    await tester.pumpAndSettle();
+    await tester.drag(swipe, const Offset(105, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Send this text to Gemini?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Gemini suggestion'), findsNothing);
     await disposeFixture(tester);
   });
 

@@ -2,9 +2,11 @@ import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/addWalletPage.dart';
+import 'package:budget/pages/financialAssistantDestinations.dart';
+import 'package:budget/functions.dart' show pushRoute;
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialAssistant.dart';
-import 'package:budget/struct/openAiFinancialAssistant.dart';
+import 'package:budget/struct/geminiFinancialAssistant.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'package:flutter/material.dart';
@@ -32,7 +34,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
   bool _requestingAi = false;
   bool _aiSuggested = false;
   String? _sessionKey;
-  static const _apiKey = MethodChannel('cashew/assistant_key');
+  static const _apiKey = MethodChannel('cashew/gemini_key');
 
   bool get _canStoreApiKey =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -61,7 +63,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
       context: context,
       builder: (context) => AlertDialog(
         title:
-            Text(_label('Optional OpenAI assistant', 'مساعد OpenAI الاختياري')),
+            Text(_label('Optional Gemini assistant', 'مساعد Gemini الاختياري')),
         scrollable: true,
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           Text(_canStoreApiKey
@@ -79,7 +81,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
             textDirection: TextDirection.ltr,
             onChanged: (value) => replacement = value.trim(),
             decoration: InputDecoration(
-              labelText: _label('OpenAI API key', 'مفتاح OpenAI API'),
+              labelText: _label('Gemini API key', 'مفتاح Gemini API'),
               helperText: hasKey
                   ? _label('A key is configured.', 'تم إعداد مفتاح.')
                   : null,
@@ -148,12 +150,12 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
         context: context,
         builder: (context) => AlertDialog(
           title: Text(_label(
-              'Send this text to OpenAI?', 'إرسال هذا النص إلى OpenAI؟')),
+              'Send this text to Gemini?', 'إرسال هذا النص إلى Gemini؟')),
           scrollable: true,
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             Text(_label(
-              'OpenAI receives the text below and your API key. Usage may incur API charges.',
-              'تستقبل OpenAI النص أدناه ومفتاح API. قد تُحتسب رسوم لاستخدام الخدمة.',
+              'Gemini receives the text below and your API key. Usage may incur API charges.',
+              'تستقبل خدمة Gemini النص أدناه ومفتاح API. قد تُحتسب رسوم لاستخدام الخدمة.',
             )),
             const SizedBox(height: 12),
             SelectableText(command),
@@ -172,7 +174,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
       );
       if (accepted != true || !mounted || _input.text.trim() != command) return;
       client = http.Client();
-      final suggestion = await OpenAiFinancialAssistant(client, key)
+      final suggestion = await GeminiFinancialAssistant(client, key)
           .interpret(command)
           .timeout(const Duration(seconds: 30));
       if (mounted && _input.text.trim() == command) {
@@ -180,8 +182,8 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
       }
     } catch (_) {
       _assistantMessage(
-          'OpenAI could not interpret this request. You can continue offline.',
-          'تعذّر تفسير الطلب باستخدام OpenAI. يمكنك المتابعة دون اتصال.');
+          'Gemini could not interpret this request. You can continue offline.',
+          'تعذّر تفسير الطلب باستخدام Gemini. يمكنك المتابعة دون اتصال.');
     } finally {
       client?.close();
       if (mounted) setState(() => _requestingAi = false);
@@ -340,7 +342,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
     final colors = CashuColors(context);
     final busy = _listening || _requestingAi;
     return PageFramework(
-      title: _label('Offline assistant', 'المساعد دون اتصال'),
+      title: _label('CashU assistant', 'مساعد CashU'),
       backgroundColor: colors.canvas,
       horizontalPaddingConstrained: true,
       capitalizeTitle: false,
@@ -402,7 +404,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
               if (_requestingAi) const LinearProgressIndicator(),
               if (intent != null) ...[
                 CashuSectionTitle(_aiSuggested
-                    ? _label('OpenAI suggestion', 'اقتراح OpenAI')
+                    ? _label('Gemini suggestion', 'اقتراح Gemini')
                     : _label('Result', 'النتيجة')),
                 CashuPanel(
                   child: _accountTotals != null
@@ -459,20 +461,22 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
                     ]),
               ),
               const SizedBox(height: 12),
-              CashuOptionSection(
-                icon: Icons.cloud_outlined,
-                title: _label(
-                    'Online assistant options', 'خيارات المساعد أونلاين'),
-                children: [
-                  CashuActionRow(
-                      icon: Icons.auto_awesome_outlined,
-                      title: _label('Use OpenAI', 'استخدام OpenAI'),
-                      onTap: busy ? null : _interpretOnline),
+              CashuPanel(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(children: [
+                  CashuSwipeTarget(
+                    onSwipe: busy ? null : _interpretOnline,
+                    child: CashuActionRow(
+                        icon: Icons.swipe_outlined,
+                        title: _label(
+                            'Swipe to use Gemini', 'اسحب لاستخدام Gemini'),
+                        onTap: busy ? null : _interpretOnline),
+                  ),
                   CashuActionRow(
                       icon: Icons.key_outlined,
                       title: _label('AI settings', 'إعدادات الذكاء الاصطناعي'),
                       onTap: _requestingAi ? null : _editAiSettings),
-                ],
+                ]),
               ),
             ],
           ),
@@ -482,6 +486,14 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
   }
 
   Widget _draft(FinancialAssistantIntent intent) {
+    if (intent.feature case final feature?) {
+      final destination = assistantDestination(feature);
+      return FilledButton.icon(
+        onPressed: () => pushRoute(context, destination.page),
+        icon: const Icon(Icons.arrow_forward),
+        label: Text(_label(destination.en, destination.ar)),
+      );
+    }
     final income = intent.type == FinancialAssistantIntentType.addIncome;
     final transfer = intent.type == FinancialAssistantIntentType.transfer;
     final amount = intent.amount;

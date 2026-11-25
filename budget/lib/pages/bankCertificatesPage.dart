@@ -276,6 +276,7 @@ class _CertificateFormState extends State<_CertificateForm> {
         intervalMonths: _months,
         autoFromDay: _automatic ? today : null,
       ));
+      if (_automatic && mounted) await postDueBankCertificatePayouts(context);
       if (mounted) Navigator.pop(context, true);
     } catch (_) {
       if (mounted)
@@ -558,8 +559,8 @@ class _CertificateFormState extends State<_CertificateForm> {
                             true,
                             Icons.event_repeat_outlined,
                             label('Record on schedule', 'سجّل حسب المواعيد'),
-                            label('CashU posts due payouts when the app opens.',
-                                'CashU بيسجّل الدفعات المستحقة وقت فتح التطبيق.')
+                            label('CashU adds due payouts to the selected account when it opens or resumes. Review each payout to confirm the bank actually paid it.',
+                                'CashU بيسجّل الدفعات المستحقة كدخل في الحساب اللي اخترته عند الفتح أو الرجوع للتطبيق. راجع البنك عشان تتأكد إن العائد نزل فعلًا.')
                           ),
                         ])
                           Padding(

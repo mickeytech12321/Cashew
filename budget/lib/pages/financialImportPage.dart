@@ -256,10 +256,12 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
         }
         final lastFour = event['identifier_last4'] as String?;
         final currency = event['currency'] as String?;
+        final source = event['source_type'];
         final suggestedWallet =
-            lastFour == null && event['source_type'] == 'notification'
+            lastFour == null && (source == 'notification' || source == 'sms')
                 ? await database.suggestImportedNotificationWallet(
-                    event['source_sender'] as String?, currency)
+                    event['source_sender'] as String?, currency,
+                    sms: source == 'sms')
                 : await database.suggestImportedCardWallet(lastFour, currency);
         if (!mounted) return;
         String? walletPk =
@@ -560,6 +562,28 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                                     const _BankNotificationSettings(),
                               ),
                     ),
+                    CashuActionRow(
+                      icon: Icons.sms_outlined,
+                      title: label('Android SMS import', 'استيراد رسائل SMS'),
+                      onTap: _busy
+                          ? null
+                          : () => showDialog<void>(
+                                context: context,
+                                builder: (_) => const _BankSmsSettings(),
+                              ),
+                    ),
+                    CashuActionRow(
+                      icon: Icons.link_outlined,
+                      title: label('Link SMS senders to accounts',
+                          'ربط مُرسلي SMS بالحسابات'),
+                      onTap: _busy
+                          ? null
+                          : () => showDialog<void>(
+                                context: context,
+                                builder: (_) =>
+                                    const _ImportNotificationLinks(sms: true),
+                              ),
+                    ),
                   ],
                 ],
               ),
@@ -603,6 +627,9 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                           value: 'notification',
                           child: Text(label(
                               'Android notifications', 'إشعارات أندرويد'))),
+                      DropdownMenuItem(
+                          value: 'sms',
+                          child: Text(label('Android SMS', 'رسائل SMS'))),
                     ],
                     onChanged: _busy
                         ? null
@@ -675,6 +702,8 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                           event['occurred_at'] as int)),
                       if (event['source_type'] == 'notification')
                         '${label('Android notification', 'إشعار أندرويد')} · ${event['source_sender']}'
+                      else if (event['source_type'] == 'sms')
+                        '${label('Bank SMS', 'رسالة بنكية')} · ${event['source_sender']}'
                       else if (event['raw_text'] case final String text
                           when text.isNotEmpty)
                         text,
@@ -762,7 +791,7 @@ class _ImportCardLinksState extends State<ImportCardLinks> {
         (accounts) =>
             accounts.where((account) => account.currency.isNotEmpty).toList(),
       );
-  late var _links = database.getImportCardLinks();
+  late var _links = database.getImportCardLinks(walletPk: _wallet);
   late String? _wallet = widget.initialWalletPk;
   String? _error;
   bool _busy = false;
@@ -791,7 +820,7 @@ class _ImportCardLinksState extends State<ImportCardLinks> {
     });
     try {
       if (removeId != null) {
-        await database.removeImportCardLink(removeId);
+        await database.removeImportCardLink(removeId, walletPk: _wallet);
       } else if (!await database.addImportCardLink(_wallet!, digits)) {
         if (mounted)
           setState(() => _error = _label(
@@ -802,7 +831,9 @@ class _ImportCardLinksState extends State<ImportCardLinks> {
       } else if (mounted) {
         _digits.clear();
       }
-      if (mounted) setState(() => _links = database.getImportCardLinks());
+      if (mounted) {
+        setState(() => _links = database.getImportCardLinks(walletPk: _wallet));
+      }
     } catch (_) {
       if (mounted)
         setState(() => _error = _label(
@@ -833,6 +864,13 @@ class _ImportCardLinksState extends State<ImportCardLinks> {
                       'Could not load accounts.', 'تعذّر تحميل الحسابات.'));
                 }
                 if (!snapshot.hasData) return const LinearProgressIndicator();
+                if (widget.initialWalletPk != null) {
+                  final account = snapshot.data!
+                      .where((account) => account.id == widget.initialWalletPk)
+                      .firstOrNull;
+                  return Text(account?.name ??
+                      _label('Account unavailable', 'الحساب غير متاح'));
+                }
                 return DropdownButton<String>(
                   isExpanded: true,
                   hint: Text(_label('Account', 'الحساب')),
@@ -847,8 +885,15 @@ class _ImportCardLinksState extends State<ImportCardLinks> {
                               '${account.name} · ${account.currency.toUpperCase()}',
                               overflow: TextOverflow.ellipsis)),
                   ],
-                  onChanged:
-                      _busy ? null : (value) => setState(() => _wallet = value),
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() {
+                            _wallet = value;
+                            _error = null;
+                            _digits.clear();
+                            _links =
+                                database.getImportCardLinks(walletPk: value);
+                          }),
                 );
               },
             ),
@@ -874,6 +919,10 @@ class _ImportCardLinksState extends State<ImportCardLinks> {
                       'تعذّر تحميل ربط البطاقات.'));
                 }
                 if (!snapshot.hasData) return const LinearProgressIndicator();
+                if (snapshot.data!.isEmpty) {
+                  return Text(
+                      _label('No linked cards.', 'مفيش بطاقات مرتبطة.'));
+                }
                 return Column(children: [
                   for (final link in snapshot.data!)
                     ListTile(
@@ -903,7 +952,9 @@ class _ImportCardLinksState extends State<ImportCardLinks> {
 }
 
 class _ImportNotificationLinks extends StatefulWidget {
-  const _ImportNotificationLinks();
+  const _ImportNotificationLinks({this.sms = false});
+
+  final bool sms;
 
   @override
   State<_ImportNotificationLinks> createState() =>
@@ -912,8 +963,10 @@ class _ImportNotificationLinks extends StatefulWidget {
 
 class _ImportNotificationLinksState extends State<_ImportNotificationLinks> {
   late final _accounts = database.getFinancialInsightsAccounts();
-  late var _links = database.getImportNotificationLinks();
-  final _packages = bankNotificationInbox.packages;
+  late var _links = database.getImportNotificationLinks(sms: widget.sms);
+  late final _packages = widget.sms
+      ? bankNotificationInbox.smsSenders
+      : bankNotificationInbox.packages;
   String? _package;
   String? _account;
   String? _message;
@@ -930,14 +983,16 @@ class _ImportNotificationLinksState extends State<_ImportNotificationLinks> {
     });
     try {
       if (remove != null) {
-        await database.removeImportNotificationLink(remove);
-      } else if (!await database.addImportNotificationLink(
-          _account!, _package!)) {
+        await database.removeImportNotificationLink(remove, sms: widget.sms);
+      } else if (!await database.addImportNotificationLink(_account!, _package!,
+          sms: widget.sms)) {
         if (mounted)
-          _message = _label('This app already has a link for this currency.',
-              'هذا التطبيق مرتبط بالفعل بحساب بهذه العملة.');
+          _message = _label(
+              'This source already has an account for this currency.',
+              'المصدر ده مرتبط بحساب بنفس العملة بالفعل.');
       }
-      if (mounted) _links = database.getImportNotificationLinks();
+      if (mounted)
+        _links = database.getImportNotificationLinks(sms: widget.sms);
     } catch (_) {
       if (mounted)
         _message = _label('Could not update links.', 'تعذّر تحديث الربط.');
@@ -949,16 +1004,22 @@ class _ImportNotificationLinksState extends State<_ImportNotificationLinks> {
   @override
   Widget build(BuildContext context) => AlertDialog(
         scrollable: true,
-        title: Text(
-            _label('Notification account links', 'ربط الإشعارات بالحسابات')),
+        title: Text(widget.sms
+            ? _label('SMS account links', 'ربط الرسائل بالحسابات')
+            : _label('Notification account links', 'ربط الإشعارات بالحسابات')),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           if (_packages.isEmpty)
-            Text(_label('Choose apps in Android notification import first.',
-                'اختر التطبيقات من إعدادات استيراد إشعارات أندرويد أولًا.'))
+            Text(widget.sms
+                ? _label('Add a sender in Android SMS import first.',
+                    'أضف مُرسلًا في إعدادات استيراد SMS الأول.')
+                : _label('Choose apps in Android notification import first.',
+                    'اختر التطبيقات من إعدادات استيراد إشعارات أندرويد أولًا.'))
           else
             DropdownButton<String>(
               isExpanded: true,
-              hint: Text(_label('Notification app', 'تطبيق الإشعارات')),
+              hint: Text(widget.sms
+                  ? _label('Bank sender', 'مُرسل الرسالة')
+                  : _label('Notification app', 'تطبيق الإشعارات')),
               value: _package,
               items: [
                 for (final name in _packages)
@@ -1001,7 +1062,9 @@ class _ImportNotificationLinksState extends State<_ImportNotificationLinks> {
             onPressed: _busy || _account == null || _package == null
                 ? null
                 : () => _change(),
-            child: Text(_label('Link app', 'ربط التطبيق')),
+            child: Text(widget.sms
+                ? _label('Link sender', 'ربط المُرسل')
+                : _label('Link app', 'ربط التطبيق')),
           ),
           FutureBuilder(
             future: _links,
@@ -1047,7 +1110,8 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
   late final _packages =
       TextEditingController(text: bankNotificationInbox.packages.join('\n'));
   late bool _enabled = bankNotificationInbox.enabled;
-  late bool _background = bankNotificationInbox.backgroundEnabled;
+  late bool _background =
+      !bankNotificationInbox.enabled || bankNotificationInbox.backgroundEnabled;
   bool _busy = false;
   String? _error;
 
@@ -1152,8 +1216,8 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(_label(
-              'Matching notifications from selected apps appear for review. Cashew can also read recent alerts that are still visible when you reopen it.',
-              'تظهر الإشعارات المطابقة من التطبيقات المحددة للمراجعة. يمكن لـ Cashew أيضًا قراءة التنبيهات الحديثة التي ما زالت ظاهرة عند فتحه مجددًا.',
+              'Matching notifications from selected apps appear for review. CashU can also read recent alerts that are still visible when you reopen it.',
+              'الإشعارات المطابقة من التطبيقات اللي تختارها بتظهر للمراجعة. CashU يقدر يقرأ التنبيهات الحديثة اللي لسه ظاهرة عند فتحه.',
             )),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -1166,8 +1230,8 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
             if (_enabled)
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text(_label('Capture while Cashew is closed',
-                    'الالتقاط أثناء إغلاق Cashew')),
+                title: Text(_label('Capture while CashU is closed',
+                    'الالتقاط أثناء إغلاق CashU')),
                 subtitle: Text(_label(
                   'Android can retain up to 100 matching alerts in encrypted storage for up to 24 hours. The pending text is cleared after review staging or when capture is disabled.',
                   'يمكن لأندرويد الاحتفاظ بما يصل إلى ١٠٠ تنبيه مطابق مشفّرًا ولمدة تصل إلى ٢٤ ساعة. يُحذف النص بعد إرساله للمراجعة أو تعطيل الالتقاط.',
@@ -1213,6 +1277,98 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
           FilledButton(
               onPressed: _busy ? null : _save,
               child: Text(_label('Save', 'حفظ'))),
+        ],
+      );
+}
+
+class _BankSmsSettings extends StatefulWidget {
+  const _BankSmsSettings();
+
+  @override
+  State<_BankSmsSettings> createState() => _BankSmsSettingsState();
+}
+
+class _BankSmsSettingsState extends State<_BankSmsSettings> {
+  final _senders =
+      TextEditingController(text: bankNotificationInbox.smsSenders.join('\n'));
+  bool _busy = false;
+  String? _error;
+
+  String _label(String en, String ar) =>
+      FinancialImportPage.label(context, en, ar);
+
+  Future<void> _save({bool disable = false}) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final senders = disable
+          ? <String>[]
+          : BankNotificationInbox.parseSmsSenders(_senders.text);
+      if (!disable && senders.isEmpty) throw const FormatException();
+      final granted = await bankNotificationInbox.configureSms(senders);
+      if (!mounted) return;
+      if (granted) {
+        Navigator.pop(context);
+      } else {
+        setState(() => _error = _label(
+            'Allow SMS access in Android to continue.',
+            'اسمح باستقبال رسائل SMS من أندرويد علشان تكمل.'));
+      }
+    } on FormatException {
+      if (mounted)
+        setState(() => _error = _label(
+            'Enter up to 20 sender names or numbers.',
+            'اكتب أسماء أو أرقام ما يصل إلى ٢٠ مُرسل.'));
+    } catch (_) {
+      if (mounted)
+        setState(() => _error = _label(
+            'Could not update SMS capture.', 'تعذّر تحديث استقبال رسائل SMS.'));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _senders.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(_label('Android SMS import', 'استيراد رسائل SMS')),
+        scrollable: true,
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(_label(
+              'New matching messages from your selected senders are queued locally for review, even while CashU is closed. The encrypted queue keeps up to 100 messages for up to 24 hours.',
+              'الرسائل الجديدة المطابقة من المُرسلين اللي تختارهم بتتجمع للمراجعة على الجهاز حتى وCashU مقفول. القائمة المشفّرة بتحتفظ بحد أقصى ١٠٠ رسالة لمدة تصل إلى ٢٤ ساعة.')),
+          const SizedBox(height: 12),
+          TextField(
+              controller: _senders,
+              enabled: !_busy,
+              minLines: 2,
+              maxLines: 5,
+              autocorrect: false,
+              textDirection: TextDirection.ltr,
+              decoration: InputDecoration(
+                  labelText: _label('Bank sender name or number, one per line',
+                      'اسم أو رقم مُرسل البنك، واحد في كل سطر'))),
+          if (_error != null) Text(_error!),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: _busy ? null : () => Navigator.pop(context),
+              child: Text(_label('Cancel', 'إلغاء'))),
+          if (bankNotificationInbox.smsSenders.isNotEmpty)
+            TextButton(
+                onPressed: _busy ? null : () => _save(disable: true),
+                child: Text(_label('Disable', 'إيقاف'))),
+          FilledButton(
+              onPressed: _busy ? null : () => _save(),
+              child:
+                  Text(_label('Enable SMS import', 'تفعيل استيراد الرسائل'))),
         ],
       );
 }

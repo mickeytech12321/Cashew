@@ -4727,11 +4727,14 @@ class FinanceDatabase extends _$FinanceDatabase {
     );
   }
 
-  Future<List<({String id, String account, String digits})>> getImportCardLinks() async {
+  Future<List<({String id, String account, String digits})>> getImportCardLinks({String? walletPk}) async {
     final rows = await customSelect(
       'SELECT i.identifier_pk, w.name, i.identifier_value '
       'FROM account_identifiers i JOIN wallets w ON w.wallet_pk = i.wallet_fk '
-      "WHERE i.identifier_type = 'card_last4' ORDER BY w.name, i.identifier_value",
+      "WHERE i.identifier_type = 'card_last4' "
+      '${walletPk == null ? '' : 'AND i.wallet_fk = ? '}'
+      'ORDER BY w.name, i.identifier_value',
+      variables: [if (walletPk != null) Variable<String>(walletPk)],
     ).get();
     return rows.map((row) => (
       id: row.read<String>('identifier_pk'),
@@ -4762,9 +4765,10 @@ class FinanceDatabase extends _$FinanceDatabase {
     });
   }
 
-  Future<void> removeImportCardLink(String id) => customStatement(
-    "DELETE FROM account_identifiers WHERE identifier_pk = ? AND identifier_type = 'card_last4'",
-    [id],
+  Future<void> removeImportCardLink(String id, {String? walletPk}) => customStatement(
+    "DELETE FROM account_identifiers WHERE identifier_pk = ? AND identifier_type = 'card_last4' "
+    '${walletPk == null ? '' : 'AND wallet_fk = ?'}',
+    [id, if (walletPk != null) walletPk],
   );
 
   Future<String?> resolveWalletByIdentifier(
@@ -4802,11 +4806,16 @@ class FinanceDatabase extends _$FinanceDatabase {
     return matches.length == 1 ? matches.single.read<String>('wallet_pk') : null;
   }
 
-  Future<bool> addImportNotificationLink(String walletPk, String package) =>
+  Future<bool> addImportNotificationLink(String walletPk, String package,
+      {bool sms = false}) =>
       transaction(() async {
-    if (!RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$')
-            .hasMatch(package) || package.length > 255) {
-      throw ArgumentError('Invalid notification package');
+    final source = sms ? 'sms' : 'notification';
+    final sourceId = sms ? package.trim().toLowerCase() : package;
+    if (sms
+        ? !RegExp(r'^[a-z0-9+_. -]{1,32}$').hasMatch(sourceId)
+        : !RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$')
+                .hasMatch(sourceId) || sourceId.length > 255) {
+      throw ArgumentError('Invalid message source');
     }
     final wallet = await getWalletInstanceOrNull(walletPk);
     final currency = wallet?.currency?.trim().toLowerCase();
@@ -4820,18 +4829,19 @@ class FinanceDatabase extends _$FinanceDatabase {
       "VALUES (?, ?, 'sender', ?) "
       'ON CONFLICT(identifier_type, identifier_value) DO NOTHING',
       variables: [Variable<String>(uuid.v4()), Variable<String>(walletPk),
-        Variable<String>('notification:$package:$currency')],
+        Variable<String>('$source:$sourceId:$currency')],
     );
     return changed == 1;
   });
 
   Future<List<({String id, String account, String package, String currency})>>
-      getImportNotificationLinks() async {
+      getImportNotificationLinks({bool sms = false}) async {
     final rows = await customSelect(
       'SELECT i.identifier_pk, i.identifier_value, w.name '
       'FROM account_identifiers i JOIN wallets w ON w.wallet_pk = i.wallet_fk '
-      "WHERE i.identifier_type = 'sender' AND i.identifier_value LIKE 'notification:%' "
+      "WHERE i.identifier_type = 'sender' AND i.identifier_value LIKE ? "
       'ORDER BY w.name, i.identifier_value',
+      variables: [Variable<String>(sms ? 'sms:%' : 'notification:%')],
     ).get();
     return [
       for (final row in rows)
@@ -4841,14 +4851,14 @@ class FinanceDatabase extends _$FinanceDatabase {
     ];
   }
 
-  Future<void> removeImportNotificationLink(String id) => customStatement(
+  Future<void> removeImportNotificationLink(String id, {bool sms = false}) => customStatement(
     "DELETE FROM account_identifiers WHERE identifier_pk = ? "
-    "AND identifier_type = 'sender' AND identifier_value LIKE 'notification:%'",
-    [id],
+    "AND identifier_type = 'sender' AND identifier_value LIKE ?",
+    [id, sms ? 'sms:%' : 'notification:%'],
   );
 
   Future<String?> suggestImportedNotificationWallet(
-      String? package, String? currency) async {
+      String? package, String? currency, {bool sms = false}) async {
     final code = currency?.trim().toLowerCase();
     if (package == null || code == null || code.isEmpty) return null;
     final row = await customSelect(
@@ -4857,7 +4867,8 @@ class FinanceDatabase extends _$FinanceDatabase {
       'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
       "WHERE i.identifier_type = 'sender' AND i.identifier_value = ? "
       'AND LOWER(TRIM(w.currency)) = ? AND COALESCE(d.archived, 0) = 0',
-      variables: [Variable<String>('notification:$package:$code'), Variable<String>(code)],
+      variables: [Variable<String>(sms ? 'sms:${package.trim().toLowerCase()}:$code'
+          : 'notification:$package:$code'), Variable<String>(code)],
     ).getSingleOrNull();
     return row?.read<String>('wallet_pk');
   }
@@ -4898,7 +4909,11 @@ class FinanceDatabase extends _$FinanceDatabase {
     required String direction,
     required String? lastFour,
     required double confidence,
+    String sourceType = 'notification',
   }) async {
+    if (sourceType != 'notification' && sourceType != 'sms') {
+      throw ArgumentError.value(sourceType, 'sourceType');
+    }
     const maxAge = Duration(days: 1);
     const updateWindow = Duration(minutes: 2);
     if (occurredAt.isBefore(receivedAt.subtract(maxAge)) ||
@@ -4906,15 +4921,16 @@ class FinanceDatabase extends _$FinanceDatabase {
     final time = occurredAt.millisecondsSinceEpoch;
     final signed = deliverySignature != null &&
         RegExp(r'^[a-f0-9]{64}$').hasMatch(deliverySignature);
+    final replayWindow = sourceType == 'sms' ? maxAge : updateWindow;
     final identity = financialImportFingerprint(
-      sourceType: 'notification-delivery', sender: '$package:$notificationId',
+      sourceType: '$sourceType-delivery', sender: '$package:$notificationId',
       rawText: jsonEncode([if (signed) deliverySignature, amount, currency, direction, lastFour]),
       occurredAt: DateTime.fromMillisecondsSinceEpoch(0),
     );
     // Older builds deduplicated solely by source and timestamp. Suppress
     // replays of their matching parsed events without conflating new alerts.
     final legacy = financialImportFingerprint(
-      sourceType: 'notification', sender: package, rawText: package, occurredAt: occurredAt,
+      sourceType: sourceType, sender: package, rawText: package, occurredAt: occurredAt,
     );
     return transaction(() async {
       await customStatement(
@@ -4926,8 +4942,8 @@ class FinanceDatabase extends _$FinanceDatabase {
         'WHERE identity = ? AND posted_at BETWEEN ? AND ? LIMIT 1',
         variables: [
           Variable<String>(identity),
-          Variable<int>(time - updateWindow.inMilliseconds),
-          Variable<int>(time + updateWindow.inMilliseconds),
+          Variable<int>(time - replayWindow.inMilliseconds),
+          Variable<int>(time + replayWindow.inMilliseconds),
         ],
       ).getSingleOrNull();
       if (prior != null) return false;
@@ -4938,7 +4954,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           Variable<String>(currency), Variable<String>(direction), Variable<String>(lastFour)],
       ).getSingleOrNull();
       final added = oldEvent == null && await stageImportedFinancialEvent(
-        eventPk: eventPk, sourceType: 'notification', sourceSender: package,
+        eventPk: eventPk, sourceType: sourceType, sourceSender: package,
         rawText: package, fingerprintInput: identity, occurredAt: occurredAt, amount: amount,
         currency: currency, direction: direction, identifierLast4: lastFour, confidence: confidence,
       );
@@ -5010,7 +5026,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }) async {
     if (!{'review', 'approved', 'ignored', 'duplicate'}.contains(status) ||
         (direction != null && !{'debit', 'credit'}.contains(direction)) ||
-        (sourceType != null && !{'manual', 'notification'}.contains(sourceType)) ||
+        (sourceType != null && !{'manual', 'notification', 'sms'}.contains(sourceType)) ||
         limit < 1 || limit > 500 || offset < 0) {
       throw ArgumentError('Invalid import query');
     }

@@ -1,8 +1,13 @@
 package com.cashu.mickey
 
 import android.app.NotificationManager
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
@@ -75,12 +80,15 @@ internal data class BankNotificationRecord(
 }
 
 // Activity and listener calls are serialized on Android's main thread.
-internal class BankNotificationRetention(private val context: Context) {
-    private val settings = context.getSharedPreferences("bank_notification_retention", Context.MODE_PRIVATE)
-    private val storage = LocalEncryptedFile(context, "bank-notification-queue")
+internal class BankNotificationRetention(private val context: Context, private val sms: Boolean = false) {
+    private val settings = context.getSharedPreferences(
+        if (sms) "bank_sms_retention" else "bank_notification_retention", Context.MODE_PRIVATE,
+    )
+    private val storage = LocalEncryptedFile(context, if (sms) "bank-sms-queue" else "bank-notification-queue")
+    private fun permitted() = if (sms) hasSmsAccess(context) else hasAccess(context)
 
     fun configure(packages: Set<String>, since: Long) {
-        if (!hasAccess(context)) {
+        if (!permitted()) {
             revoke()
             return
         }
@@ -96,6 +104,7 @@ internal class BankNotificationRetention(private val context: Context) {
     fun revoke() {
         check(settings.edit().clear().commit())
         storage.clear()
+        if (sms) scheduleSmsExpiry(null)
     }
 
     fun identify(event: BankNotificationRecord): BankNotificationRecord {
@@ -136,7 +145,7 @@ internal class BankNotificationRetention(private val context: Context) {
     }
 
     fun read(): List<BankNotificationRecord> {
-        if (!hasAccess(context)) {
+        if (!permitted()) {
             revoke()
             return emptyList()
         }
@@ -170,11 +179,23 @@ internal class BankNotificationRetention(private val context: Context) {
             rows.forEach { json.put(JSONObject(it.event())) }
             storage.write(json.toString())
         }
+        if (sms) scheduleSmsExpiry(rows.firstOrNull()?.postedAt?.plus(DAY))
+    }
+
+    private fun scheduleSmsExpiry(time: Long?) {
+        val alarm = context.getSystemService(AlarmManager::class.java) ?: return
+        val intent = PendingIntent.getBroadcast(context, 8317,
+            Intent(context, BankSmsExpiryReceiver::class.java), PendingIntent.FLAG_IMMUTABLE)
+        if (time == null) alarm.cancel(intent)
+        else alarm.setAndAllowWhileIdle(AlarmManager.RTC, time + 1000, intent)
     }
 
     companion object {
         private const val DAY = 86_400_000L
         private const val MAX_RECORDS = 100
+
+        fun hasSmsAccess(context: Context): Boolean =
+            context.checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
 
         fun hasAccess(context: Context): Boolean {
             val component = ComponentName(context, BankNotificationListener::class.java)

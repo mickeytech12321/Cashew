@@ -247,11 +247,15 @@ class _CashuWalletDashboardState extends State<CashuWalletDashboard> {
                             Icons.insights_rounded,
                             label('Wealth', 'الثروة'),
                             () => pushRoute(context, const WealthAssetsPage())),
-                        _OverviewAction(
-                            Icons.auto_awesome_outlined,
-                            label('Assistant', 'المساعد'),
-                            () => pushRoute(
-                                context, const FinancialAssistantPage())),
+                        CashuSwipeTarget(
+                          onSwipe: () => pushRoute(
+                              context, const FinancialAssistantPage()),
+                          child: _OverviewAction(
+                              Icons.auto_awesome_outlined,
+                              label('Assistant', 'المساعد'),
+                              () => pushRoute(
+                                  context, const FinancialAssistantPage())),
+                        ),
                       ]),
                     ]);
               },

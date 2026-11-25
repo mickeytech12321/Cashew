@@ -5,22 +5,50 @@ String cashuLabel(BuildContext context, String en, String ar) =>
     Localizations.localeOf(context).languageCode == 'ar' ? ar : en;
 
 class CashuColors {
-  CashuColors(BuildContext context)
-      : dark = Theme.of(context).brightness == Brightness.dark,
-        black = Theme.of(context).scaffoldBackgroundColor == Colors.black;
+  CashuColors(BuildContext context) : _theme = Theme.of(context);
 
-  final bool dark;
-  final bool black;
+  final ThemeData _theme;
+  ColorScheme get _scheme => _theme.colorScheme;
+  bool get dark => _theme.brightness == Brightness.dark;
+  bool get black => _theme.scaffoldBackgroundColor == Colors.black;
 
-  Color get canvas => dark
-      ? (black ? Colors.black : const Color(0xff111816))
-      : const Color(0xfff2f5ef);
-  Color get panel => dark ? const Color(0xff202a26) : const Color(0xfffcfdf9);
-  Color get border => dark ? const Color(0xff34463e) : const Color(0xffdbe6dc);
-  Color get ink => dark ? const Color(0xffeff8f0) : const Color(0xff17271f);
-  Color get muted => dark ? const Color(0xffb5c9be) : const Color(0xff526559);
-  Color get accent => dark ? const Color(0xffb4edb8) : const Color(0xff276047);
-  Color get tint => dark ? const Color(0xff2c4438) : const Color(0xffe1efe2);
+  Color get canvas => _theme.scaffoldBackgroundColor;
+  Color get panel => _scheme.surfaceContainerLow;
+  Color get border => _scheme.outlineVariant;
+  Color get ink => _scheme.onSurface;
+  Color get muted => _scheme.onSurfaceVariant;
+  Color get accent => _scheme.primary;
+  Color get tint => _scheme.surfaceContainerHigh;
+}
+
+class CashuSwipeTarget extends StatefulWidget {
+  const CashuSwipeTarget(
+      {super.key, required this.onSwipe, required this.child});
+
+  final VoidCallback? onSwipe;
+  final Widget child;
+
+  @override
+  State<CashuSwipeTarget> createState() => _CashuSwipeTargetState();
+}
+
+class _CashuSwipeTargetState extends State<CashuSwipeTarget> {
+  double _distance = 0;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onHorizontalDragStart:
+            widget.onSwipe == null ? null : (_) => _distance = 0,
+        onHorizontalDragUpdate: widget.onSwipe == null
+            ? null
+            : (event) => _distance += event.primaryDelta ?? 0,
+        onHorizontalDragEnd: widget.onSwipe == null
+            ? null
+            : (event) {
+                if (_distance.abs() >= 36) widget.onSwipe?.call();
+              },
+        child: widget.child,
+      );
 }
 
 class CashuPanel extends StatelessWidget {

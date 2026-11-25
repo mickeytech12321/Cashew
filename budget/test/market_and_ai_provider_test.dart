@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:budget/struct/financialAssistant.dart';
 import 'package:budget/struct/investmentMarketPrices.dart';
-import 'package:budget/struct/openAiFinancialAssistant.dart';
+import 'package:budget/struct/geminiFinancialAssistant.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -53,29 +53,40 @@ void main() {
   });
 
   String response(Map<String, dynamic> suggestion) => jsonEncode({
-        'status': 'completed',
-        'output': [
+        'candidates': [
           {
-            'type': 'message',
-            'role': 'assistant',
-            'content': [
-              {'type': 'output_text', 'text': jsonEncode(suggestion)}
-            ],
+            'finishReason': 'STOP',
+            'content': {
+              'role': 'model',
+              'parts': [
+                {'text': jsonEncode(suggestion)}
+              ]
+            },
           },
         ],
       });
 
   test(
-      'OpenAI sends one explicit command and returns a confirmation-required draft',
+      'Gemini sends one explicit command and returns a confirmation-required draft',
       () async {
     final client = MockClient((request) async {
-      expect(request.url.toString(), 'https://api.openai.com/v1/responses');
+      expect(
+          request.url.toString(),
+          'https://generativelanguage.googleapis.com/'
+          'v1beta/models/${GeminiFinancialAssistant.model}:generateContent');
       expect(request.method, 'POST');
       expect(request.followRedirects, isFalse);
-      expect(request.headers['authorization'], 'Bearer fixture-key');
+      expect(request.headers['x-goog-api-key'], 'fixture-key');
       final sent = jsonDecode(request.body);
-      expect(sent['store'], isFalse);
-      expect(sent['input'], 'دفعت ٢٥ جنيه');
+      expect(sent['contents'], [
+        {
+          'role': 'user',
+          'parts': [
+            {'text': 'دفعت ٢٥ جنيه'}
+          ]
+        }
+      ]);
+      expect(sent['generationConfig']['responseMimeType'], 'application/json');
       expect(sent.containsKey('tools'), isFalse);
       return http.Response(
           response({
@@ -88,7 +99,7 @@ void main() {
           headers: {'content-type': 'application/json; charset=utf-8'});
     });
     addTearDown(client.close);
-    final draft = await OpenAiFinancialAssistant(client, 'fixture-key')
+    final draft = await GeminiFinancialAssistant(client, 'fixture-key')
         .interpret('دفعت ٢٥ جنيه');
     expect(draft.type, FinancialAssistantIntentType.addExpense);
     expect(draft.amount, 25);
@@ -97,12 +108,28 @@ void main() {
     expect(draft.requiresConfirmation, isTrue);
   });
 
-  test('OpenAI rejects malformed, incomplete and unsupported suggestions',
+  test('Gemini can suggest the existing bank certificate form', () async {
+    final client = MockClient((_) async => http.Response(
+        response({
+          'type': 'openFeature',
+          'feature': 'addCertificate',
+          'amount': 1,
+        }),
+        200));
+    addTearDown(client.close);
+    final intent = await GeminiFinancialAssistant(client, 'fixture-key')
+        .interpret('عايز أضيف شهادة');
+    expect(intent.feature, FinancialAssistantFeature.addCertificate);
+    expect(intent.amount, isNull);
+  });
+
+  test('Gemini rejects malformed, incomplete and unsupported suggestions',
       () async {
     for (final (body, status) in [
       ('{}', 429),
-      ('{"status":"incomplete","output":[]}', 200),
+      ('{"candidates":[{"finishReason":"MAX_TOKENS"}]}', 200),
       (response({'type': 'eraseAccount'}), 200),
+      (response({'type': 'openFeature', 'feature': 'factoryReset'}), 200),
       (
         response(
             {'type': 'addIncome', 'amount': 10, 'currency': 'not currency'}),
@@ -114,7 +141,7 @@ void main() {
       final client = MockClient((_) async => http.Response(body, status));
       addTearDown(client.close);
       await expectLater(
-        OpenAiFinancialAssistant(client, 'fixture-key').interpret('A command'),
+        GeminiFinancialAssistant(client, 'fixture-key').interpret('A command'),
         throwsFormatException,
       );
     }

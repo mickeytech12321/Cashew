@@ -14,7 +14,8 @@ class BankNotification {
       this.content,
       this.postedAt,
       this.receipt,
-      this.signature});
+      this.signature,
+      this.isSms = false});
 
   final String? id;
   final String? packageName;
@@ -23,6 +24,7 @@ class BankNotification {
   final DateTime? postedAt;
   final String? receipt;
   final String? signature;
+  final bool isSms;
 }
 
 const _access = MethodChannel('cashew/bank_notifications/settings');
@@ -31,6 +33,7 @@ const _packagesKey = 'bankNotificationAllowedPackages';
 const _captureSinceKey = 'bankNotificationCaptureSince';
 const _enabledKey = 'bankNotificationImportEnabled';
 const _backgroundKey = 'bankNotificationBackgroundEnabled';
+const _smsSendersKey = 'bankSmsSenders';
 final bankNotificationInbox = BankNotificationInbox();
 
 class BankNotificationInbox {
@@ -47,6 +50,24 @@ class BankNotificationInbox {
       sharedPreferences.getBool(_backgroundKey) ?? false;
   List<String> get packages =>
       sharedPreferences.getStringList(_packagesKey) ?? const [];
+  List<String> get smsSenders =>
+      sharedPreferences.getStringList(_smsSendersKey) ?? const [];
+
+  static List<String> parseSmsSenders(String input) {
+    final senders = input
+        .split(RegExp(r'[\n,]+'))
+        .map((value) => value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (senders.length > 20 ||
+        senders.any(
+            (value) => !RegExp(r'^[a-z0-9+_. -]{1,32}$').hasMatch(value))) {
+      throw const FormatException('Invalid SMS sender list');
+    }
+    return senders;
+  }
 
   static List<String> parsePackages(String input) {
     final values = input
@@ -84,6 +105,28 @@ class BankNotificationInbox {
   Future<void> openAccessSettings() =>
       _access.invokeMethod<void>('openAccessSettings');
 
+  Future<bool> configureSms(List<String> senders) async {
+    final validated = parseSmsSenders(senders.join('\n'));
+    if (validated.isNotEmpty &&
+        await _access.invokeMethod<bool>('requestSmsAccess') != true) {
+      return false;
+    }
+    final since = listEquals(smsSenders, validated)
+        ? sharedPreferences.getInt('bankSmsCaptureSince') ??
+            DateTime.now().millisecondsSinceEpoch
+        : DateTime.now().millisecondsSinceEpoch;
+    await _access.invokeMethod<void>('configureSms', {
+      'packages': validated,
+      'since': since,
+    });
+    if (!await sharedPreferences.setStringList(_smsSendersKey, validated) ||
+        !await sharedPreferences.setInt('bankSmsCaptureSince', since)) {
+      throw StateError('Could not save SMS settings');
+    }
+    await refresh(throwOnError: true);
+    return true;
+  }
+
   Future<void> configure(
       {required bool enabled,
       required List<String> packages,
@@ -117,6 +160,9 @@ class BankNotificationInbox {
     final allowed = enabled ? packages.toSet() : <String>{};
     try {
       final permitted = await hasAccess();
+      final smsAllowed = smsSenders.toSet();
+      final smsPermitted = smsAllowed.isNotEmpty &&
+          (await _access.invokeMethod<bool>('hasSmsAccess') ?? false);
       if (configuration != _configuration) return;
       final now = DateTime.now();
       final cutoff =
@@ -132,13 +178,18 @@ class BankNotificationInbox {
             permitted && backgroundEnabled ? allowed.toList() : <String>[],
         'since': permitted && backgroundEnabled ? since ?? 0 : 0,
       });
-      if (!permitted ||
-          allowed.isEmpty ||
-          since == null ||
+      if (!smsPermitted && smsAllowed.isNotEmpty) {
+        await _access
+            .invokeMethod<void>('configureSms', {'packages': <String>[]});
+      }
+      final notificationAllowed =
+          permitted && since != null ? allowed : <String>{};
+      if ((notificationAllowed.isEmpty && !smsPermitted) ||
           configuration != _configuration) return;
       _subscription = _events.receiveBroadcastStream({
-        'packages': allowed.toList(),
-        'since': since < cutoff ? cutoff : since,
+        'packages': notificationAllowed.toList(),
+        'since': since == null || since < cutoff ? cutoff : since,
+        'sms': smsPermitted,
       }).listen(
         (data) {
           if (data is! Map) return;
@@ -150,12 +201,13 @@ class BankNotificationInbox {
             content: data['content'] as String?,
             receipt: data['receipt'] as String?,
             signature: data['signature'] as String?,
+            isSms: data['source'] == 'sms',
             postedAt: timestamp is int && timestamp > 0
                 ? DateTime.fromMillisecondsSinceEpoch(timestamp)
                 : null,
           );
-          _deliveries =
-              _deliveries.then((_) => _receive(event, allowed, configuration));
+          _deliveries = _deliveries.then((_) => _receive(event,
+              event.isSms ? smsAllowed : notificationAllowed, configuration));
         },
         onError: (Object _) {},
       );
@@ -177,7 +229,8 @@ class BankNotificationInbox {
         revision.value++;
       }
       if (event.receipt != null && configuration == _configuration) {
-        await _access.invokeMethod<void>('acknowledge', event.receipt);
+        await _access.invokeMethod<void>(
+            event.isSms ? 'acknowledgeSms' : 'acknowledge', event.receipt);
       }
     } catch (_) {
       // Notification content must never be included in diagnostics.
@@ -220,6 +273,7 @@ class BankNotificationInbox {
       direction: direction,
       lastFour: parsed.lastFour,
       confidence: parsed.confidence,
+      sourceType: event.isSms ? 'sms' : 'notification',
     );
   }
 }

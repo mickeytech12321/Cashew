@@ -231,6 +231,35 @@ void main() {
     expect(await capture('receipt', 'a', now), isFalse);
   });
 
+  test('allowed bank SMS are staged privately and deduplicated after replay',
+      () async {
+    final db = await finance();
+    final inbox = BankNotificationInbox();
+    const sender = 'my bank';
+    Future<bool> stage(DateTime date, Set<String> allow) =>
+        inbox.stageNotification(
+          db,
+          BankNotification(
+              id: 'bank:123456',
+              packageName: sender,
+              signature: 'a' * 64,
+              content: 'Purchase EGP 100 at Private Shop card ending 1234',
+              postedAt: date,
+              isSms: true),
+          allow,
+          date,
+        );
+    expect(await stage(now, {'other'}), isFalse);
+    expect(await stage(now, {sender}), isTrue);
+    expect(await stage(now.add(const Duration(hours: 2)), {sender}), isFalse);
+    final event =
+        (await db.getImportedFinancialEvents(sourceType: 'sms')).single;
+    expect(event['source_sender'], sender);
+    expect(event['raw_text'], sender);
+    expect(event['amount'], 100);
+    expect(await db.select(db.transactions).get(), isEmpty);
+  });
+
   test(
       'legacy notification replay is deduplicated without suppressing a distinct amount',
       () async {

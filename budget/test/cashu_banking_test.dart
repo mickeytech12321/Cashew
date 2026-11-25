@@ -81,23 +81,24 @@ void main() {
     await db.setAccountExcludedFromNetWorth('foreign', true);
     final spending = _payment(amount: -200).copyWith(dateCreated: dbDate);
     await db.batch((batch) => batch.insertAll(db.transactions, [
-      spending,
-      spending.copyWith(
-          transactionPk: 'old',
-          amount: -50,
-          dateCreated: DateTime(2026, 10, 21)),
-      spending.copyWith(
-          transactionPk: 'principal', categoryFk: '0', amount: 1000),
-      spending.copyWith(
-          transactionPk: 'future',
-          amount: -70,
-          dateCreated: DateTime(2026, 11, 30)),
-      spending.copyWith(transactionPk: 'unpaid', amount: -80, paid: false),
-      spending.copyWith(
-          transactionPk: 'hidden-spend', amount: -10, skipPaid: true),
-      spending.copyWith(transactionPk: 'archived', walletFk: _secondWallet),
-      spending.copyWith(transactionPk: 'usd', walletFk: 'foreign', amount: -5),
-    ]));
+          spending,
+          spending.copyWith(
+              transactionPk: 'old',
+              amount: -50,
+              dateCreated: DateTime(2026, 10, 21)),
+          spending.copyWith(
+              transactionPk: 'principal', categoryFk: '0', amount: 1000),
+          spending.copyWith(
+              transactionPk: 'future',
+              amount: -70,
+              dateCreated: DateTime(2026, 11, 30)),
+          spending.copyWith(transactionPk: 'unpaid', amount: -80, paid: false),
+          spending.copyWith(
+              transactionPk: 'hidden-spend', amount: -10, skipPaid: true),
+          spending.copyWith(transactionPk: 'archived', walletFk: _secondWallet),
+          spending.copyWith(
+              transactionPk: 'usd', walletFk: 'foreign', amount: -5),
+        ]));
     final current = await db.watchCashuOverviewAccounts(dbDate, dbDate).first;
     expect(
         current.map((row) => (
@@ -258,6 +259,28 @@ void main() {
         (true, 150, DateTime(2027, 1, 31)));
     expect((march.income, march.amount, march.dateCreated, march.name),
         (true, 150, DateTime(2027, 3, 31), 'عائد شهادة · Savings certificate'));
+    expect(march.paid, isTrue);
+    final balances = await db.getAssistantAccountTotals(
+        monthlySpending: false, asOf: DateTime(2027, 4, 2));
+    expect({for (final account in balances) account['name']: account['total']},
+        {_wallet: 150, _secondWallet: 150, 'foreign': 0});
+  });
+
+  test('card links can be listed and removed only for the selected account',
+      () async {
+    expect(await db.addImportCardLink(_wallet, '1234'), isTrue);
+    expect(await db.addImportCardLink(_secondWallet, '5678'), isTrue);
+
+    final checking = (await db.getImportCardLinks(walletPk: _wallet)).single;
+    final savings =
+        (await db.getImportCardLinks(walletPk: _secondWallet)).single;
+    expect(checking.digits, '1234');
+    expect(savings.digits, '5678');
+    await db.removeImportCardLink(savings.id, walletPk: _wallet);
+    expect(await db.suggestImportedCardWallet('5678', 'egp'), _secondWallet);
+    await db.removeImportCardLink(savings.id, walletPk: _secondWallet);
+    expect(await db.getImportCardLinks(walletPk: _secondWallet), isEmpty);
+    expect(await db.suggestImportedCardWallet('1234', 'egp'), _wallet);
   });
 
   test(
