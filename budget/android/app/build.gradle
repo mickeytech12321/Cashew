@@ -28,6 +28,12 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+def testRelease = System.getenv('CASHEW_TEST_RELEASE') == 'true'
+def isolatedPreview = System.getenv('CASHEW_ISOLATED_PREVIEW') == 'true'
+if (isolatedPreview && !testRelease) {
+    throw new GradleException('CASHEW_ISOLATED_PREVIEW requires CASHEW_TEST_RELEASE')
+}
+
 android {
     namespace "com.mickey.cashew"
     compileSdkVersion 36
@@ -39,11 +45,12 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId "com.mickey.cashew"
-        minSdkVersion 23
+        minSdkVersion flutter.minSdkVersion
         targetSdkVersion 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+        manifestPlaceholders = [cashewLabel: "Cashew"]
     }
 
     lintOptions {
@@ -73,7 +80,11 @@ android {
         release {
             minifyEnabled false
             shrinkResources false
-            signingConfig (System.getenv('CASHEW_TEST_RELEASE') == 'true' ? signingConfigs.debug : signingConfigs.release)
+            signingConfig (testRelease ? signingConfigs.debug : signingConfigs.release)
+            if (isolatedPreview) {
+                applicationIdSuffix ".preview"
+                manifestPlaceholders.cashewLabel = "Cashew Preview"
+            }
         }
     }
 }

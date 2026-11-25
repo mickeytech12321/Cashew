@@ -16,11 +16,17 @@ File rejectedNativeRestoreFile(File live) =>
 File _applying(File live) => File('${live.path}.restore-applying');
 File _applied(File live) => File('${live.path}.restore-applied');
 File _checkpoint(File live) => File('${live.path}.restore-checkpoint');
+Directory _restoreWork(File live) => Directory('${live.path}.restore-work');
+
+Future<Directory> _temporaryRestoreDirectory(File live) async {
+  final work = await _restoreWork(live).create(recursive: true);
+  return work.createTemp();
+}
 
 /// Validate and migrate an isolated candidate before publishing it for startup.
 Future<void> stageNativeRestore(File live, Uint8List bytes) async {
   validateCashewBackupHeader(bytes);
-  final temporary = await live.parent.createTemp('cashew-restore-');
+  final temporary = await _temporaryRestoreDirectory(live);
   try {
     final candidate = await File(p.join(temporary.path, 'candidate.sqlite'))
         .writeAsBytes(bytes, flush: true);
@@ -68,7 +74,7 @@ Future<void> _copyDatabase(sqlite.Database source, File targetFile) async {
 Future<void> _saveCheckpoint(File live) async {
   if (await _checkpoint(live).exists() || !await live.exists()) return;
   // A checkpoint must include committed WAL data, even after a forced exit.
-  final temporary = await live.parent.createTemp('cashew-checkpoint-');
+  final temporary = await _temporaryRestoreDirectory(live);
   try {
     final target = File(p.join(temporary.path, 'checkpoint.sqlite'));
     final source =
@@ -159,4 +165,11 @@ Future<void> discardPendingNativeRestore(File live) async {
   ]) {
     if (await file.exists()) await file.delete();
   }
+  final work = _restoreWork(live);
+  if (await work.exists()) await work.delete(recursive: true);
+}
+
+Future<void> deletePreviousNativeRestore(File live) async {
+  final previous = previousNativeRestoreFile(live);
+  if (await previous.exists()) await previous.delete();
 }

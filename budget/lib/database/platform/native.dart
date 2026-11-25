@@ -114,6 +114,10 @@ Future<void> stagePreviousDatabaseRestore() async {
   await stageNativeRestore(live, await previousNativeRestoreFile(live).readAsBytes());
 }
 
+Future<void> deletePreviousDatabaseRestore() async {
+  await deletePreviousNativeRestore(await _defaultDatabaseFile());
+}
+
 Future<void> dismissRejectedDatabaseRestore() async {
   final rejected = rejectedNativeRestoreFile(await _defaultDatabaseFile());
   if (await rejected.exists()) await rejected.delete();

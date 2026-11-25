@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="root" path="app_flutter/db.sqlite.restore" />
+    <exclude domain="root" path="app_flutter/db.sqlite.restore-applying" />
+    <exclude domain="root" path="app_flutter/db.sqlite.restore-applied" />
+    <exclude domain="root" path="app_flutter/db.sqlite.restore-checkpoint" />
+    <exclude domain="root" path="app_flutter/db.sqlite.restore-rejected" />
+    <exclude domain="root" path="app_flutter/db.sqlite.before-restore" />
+    <exclude domain="root" path="app_flutter/db.sqlite.restore-work" />
+</full-backup-content>

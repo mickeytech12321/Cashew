@@ -13,7 +13,7 @@ Android OAuth registration is pending the certificate SHA-1 for the intended tes
 1. Create or select a project in [Google Cloud Console](https://console.cloud.google.com/).
 2. Enable [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com) in that project.
 3. In [Google Auth Platform](https://console.cloud.google.com/auth/overview), configure Branding and Audience. For external testing, add the Google accounts that will test the app. Under Data Access, add `https://www.googleapis.com/auth/drive.appdata`.
-4. Under Clients, create **Android** OAuth credentials for package `com.mickey.cashew`. Register the SHA‑1 of each certificate that signs an APK you plan to install.
+4. Under Clients, create **Android** OAuth credentials for the installed package. The standard package is `com.mickey.cashew` and the isolated preview package is `com.mickey.cashew.preview`. Register the SHA‑1 of the certificate that signs that APK.
 5. In the same project, create a **Web application** OAuth client. Copy only its client ID ending in `.apps.googleusercontent.com`. The Android plugin uses this ID as its server client ID. The native Android client ID and Web client secret are unused by the build.
 
 For a local debug signer on Windows PowerShell:
@@ -39,6 +39,20 @@ Set the GitHub Actions repository **variable** `CASHEW_GOOGLE_WEB_CLIENT_ID` to 
 ```
 
 Run this only as part of an Android build you intend to create. GitHub-hosted debug keys can differ from a local debug key. OAuth will work only for the SHA‑1 of the APK actually installed. For repeatable testing, consistently use a registered signer. Keep signing keys, passwords, OAuth client secrets, service account keys, and access tokens out of repository variables, commits and chat.
+
+## Build an isolated Android preview
+
+Use Flutter 3.50.1 and Android SDK 36. This optimized test build uses the local Android test key and installs under `com.mickey.cashew.preview` with its own app data. It can be installed alongside the standard app.
+
+```bash
+cd budget
+flutter pub get
+python3 ../scripts/prepare_flutter_compat.py android
+CASHEW_TEST_RELEASE=true CASHEW_ISOLATED_PREVIEW=true \
+  flutter build apk --release --no-pub --no-tree-shake-icons
+```
+
+The APK is at `budget/build/app/outputs/flutter-apk/app-release.apk` from the repository root. For Web compilation, apply `python3 ../scripts/prepare_flutter_compat.py web` after package resolution to use the pinned Drift and sqlite3 versions with the newer Dart toolchain.
 
 ## Verify a configured build
 

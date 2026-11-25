@@ -193,6 +193,11 @@ void main() {
     final recovered = FinanceDatabase(NativeDatabase(liveFile));
     addTearDown(recovered.close);
     expect((await recovered.getWalletInstance('wallet')).name, 'Keep until restart');
+    expect(await previous.exists(), isTrue);
+    await deletePreviousNativeRestore(liveFile);
+    await deletePreviousNativeRestore(liveFile);
+    expect(await previous.exists(), isFalse);
+    expect((await recovered.getWalletInstance('wallet')).name, 'Keep until restart');
   });
 
   test('a broken staged backup is reported and startup keeps the live ledger',

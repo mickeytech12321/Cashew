@@ -157,6 +157,25 @@ class _ImportDBState extends State<ImportDB> {
     if (mounted) setState(() => _recovery = databaseRestoreStatus());
   }
 
+  Future<void> _deletePrevious() async {
+    final confirmed = await openPopup(
+      context,
+      title: _label('Delete recovery copy?', 'حذف نسخة الاستعادة؟'),
+      description: _label(
+        'This removes the local copy saved before the last restore. Your current transactions stay available.',
+        'سيتم حذف النسخة المحلية المحفوظة قبل آخر استعادة. يمكنك متابعة استخدام معاملاتك الحالية.',
+      ),
+      icon: Icons.delete_outline,
+      onCancel: () => popRoute(context, false),
+      onCancelLabel: 'cancel'.tr(),
+      onSubmit: () => popRoute(context, true),
+      onSubmitLabel: 'delete'.tr(),
+    );
+    if (confirmed != true || !mounted) return;
+    await openLoadingPopupTryCatch(deletePreviousDatabaseRestore);
+    if (mounted) setState(() => _recovery = databaseRestoreStatus());
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -189,10 +208,15 @@ class _ImportDBState extends State<ImportDB> {
                   ),
                 ),
               if (snapshot.data?.previous == true)
-                SettingsContainer(
+                ListTile(
                   onTap: _restorePrevious,
-                  title: _previousTitle,
-                  icon: Icons.settings_backup_restore,
+                  leading: const Icon(Icons.settings_backup_restore),
+                  title: Text(_previousTitle),
+                  trailing: IconButton(
+                    tooltip: _label('Delete recovery copy', 'حذف نسخة الاستعادة'),
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: _deletePrevious,
+                  ),
                 ),
             ],
           ),

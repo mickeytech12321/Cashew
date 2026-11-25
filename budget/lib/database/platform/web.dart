@@ -215,3 +215,5 @@ Future<void> stagePreviousDatabaseRestore() async =>
     throw UnsupportedError('Local recovery copies are unavailable on web.');
 
 Future<void> dismissRejectedDatabaseRestore() async {}
+
+Future<void> deletePreviousDatabaseRestore() async {}
