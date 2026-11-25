@@ -1,5 +1,4 @@
 import 'package:auto_size_text/auto_size_text.dart';
-import 'package:budget/colors.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
@@ -26,6 +25,7 @@ class SlidingSelectorIncomeExpense extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     BorderRadius borderRadius = getPlatform() == PlatformOS.isIOS
         ? BorderRadius.circular(10)
         : BorderRadius.circular(15);
@@ -54,9 +54,7 @@ class SlidingSelectorIncomeExpense extends StatelessWidget {
               height: alternateTheme ? 40 : 45,
               child: Material(
                 borderRadius: borderRadius,
-                color: appStateSettings["materialYou"]
-                    ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-                    : getColor(context, "lightDarkAccentHeavyLight"),
+                color: colors.surfaceContainerLow,
                 child: TabBar(
                   splashFactory: getPlatform() == PlatformOS.isIOS
                       ? NoSplash.splashFactory
@@ -69,13 +67,11 @@ class SlidingSelectorIncomeExpense extends StatelessWidget {
                   indicatorColor: Colors.transparent,
                   indicatorSize: TabBarIndicatorSize.tab,
                   indicator: BoxDecoration(
-                    color: appStateSettings["materialYou"]
-                        ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
-                        : getColor(context, "black").withOpacity(0.15),
+                    color: colors.secondaryContainer,
                     borderRadius: borderRadius,
                   ),
-                  labelColor: getColor(context, "black"),
-                  unselectedLabelColor: getColor(context, "textLight"),
+                  labelColor: colors.onSecondaryContainer,
+                  unselectedLabelColor: colors.onSurfaceVariant,
                   tabs: options == null
                       ? [
                           Tab(

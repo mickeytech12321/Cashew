@@ -5,7 +5,6 @@ import 'package:budget/widgets/tappable.dart';
 import 'package:budget/widgets/textWidgets.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
-import 'package:budget/colors.dart';
 
 class ViewAllTransactionsButton extends StatelessWidget {
   const ViewAllTransactionsButton({this.onPress, super.key});
@@ -49,13 +48,11 @@ class LowKeyButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsetsDirectional.symmetric(horizontal: 10),
       child: Tappable(
-        color: color ??
-            (appStateSettings["materialYou"]
-                ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-                : getColor(context, "lightDarkAccent")),
+        color: color ?? colors.surfaceContainerLow,
         child: Padding(
           padding: const EdgeInsetsDirectional.symmetric(
               horizontal: 15, vertical: 8),
@@ -68,8 +65,7 @@ class LowKeyButton extends StatelessWidget {
                   text: text,
                   textAlign: TextAlign.center,
                   fontSize: 14,
-                  textColor:
-                      textColor ?? getColor(context, "black").withOpacity(0.5),
+                  textColor: textColor ?? colors.onSurfaceVariant,
                   maxLines: 5,
                 ),
               ),
