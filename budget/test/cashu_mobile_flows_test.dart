@@ -2,6 +2,7 @@ import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/pages/cashuAddAssetPage.dart';
+import 'package:budget/pages/financialAssistantPage.dart';
 import 'package:budget/pages/homePage/cashuWalletDashboard.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/widgets/openPopup.dart' show RoutesToPopAfterDelete;
@@ -74,13 +75,17 @@ void main() {
     return database.getWalletInstance(id);
   }
 
-  testWidgets('editing just the account type saves the correct wallet', (tester) async {
+  testWidgets('editing just the account type saves the correct wallet',
+      (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
     final other = await wallet('other', 'Other account', 1);
-    await database.saveAccountDetails(walletPk: other.walletPk, accountType: 'cash');
+    await database.saveAccountDetails(
+        walletPk: other.walletPk, accountType: 'cash');
     await mount(
       tester,
-      AddWalletPage(wallet: checking, routesToPopAfterDelete: RoutesToPopAfterDelete.PreventDelete),
+      AddWalletPage(
+          wallet: checking,
+          routesToPopAfterDelete: RoutesToPopAfterDelete.PreventDelete),
       [checking, other],
     );
 
@@ -92,17 +97,23 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('save-changes').last);
     await tester.pump(const Duration(milliseconds: 400));
-    expect((await database.getAccountDetails(checking.walletPk))?['account_type'], 'bank');
-    expect((await database.getAccountDetails(other.walletPk))?['account_type'], 'cash');
+    expect(
+        (await database.getAccountDetails(checking.walletPk))?['account_type'],
+        'bank');
+    expect((await database.getAccountDetails(other.walletPk))?['account_type'],
+        'cash');
     await disposeFixture(tester);
   });
 
-  testWidgets('More opens InstaPay with a missing saved wallet and saves both legs and fee',
+  testWidgets(
+      'More opens InstaPay with a missing saved wallet and saves both legs and fee',
       (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
     final other = await wallet('other', 'Other account', 1);
     await mount(
-        tester, const Scaffold(body: SingleChildScrollView(child: MorePages())), [checking, other]);
+        tester,
+        const Scaffold(body: SingleChildScrollView(child: MorePages())),
+        [checking, other]);
     await tester.tap(find.text('transfer-balance'));
     await tester.pumpAndSettle();
 
@@ -124,39 +135,54 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
 
     final entries = await database.select(database.transactions).get();
-    expect(entries.map((row) => (row.walletFk, row.amount)),
-        unorderedEquals([('checking', -100.0), ('other', 100.0), ('checking', -.50)]));
+    expect(
+        entries.map((row) => (row.walletFk, row.amount)),
+        unorderedEquals(
+            [('checking', -100.0), ('other', 100.0), ('checking', -.50)]));
     await disposeFixture(tester);
   });
 
-  testWidgets('a paid expense previews and saves the total including the InstaPay fee', (tester) async {
+  testWidgets(
+      'a paid expense previews and saves the total including the InstaPay fee',
+      (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
     await database.into(database.categories).insert(CategoriesCompanion.insert(
-      categoryPk: const Value('shopping'), name: 'Shopping', order: 0,
-    ));
-    await mount(tester, AddTransactionPage(
-      initialInstaPay: true,
-      selectedWallet: checking,
-      selectedAmount: 1000,
-      selectedTitle: 'Payment',
-      selectedCategory: await database.getCategoryInstance('shopping'),
-      selectedIncome: false,
-      routesToPopAfterDelete: RoutesToPopAfterDelete.None,
-      startInitialAddTransactionSequence: false,
-    ), [checking]);
+          categoryPk: const Value('shopping'),
+          name: 'Shopping',
+          order: 0,
+        ));
+    await mount(
+        tester,
+        AddTransactionPage(
+          initialInstaPay: true,
+          selectedWallet: checking,
+          selectedAmount: 1000,
+          selectedTitle: 'Payment',
+          selectedCategory: await database.getCategoryInstance('shopping'),
+          selectedIncome: false,
+          routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+          startInitialAddTransactionSequence: false,
+        ),
+        [checking]);
 
     expect(find.textContaining('Total debit'), findsOneWidget);
     await tester.tap(find.text('add-transaction').last);
     await tester.pumpAndSettle();
-    final payments = await database.getAllTransactionsFromWallet(checking.walletPk);
+    final payments =
+        await database.getAllTransactionsFromWallet(checking.walletPk);
     expect(payments.single.amount, -1001);
-    expect((await database.getInstaPayExpense(payments.single.transactionPk))?.principal, 1000);
+    expect(
+        (await database.getInstaPayExpense(payments.single.transactionPk))
+            ?.principal,
+        1000);
     await disposeFixture(tester);
   });
 
-  testWidgets('banking tools link card messages to an account at mobile width', (tester) async {
+  testWidgets('banking tools link card messages to an account at mobile width',
+      (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
-    await mount(tester,
+    await mount(
+        tester,
         const Scaffold(body: SingleChildScrollView(child: MorePages())),
         [checking]);
     await tester.tap(find.text('Financial tools'));
@@ -175,9 +201,14 @@ void main() {
     await disposeFixture(tester);
   });
 
-  testWidgets('dashboard opens certificates, and dark mode is accessible from its toolbar', (tester) async {
+  testWidgets(
+      'dashboard opens certificates, and dark mode is accessible from its toolbar',
+      (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
-    await mount(tester, Scaffold(body: CashuWalletDashboard(today: DateTime(2026, 11, 25))), [checking]);
+    await mount(
+        tester,
+        Scaffold(body: CashuWalletDashboard(today: DateTime(2026, 11, 25))),
+        [checking]);
     expect(find.text('My wallet'), findsOneWidget);
     expect(find.text('All EGP accounts'), findsOneWidget);
     await tester.tap(find.byTooltip('Appearance'));
@@ -191,7 +222,9 @@ void main() {
     await disposeFixture(tester);
   });
 
-  testWidgets('add-to-CashU opens a certificate directly and previews monthly interest', (tester) async {
+  testWidgets(
+      'add-to-CashU opens a certificate directly and previews monthly interest',
+      (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
     await mount(tester, const CashuAddAssetPage(), [checking]);
     await tester.tap(find.text('Bank certificate'));
@@ -199,7 +232,8 @@ void main() {
     final principal = find.widgetWithText(TextFormField, 'Principal');
     await tester.ensureVisible(principal);
     await tester.enterText(principal, '100000');
-    final mode = find.widgetWithText(SwitchListTile, 'Calculate from annual rate');
+    final mode =
+        find.widgetWithText(SwitchListTile, 'Calculate from annual rate');
     await tester.ensureVisible(mode);
     await tester.tap(mode);
     await tester.pumpAndSettle();
@@ -211,11 +245,14 @@ void main() {
     await disposeFixture(tester);
   });
 
-  testWidgets('the Arabic certificate list opens the creation form in RTL', (tester) async {
+  testWidgets('the Arabic certificate list opens the creation form in RTL',
+      (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
-    await mount(tester,
+    await mount(
+        tester,
         const Scaffold(body: SingleChildScrollView(child: MorePages())),
-        [checking], locale: const Locale('ar'));
+        [checking],
+        locale: const Locale('ar'));
     await tester.tap(find.text('الأدوات المالية'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('الشهادات البنكية'));
@@ -230,9 +267,11 @@ void main() {
     await disposeFixture(tester);
   });
 
-  testWidgets('the Add credit card shortcut opens the credit fields', (tester) async {
+  testWidgets('the Add credit card shortcut opens the credit fields',
+      (tester) async {
     final checking = await wallet('checking', 'Checking', 0);
-    await mount(tester,
+    await mount(
+        tester,
         const Scaffold(body: SingleChildScrollView(child: MorePages())),
         [checking]);
     await tester.tap(find.text('Financial tools'));
@@ -240,13 +279,102 @@ void main() {
     await tester.tap(find.text('Add credit card'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Credit card'), findsOneWidget);
-    expect(find.text('Credit limit'), findsOneWidget);
+    expect(find.text('Add credit card'), findsWidgets);
+    final limit = find.widgetWithText(TextFormField, 'Credit limit');
+    expect(limit, findsOneWidget);
+    expect(find.byType(TextFormField), findsNWidgets(2));
+    expect(find.text('Fixed minimum or floor'), findsNothing);
+
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'Account name'), 'Weekend card');
+    await tester.ensureVisible(limit);
+    await tester.enterText(limit, '2500');
+    final statement = find.text('Statement day');
+    await tester.ensureVisible(statement);
+    await tester.tap(statement);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, '19'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('add-account').last);
+    await tester.pumpAndSettle();
+    final added = (await database.getAllWallets())
+        .singleWhere((w) => w.name == 'Weekend card');
+    final terms = await database.getCreditCardDetails(added.walletPk);
+    expect(terms?['credit_limit'], 2500);
+    expect(terms?['statement_day'], 19);
     await disposeFixture(tester);
   });
 
-  testWidgets('Arabic settings search finds backup and appearance', (tester) async {
-    await mount(tester, const Scaffold(body: SettingsPageContent()), [],
+  testWidgets(
+      'provider selection names a new debit account and links its optional card digits',
+      (tester) async {
+    final checking = await wallet('checking', 'Checking', 0);
+    await mount(
+        tester,
+        AddWalletPage(
+          initialAccountType: 'debit',
+          routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+        ),
+        [checking]);
+
+    expect(find.byType(TextFormField), findsOneWidget);
+    final bankSection = find.text('Bank and card messages');
+    await tester.ensureVisible(bankSection);
+    await tester.tap(bankSection);
+    await tester.pumpAndSettle();
+    final pickBank = find.text('Bank or provider').first;
+    await tester.ensureVisible(pickBank);
+    await tester.tap(pickBank);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('National Bank of Egypt'));
+    await tester.pumpAndSettle();
+    expect(find.text('National Bank of Egypt'), findsWidgets);
+
+    final digits = find.text('Last four digits');
+    await tester.ensureVisible(digits);
+    await tester.tap(digits);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.descendant(
+            of: find.byType(AlertDialog), matching: find.byType(TextFormField)),
+        '٠١٢٣');
+    await tester.tap(find.text('save'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('add-account').last);
+    await tester.pumpAndSettle();
+    final saved = (await database.getAllWallets())
+        .singleWhere((w) => w.name == 'National Bank of Egypt');
+    final links = await database.getImportCardLinks();
+    expect(links.single.digits, '0123');
+    expect(links.single.account, saved.name);
+    expect((await database.getAccountDetails(saved.walletPk))?['account_type'],
+        'debit');
+    await disposeFixture(tester);
+  });
+
+  testWidgets(
+      'assistant displays a quick read-only balance result without typing',
+      (tester) async {
+    final checking = await wallet('checking', 'Checking', 0);
+    await mount(tester, const FinancialAssistantPage(), [checking]);
+    expect(find.text('AI settings'), findsNothing);
+    await tester.tap(find.text('Current balances'));
+    await tester.pumpAndSettle();
+    expect(find.text('Result'), findsOneWidget);
+    expect(find.text('Checking'), findsOneWidget);
+    expect(await database.getAllTransactionsFromWallet(checking.walletPk),
+        isEmpty);
+    await disposeFixture(tester);
+  });
+
+  testWidgets('Arabic settings search finds backup and appearance',
+      (tester) async {
+    await mount(
+        tester,
+        const Scaffold(
+            body: SingleChildScrollView(child: SettingsPageContent())),
+        [],
         locale: const Locale('ar'));
     expect(find.text('المظهر'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'استعادة');
@@ -258,7 +386,8 @@ void main() {
     await tester.tap(find.text('المظهر'));
     await tester.pumpAndSettle();
     expect(find.text('أسود خالص'), findsOneWidget);
-    expect(Directionality.of(tester.element(find.text('أسود خالص'))), ui.TextDirection.rtl);
+    expect(Directionality.of(tester.element(find.text('أسود خالص'))),
+        ui.TextDirection.rtl);
     await tester.tap(find.text('أسود خالص'));
     await tester.pumpAndSettle();
     expect(appStateSettings['theme'], 'black');

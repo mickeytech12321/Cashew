@@ -1,3 +1,4 @@
+import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:budget/struct/bankMessageBatch.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/widgets/openPopup.dart' show RoutesToPopAfterDelete;
@@ -311,10 +312,13 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                         .toList(),
                     onChanged: (value) => update(() => walletPk = value),
                   ),
-                  if (lastFour != null && walletPk != null && suggestedWallet == null)
+                  if (lastFour != null &&
+                      walletPk != null &&
+                      suggestedWallet == null)
                     TextButton.icon(
                       icon: const Icon(Icons.link),
-                      label: Text(label('Link card to this account', 'ربط البطاقة بهذا الحساب')),
+                      label: Text(label('Link card to this account',
+                          'ربط البطاقة بهذا الحساب')),
                       onPressed: () => showDialog<void>(
                         context: dialogContext,
                         builder: (_) => ImportCardLinks(
@@ -454,160 +458,185 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
   @override
   Widget build(BuildContext context) {
     return PageFramework(
-      title: label('Bank message import', 'استيراد الرسائل البنكية'),
+      title: label('Bank messages', 'الرسائل البنكية'),
+      backgroundColor: CashuColors(context).canvas,
+      horizontalPaddingConstrained: true,
       capitalizeTitle: false,
       listWidgets: [
         Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              OutlinedButton(
-                onPressed: _busy
-                    ? null
-                    : () => showDialog<void>(
-                          context: context,
-                          builder: (_) => const ImportCardLinks(),
-                        ),
-                child: Text(label('Manage card links', 'إدارة ربط البطاقات')),
-              ),
-              if (BankNotificationInbox.supported)
-                OutlinedButton(
-                  onPressed: _busy
-                      ? null
-                      : () => showDialog<void>(
-                            context: context,
-                            builder: (_) => const _ImportNotificationLinks(),
-                          ),
-                  child: Text(label('Link notification apps to accounts',
-                      'ربط تطبيقات الإشعارات بالحسابات')),
-                ),
-              if (BankNotificationInbox.supported)
-                OutlinedButton(
-                  onPressed: _busy
-                      ? null
-                      : () => showDialog<void>(
-                            context: context,
-                            builder: (_) => const _BankNotificationSettings(),
-                          ),
-                  child: Text(label('Android notification import',
-                      'استيراد إشعارات أندرويد')),
-                ),
-              TextField(
-                controller: _message,
-                minLines: 2,
-                maxLines: 4,
-                maxLength: maxBankBatchLength,
-                decoration: InputDecoration(
-                  labelText: label(
-                    'Paste a transaction message',
-                    'الصق رسالة المعاملة',
-                  ),
-                ),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.calendar_today_outlined),
-                title: Text(label(
-                    'Transaction date and time', 'تاريخ المعاملة ووقتها')),
-                subtitle: Text(_occurredAt == null
-                    ? label('Use the current time', 'استخدم الوقت الحالي')
-                    : _formatTimestamp(_occurredAt!)),
-                onTap: _busy ? null : _pickTimestamp,
-                trailing: _occurredAt == null
-                    ? null
-                    : IconButton(
-                        tooltip: label(
-                            'Use the current time', 'استخدم الوقت الحالي'),
-                        onPressed: _busy
-                            ? null
-                            : () => setState(() => _occurredAt = null),
-                        icon: const Icon(Icons.clear),
+              CashuOptionSection(
+                icon: Icons.content_paste_rounded,
+                title: label('Paste a bank message', 'الصق رسالة بنكية'),
+                detail: label('Review a single message or a batch',
+                    'راجع رسالة واحدة أو دفعة رسائل'),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: TextField(
+                      controller: _message,
+                      minLines: 2,
+                      maxLines: 4,
+                      maxLength: maxBankBatchLength,
+                      decoration: cashuInput(
+                        context,
+                        label('Paste a transaction message',
+                            'الصق رسالة المعاملة'),
                       ),
+                    ),
+                  ),
+                  ListTile(
+                    leading: const CashuIconTile(Icons.calendar_today_outlined,
+                        size: 36),
+                    title: Text(label(
+                        'Transaction date and time', 'تاريخ المعاملة ووقتها')),
+                    subtitle: Text(_occurredAt == null
+                        ? label('Use the current time', 'استخدم الوقت الحالي')
+                        : _formatTimestamp(_occurredAt!)),
+                    onTap: _busy ? null : _pickTimestamp,
+                    trailing: _occurredAt == null
+                        ? null
+                        : IconButton(
+                            tooltip: label(
+                                'Use the current time', 'استخدم الوقت الحالي'),
+                            onPressed: _busy
+                                ? null
+                                : () => setState(() => _occurredAt = null),
+                            icon: const Icon(Icons.clear),
+                          ),
+                  ),
+                  Wrap(spacing: 8, runSpacing: 4, children: [
+                    FilledButton(
+                      onPressed: _busy ? null : _stage,
+                      child: Text(label('Add for review', 'إضافة للمراجعة')),
+                    ),
+                    OutlinedButton(
+                      onPressed: _busy ? null : _stageBatch,
+                      child: Text(label('Review batch', 'مراجعة دفعة')),
+                    ),
+                  ]),
+                ],
               ),
-              FilledButton(
-                onPressed: _busy ? null : _stage,
-                child: Text(label('Add for review', 'إضافة للمراجعة')),
+              const SizedBox(height: 9),
+              CashuOptionSection(
+                icon: Icons.link_outlined,
+                title: label('Cards and notifications', 'البطاقات والإشعارات'),
+                children: [
+                  CashuActionRow(
+                    icon: Icons.credit_card_outlined,
+                    title: label('Manage card links', 'إدارة ربط البطاقات'),
+                    onTap: _busy
+                        ? null
+                        : () => showDialog<void>(
+                              context: context,
+                              builder: (_) => const ImportCardLinks(),
+                            ),
+                  ),
+                  if (BankNotificationInbox.supported) ...[
+                    CashuActionRow(
+                      icon: Icons.link_outlined,
+                      title: label('Link notification apps to accounts',
+                          'ربط تطبيقات الإشعارات بالحسابات'),
+                      onTap: _busy
+                          ? null
+                          : () => showDialog<void>(
+                                context: context,
+                                builder: (_) =>
+                                    const _ImportNotificationLinks(),
+                              ),
+                    ),
+                    CashuActionRow(
+                      icon: Icons.notifications_outlined,
+                      title: label('Android notification import',
+                          'استيراد إشعارات أندرويد'),
+                      onTap: _busy
+                          ? null
+                          : () => showDialog<void>(
+                                context: context,
+                                builder: (_) =>
+                                    const _BankNotificationSettings(),
+                              ),
+                    ),
+                  ],
+                ],
               ),
-              OutlinedButton(
-                onPressed: _busy ? null : _stageBatch,
-                child: Text(label('Review batch (one message per line)',
-                    'مراجعة دفعة (رسالة واحدة في كل سطر)')),
+              CashuSectionTitle(label('Message inbox', 'صندوق الرسائل')),
+              Wrap(spacing: 6, runSpacing: 4, children: [
+                for (final (status, text) in [
+                  ('review', label('Needs review', 'بانتظار المراجعة')),
+                  ('approved', label('Approved', 'تم الاعتماد')),
+                  ('ignored', label('Ignored', 'تم التجاهل')),
+                  ('duplicate', label('Duplicates', 'المكررات')),
+                ])
+                  ChoiceChip(
+                    label: Text(text),
+                    selected: status == _status,
+                    onSelected: _busy
+                        ? null
+                        : (_) => setState(() {
+                              _status = status;
+                              _reloadFirstPage();
+                            }),
+                  ),
+              ]),
+              const SizedBox(height: 8),
+              CashuOptionSection(
+                icon: Icons.filter_alt_outlined,
+                title: label('Filters', 'الفلاتر'),
+                initiallyExpanded: _source != null || _direction != null,
+                children: [
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    value: _source ?? '',
+                    items: [
+                      DropdownMenuItem(
+                          value: '',
+                          child: Text(label('All sources', 'كل المصادر'))),
+                      DropdownMenuItem(
+                          value: 'manual',
+                          child: Text(
+                              label('Pasted messages', 'الرسائل الملصوقة'))),
+                      DropdownMenuItem(
+                          value: 'notification',
+                          child: Text(label(
+                              'Android notifications', 'إشعارات أندرويد'))),
+                    ],
+                    onChanged: _busy
+                        ? null
+                        : (value) => setState(() {
+                              _source = value == '' ? null : value;
+                              _reloadFirstPage();
+                            }),
+                  ),
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    value: _direction ?? '',
+                    items: [
+                      DropdownMenuItem(
+                          value: '',
+                          child: Text(label(
+                              'All transaction types', 'كل أنواع المعاملات'))),
+                      DropdownMenuItem(
+                          value: 'debit',
+                          child: Text(label('Money out', 'مبالغ خارجة'))),
+                      DropdownMenuItem(
+                          value: 'credit',
+                          child: Text(label('Money in', 'مبالغ واردة'))),
+                    ],
+                    onChanged: _busy
+                        ? null
+                        : (value) => setState(() {
+                              _direction = value == '' ? null : value;
+                              _reloadFirstPage();
+                            }),
+                  ),
+                ],
               ),
             ],
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(children: [
-            DropdownButton<String>(
-              isExpanded: true,
-              value: _status,
-              items: [
-                DropdownMenuItem(
-                    value: 'review',
-                    child: Text(label('Needs review', 'بانتظار المراجعة'))),
-                DropdownMenuItem(
-                    value: 'approved',
-                    child: Text(label('Approved', 'تم الاعتماد'))),
-                DropdownMenuItem(
-                    value: 'ignored',
-                    child: Text(label('Ignored', 'تم التجاهل'))),
-                DropdownMenuItem(
-                    value: 'duplicate',
-                    child: Text(label('Duplicates', 'المكررات'))),
-              ],
-              onChanged: _busy
-                  ? null
-                  : (value) => setState(() {
-                        _status = value ?? 'review';
-                        _reloadFirstPage();
-                      }),
-            ),
-            DropdownButton<String>(
-              isExpanded: true,
-              value: _source ?? '',
-              items: [
-                DropdownMenuItem(
-                    value: '', child: Text(label('All sources', 'كل المصادر'))),
-                DropdownMenuItem(
-                    value: 'manual',
-                    child: Text(label('Pasted messages', 'الرسائل الملصوقة'))),
-                DropdownMenuItem(
-                    value: 'notification',
-                    child: Text(
-                        label('Android notifications', 'إشعارات أندرويد'))),
-              ],
-              onChanged: _busy
-                  ? null
-                  : (value) => setState(() {
-                        _source = value == '' ? null : value;
-                        _reloadFirstPage();
-                      }),
-            ),
-            DropdownButton<String>(
-              isExpanded: true,
-              value: _direction ?? '',
-              items: [
-                DropdownMenuItem(
-                    value: '',
-                    child: Text(
-                        label('All transaction types', 'كل أنواع المعاملات'))),
-                DropdownMenuItem(
-                    value: 'debit',
-                    child: Text(label('Money out', 'مبالغ خارجة'))),
-                DropdownMenuItem(
-                    value: 'credit',
-                    child: Text(label('Money in', 'مبالغ واردة'))),
-              ],
-              onChanged: _busy
-                  ? null
-                  : (value) => setState(() {
-                        _direction = value == '' ? null : value;
-                        _reloadFirstPage();
-                      }),
-            ),
-          ]),
         ),
         FutureBuilder<List<Map<String, dynamic>>>(
           future: _imports,
@@ -730,8 +759,9 @@ class ImportCardLinks extends StatefulWidget {
 class _ImportCardLinksState extends State<ImportCardLinks> {
   late final _digits = TextEditingController(text: widget.initialDigits);
   late final _wallets = database.getFinancialInsightsAccounts().then(
-    (accounts) => accounts.where((account) => account.currency.isNotEmpty).toList(),
-  );
+        (accounts) =>
+            accounts.where((account) => account.currency.isNotEmpty).toList(),
+      );
   late var _links = database.getImportCardLinks();
   late String? _wallet = widget.initialWalletPk;
   String? _error;
@@ -813,7 +843,8 @@ class _ImportCardLinksState extends State<ImportCardLinks> {
                     for (final account in snapshot.data!)
                       DropdownMenuItem(
                           value: account.id,
-                          child: Text('${account.name} · ${account.currency.toUpperCase()}',
+                          child: Text(
+                              '${account.name} · ${account.currency.toUpperCase()}',
                               overflow: TextOverflow.ellipsis)),
                   ],
                   onChanged:
@@ -1142,7 +1173,9 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
                   'يمكن لأندرويد الاحتفاظ بما يصل إلى ١٠٠ تنبيه مطابق مشفّرًا ولمدة تصل إلى ٢٤ ساعة. يُحذف النص بعد إرساله للمراجعة أو تعطيل الالتقاط.',
                 )),
                 value: _background,
-                onChanged: _busy ? null : (value) => setState(() => _background = value),
+                onChanged: _busy
+                    ? null
+                    : (value) => setState(() => _background = value),
               ),
             TextField(
               controller: _packages,

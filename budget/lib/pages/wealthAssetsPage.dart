@@ -1,3 +1,4 @@
+import 'package:budget/widgets/cashuPickers.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:budget/struct/databaseGlobal.dart';
@@ -561,19 +562,34 @@ class _AssetEditorState extends State<_AssetEditor> {
   late final _name =
       TextEditingController(text: widget.asset?['name'] as String?);
   late final _type = TextEditingController(
-      text: widget.asset?['asset_type'] as String? ?? widget.initialType);
-  late final _currency = TextEditingController(
-      text: widget.asset?['currency'] as String? ?? 'egp');
+    text: widget.asset?['asset_type'] as String? ??
+        widget.initialType ??
+        'property',
+  );
+  late String _currency =
+      (widget.asset?['currency'] as String? ?? 'egp').toLowerCase();
   late final _quantity =
       TextEditingController(text: widget.asset?['quantity']?.toString() ?? '1');
   late final _unitValue =
       TextEditingController(text: widget.asset?['unit_value']?.toString());
   late bool _liability =
       widget.asset?['liability'] == 1 || widget.initialType == 'debt';
+  late bool _showUnits = (_number(_quantity.text) ?? 1) != 1;
+  bool _currencyError = false;
+
+  static const _types = {
+    'property': ('Property', 'عقار'),
+    'car': ('Vehicle', 'سيارة'),
+    'business': ('Business', 'مشروع'),
+    'gold': ('Gold', 'ذهب'),
+    'silver': ('Silver', 'فضة'),
+    'debt': ('Debt', 'دين'),
+    'other': ('Other', 'أخرى'),
+  };
 
   @override
   void dispose() {
-    for (final controller in [_name, _type, _currency, _quantity, _unitValue]) {
+    for (final controller in [_name, _type, _quantity, _unitValue]) {
       controller.dispose();
     }
     super.dispose();
@@ -582,22 +598,22 @@ class _AssetEditorState extends State<_AssetEditor> {
   double? _number(String? input) =>
       double.tryParse(FinancialMessageParser.normalize(input?.trim() ?? ''));
 
+  Future<void> _selectCurrency() async {
+    final code = await pickCashuCurrency(context, _currency);
+    if (code != null && mounted)
+      setState(() {
+        _currency = code.toLowerCase();
+        _currencyError = !RegExp(r'^[a-z]{3}$').hasMatch(_currency);
+      });
+  }
+
   @override
   Widget build(BuildContext context) {
     final label = widget.label;
-    Widget textField(TextEditingController controller, String title,
-            {String? Function(String?)? validator, bool numeric = false}) =>
-        TextFormField(
-          controller: controller,
-          decoration: InputDecoration(labelText: title),
-          keyboardType: numeric
-              ? const TextInputType.numberWithOptions(decimal: true)
-              : null,
-          validator: validator ??
-              (value) => value?.trim().isNotEmpty == true
-                  ? null
-                  : label('Required', 'مطلوب'),
-        );
+    final colors = CashuColors(context);
+    final type = _type.text;
+    final standardType = _types.containsKey(type);
+    final units = type == 'gold' || type == 'silver' || _showUnits;
     String? numericValidator(String? input) {
       final value = _number(input);
       return value != null && value.isFinite && value >= 0
@@ -605,39 +621,126 @@ class _AssetEditorState extends State<_AssetEditor> {
           : label('Enter a non-negative number', 'أدخل رقمًا غير سالب');
     }
 
+    Widget numeric(TextEditingController controller, String title,
+            {String? suffix}) =>
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: TextFormField(
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: cashuInput(context, title, suffix: suffix),
+            validator: numericValidator,
+          ),
+        );
+
     return AlertDialog(
+      backgroundColor: colors.panel,
       title: Text(widget.asset == null
           ? label('Add entry', 'إضافة بند')
           : label('Edit entry', 'تعديل البند')),
       scrollable: true,
-      content: Form(
-        key: _form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            textField(_name, label('Name', 'الاسم')),
-            textField(_type,
-                label('Asset or liability type', 'نوع الأصل أو الالتزام')),
-            textField(
-              _currency,
-              label('Currency code', 'رمز العملة'),
-              validator: (value) =>
-                  RegExp(r'^[a-zA-Z]{3}$').hasMatch(value?.trim() ?? '')
+      content: SizedBox(
+        width: 440,
+        child: Form(
+          key: _form,
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: standardType ? type : 'custom',
+                  isExpanded: true,
+                  decoration: cashuInput(context, label('Type', 'النوع')),
+                  items: [
+                    for (final entry in _types.entries)
+                      DropdownMenuItem(
+                          value: entry.key,
+                          child: Text(label(entry.value.$1, entry.value.$2))),
+                    DropdownMenuItem(
+                        value: 'custom',
+                        child: Text(label('Custom type', 'نوع مخصص'))),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _type.text = value == 'custom' ? '' : value;
+                      if (value == 'debt') _liability = true;
+                    });
+                  },
+                ),
+                if (!standardType) ...[
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: _type,
+                    decoration:
+                        cashuInput(context, label('Custom type', 'نوع مخصص')),
+                    validator: (value) => value?.trim().isNotEmpty == true
+                        ? null
+                        : label('Required', 'مطلوب'),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _name,
+                  decoration: cashuInput(context, label('Name', 'الاسم')),
+                  validator: (value) => value?.trim().isNotEmpty == true
                       ? null
-                      : label('Use a three-letter currency code',
-                          'أدخل رمز عملة من ثلاثة أحرف'),
-            ),
-            textField(_quantity, label('Quantity', 'الكمية'),
-                numeric: true, validator: numericValidator),
-            textField(_unitValue, label('Value per unit', 'قيمة الوحدة'),
-                numeric: true, validator: numericValidator),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(label('Liability', 'التزام')),
-              value: _liability,
-              onChanged: (value) => setState(() => _liability = value),
-            ),
-          ],
+                      : label('Required', 'مطلوب'),
+                ),
+                const SizedBox(height: 8),
+                CashuActionRow(
+                  icon: Icons.payments_outlined,
+                  title: label('Currency', 'العملة'),
+                  detail: _currency.toUpperCase(),
+                  onTap: _selectCurrency,
+                ),
+                if (_currencyError)
+                  Text(
+                      label('Choose a three-letter currency code.',
+                          'اختار عملة برمز من ٣ حروف.'),
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
+                if (units) numeric(_quantity, label('Quantity', 'الكمية')),
+                numeric(
+                    _unitValue,
+                    units
+                        ? label('Value per unit', 'قيمة الوحدة')
+                        : label('Current value', 'القيمة الحالية'),
+                    suffix: _currency.toUpperCase()),
+                const SizedBox(height: 12),
+                CashuOptionSection(
+                  icon: Icons.tune_outlined,
+                  title: label('More details', 'تفاصيل إضافية'),
+                  children: [
+                    if (type != 'gold' && type != 'silver')
+                      SwitchListTile(
+                        title: Text(label(
+                            'Enter multiple units', 'إدخال أكتر من وحدة')),
+                        value: _showUnits,
+                        onChanged: (value) {
+                          setState(() {
+                            final quantity = _number(_quantity.text);
+                            final unitValue = _number(_unitValue.text);
+                            if (!value &&
+                                quantity != null &&
+                                quantity != 1 &&
+                                unitValue != null) {
+                              _unitValue.text =
+                                  (quantity * unitValue).toString();
+                            }
+                            if (!value) _quantity.text = '1';
+                            _showUnits = value;
+                          });
+                        },
+                      ),
+                    SwitchListTile(
+                      title: Text(label('Liability', 'التزام')),
+                      value: _liability,
+                      onChanged: (value) => setState(() => _liability = value),
+                    ),
+                  ],
+                ),
+              ]),
         ),
       ),
       actions: [
@@ -647,12 +750,16 @@ class _AssetEditorState extends State<_AssetEditor> {
         FilledButton(
           onPressed: () {
             if (!_form.currentState!.validate()) return;
+            if (!RegExp(r'^[a-z]{3}$').hasMatch(_currency)) {
+              setState(() => _currencyError = true);
+              return;
+            }
             Navigator.pop(
                 context,
                 _AssetDraft(
                   _name.text.trim(),
                   _type.text.trim(),
-                  _currency.text.trim(),
+                  _currency,
                   _number(_quantity.text)!,
                   _number(_unitValue.text)!,
                   _liability,

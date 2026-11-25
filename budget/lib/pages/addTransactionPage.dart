@@ -1,3 +1,4 @@
+import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:budget/struct/instaPayTransfer.dart';
 import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'package:budget/database/generatePreviewData.dart';
@@ -857,6 +858,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
   }
 
   late TextEditingController _titleInputController;
+  bool _showNotes = false;
   late TextEditingController _noteInputController;
 
   @override
@@ -1215,18 +1217,25 @@ class _AddTransactionPageState extends State<AddTransactionPage>
           setSelectedCategory: setSelectedCategory,
           setSelectedSubCategory: setSelectedSubCategory,
         ),
-        Container(height: 14),
+        const SizedBox(height: 10),
         Padding(
           padding: const EdgeInsetsDirectional.symmetric(horizontal: 22),
-          child: TransactionNotesTextInput(
-            noteInputController: _noteInputController,
-            setNotesInputFocused: (isFocused) {
-              setState(() {
-                notesInputFocused = isFocused;
-              });
-            },
-            setSelectedNoteController: setSelectedNoteController,
-          ),
+          child: _showNotes || _noteInputController.text.isNotEmpty
+              ? TransactionNotesTextInput(
+                  noteInputController: _noteInputController,
+                  setNotesInputFocused: (isFocused) {
+                    setState(() => notesInputFocused = isFocused);
+                  },
+                  setSelectedNoteController: setSelectedNoteController,
+                )
+              : CashuPanel(
+                  padding: EdgeInsets.zero,
+                  child: CashuActionRow(
+                    icon: Icons.notes_outlined,
+                    title: cashuLabel(context, 'Add a note or attachment', 'إضافة ملاحظة أو مرفق'),
+                    onTap: () => setState(() => _showNotes = true),
+                  ),
+                ),
         ),
       ],
     );
@@ -2171,6 +2180,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         return false;
       },
       child: PageFramework(
+        backgroundColor: CashuColors(context).canvas,
         belowAppBarPaddingWhenCenteredTitleSmall: 0,
         resizeToAvoidBottomInset: true,
         title: widget.transaction == null

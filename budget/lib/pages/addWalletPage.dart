@@ -1,3 +1,6 @@
+import 'package:budget/pages/cashuAddAssetPage.dart' show cashuAccountIcon;
+import 'package:budget/widgets/cashuPickers.dart';
+import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:budget/struct/accountTypes.dart';
 import 'package:budget/struct/instaPayTransfer.dart';
 import 'package:budget/pages/cardStatementsPage.dart';
@@ -13,9 +16,7 @@ import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
-import 'package:budget/widgets/dropdownSelect.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
-import 'package:budget/widgets/navigationSidebar.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
@@ -25,13 +26,9 @@ import 'package:budget/widgets/saveBottomButton.dart';
 import 'package:budget/widgets/selectAmount.dart';
 import 'package:budget/widgets/selectColor.dart';
 import 'package:budget/widgets/settingsContainers.dart';
-import 'package:budget/widgets/tappable.dart';
-import 'package:budget/widgets/tappableTextEntry.dart';
 import 'package:budget/widgets/textInput.dart';
 import 'package:budget/widgets/textWidgets.dart';
-import 'package:budget/widgets/currencyPicker.dart';
 import 'package:budget/widgets/transactionEntry/incomeAmountArrow.dart';
-import 'package:budget/widgets/util/widgetSize.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -68,10 +65,6 @@ class _AddWalletPageState extends State<AddWalletPage> {
   String? selectedTitle;
   late Color? selectedColor =
       widget.wallet?.colour == null ? null : HexColor(widget.wallet?.colour);
-  String? selectedIconName;
-  Map<String, dynamic> currencies = {};
-  bool customCurrencyIcon = false;
-  String? searchCurrency = "";
   String selectedCurrency =
       getDevicesDefaultCurrencyCode(); //if no currency selected use empty string
   int selectedDecimals = 2;
@@ -87,22 +80,22 @@ class _AddWalletPageState extends State<AddWalletPage> {
   double? lateFee;
   double? aprPercent;
   String? cardLastFour;
+  String? _newCardLastFour;
   String? linkedBankWalletPk;
   late final _linkableWallets = database.getAllWallets();
   Future<Map<String, dynamic>>? _creditSummary;
   final _accountForm = GlobalKey<FormState>();
-  int _accountFieldsRevision = 0;
 
   String _accountLabel(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
 
-  String? _validateCreditNumber(String? value, {bool day = false, double? max}) {
+  String? _validateCreditNumber(String? value, {double? max}) {
     if (value == null || value.trim().isEmpty) return null;
     final normalized = FinancialMessageParser.normalize(value.trim());
-    final number = day ? int.tryParse(normalized) : double.tryParse(normalized);
+    final number = double.tryParse(normalized);
     if (number != null &&
         number.isFinite &&
-        (day ? number >= 1 && number <= 31 : number >= 0) &&
+        number >= 0 &&
         (max == null || number <= max)) {
       return null;
     }
@@ -114,8 +107,9 @@ class _AddWalletPageState extends State<AddWalletPage> {
       future: _linkableWallets,
       builder: (context, snapshot) {
         final wallets = snapshot.data
-            ?.where((wallet) => wallet.walletPk != widget.wallet?.walletPk)
-            .toList() ?? [];
+                ?.where((wallet) => wallet.walletPk != widget.wallet?.walletPk)
+                .toList() ??
+            [];
         final linkedWallet = wallets
             .where((wallet) => wallet.walletPk == linkedBankWalletPk)
             .firstOrNull;
@@ -128,14 +122,19 @@ class _AddWalletPageState extends State<AddWalletPage> {
               items: [
                 DropdownMenuItem(
                   value: '',
-                  child: Text(_accountLabel('No repayment account', 'بدون حساب للسداد')),
+                  child: Text(_accountLabel(
+                      'No repayment account', 'بدون حساب للسداد')),
                 ),
                 for (final wallet in wallets)
-                  DropdownMenuItem(value: wallet.walletPk, child: Text(wallet.name)),
+                  DropdownMenuItem(
+                      value: wallet.walletPk, child: Text(wallet.name)),
               ],
-              onChanged: snapshot.hasData ? (value) {
-                setState(() => linkedBankWalletPk = value == '' ? null : value);
-              } : null,
+              onChanged: snapshot.hasData
+                  ? (value) {
+                      setState(() =>
+                          linkedBankWalletPk = value == '' ? null : value);
+                    }
+                  : null,
             ),
             if (_creditSummary != null)
               FutureBuilder<Map<String, dynamic>>(
@@ -145,31 +144,41 @@ class _AddWalletPageState extends State<AddWalletPage> {
                   final available = snapshot.data?['available_credit'] as num?;
                   if (outstanding == null) return const SizedBox.shrink();
                   final currency = widget.wallet?.currency?.toUpperCase() ?? '';
-                  final statement = snapshot.data?['next_statement_date'] as DateTime?;
+                  final statement =
+                      snapshot.data?['next_statement_date'] as DateTime?;
                   final due = snapshot.data?['next_due_date'] as DateTime?;
-                  final closing = snapshot.data?['last_statement_date'] as DateTime?;
-                  final statementDue = snapshot.data?['last_statement_due_date'] as DateTime?;
-                  final statementBalance = snapshot.data?['estimated_statement_balance'] as num?;
-                  final statementRemaining = snapshot.data?['estimated_statement_remaining'] as num?;
-                  final utilization = snapshot.data?['utilization_percent'] as num?;
+                  final closing =
+                      snapshot.data?['last_statement_date'] as DateTime?;
+                  final statementDue =
+                      snapshot.data?['last_statement_due_date'] as DateTime?;
+                  final statementBalance =
+                      snapshot.data?['estimated_statement_balance'] as num?;
+                  final statementRemaining =
+                      snapshot.data?['estimated_statement_remaining'] as num?;
+                  final utilization =
+                      snapshot.data?['utilization_percent'] as num?;
                   final overLimit = snapshot.data?['over_limit_amount'] as num?;
                   final credits = snapshot.data?['statement_credits'] as num?;
-                  final charges = snapshot.data?['charges_after_statement'] as num?;
-                  final minimum = snapshot.data?['estimated_minimum_remaining'] as num?;
+                  final charges =
+                      snapshot.data?['charges_after_statement'] as num?;
+                  final minimum =
+                      snapshot.data?['estimated_minimum_remaining'] as num?;
                   final fee = snapshot.data?['estimated_late_fee'] as num?;
-                  final overdue = snapshot.data?['estimated_statement_overdue'] == true;
+                  final overdue =
+                      snapshot.data?['estimated_statement_overdue'] == true;
                   final dates = MaterialLocalizations.of(context);
                   String amount(num value) =>
-                      '${value.toStringAsFixed(selectedDecimals)} $currency'.trim();
+                      '${value.toStringAsFixed(selectedDecimals)} $currency'
+                          .trim();
                   final summary = [
                     '${outstanding.toStringAsFixed(selectedDecimals)} $currency',
                     if (closing != null && statementBalance != null)
                       '${_accountLabel('Estimated statement balance', 'رصيد كشف الحساب التقديري')} '
-                      '${statementBalance.toStringAsFixed(selectedDecimals)} $currency · '
-                      '${dates.formatMediumDate(closing)}',
+                          '${statementBalance.toStringAsFixed(selectedDecimals)} $currency · '
+                          '${dates.formatMediumDate(closing)}',
                     if (statementRemaining != null)
                       '${_accountLabel('Estimated remaining statement balance', 'المتبقي التقديري من كشف الحساب')} '
-                      '${statementRemaining.toStringAsFixed(selectedDecimals)} $currency',
+                          '${statementRemaining.toStringAsFixed(selectedDecimals)} $currency',
                     if (minimum != null)
                       '${_accountLabel('Estimated minimum remaining', 'المتبقي من الحد الأدنى التقديري')} ${amount(minimum)}',
                     if (fee != null)
@@ -183,23 +192,25 @@ class _AddWalletPageState extends State<AddWalletPage> {
                     if (overLimit != null && overLimit > 0)
                       '${_accountLabel('Over credit limit', 'تجاوز حد الائتمان')} ${amount(overLimit)}',
                     if (overdue)
-                      _accountLabel('Estimated statement payment overdue', 'سداد كشف الحساب التقديري متأخر'),
+                      _accountLabel('Estimated statement payment overdue',
+                          'سداد كشف الحساب التقديري متأخر'),
                     if (statementDue != null)
                       '${_accountLabel('Statement due date', 'استحقاق كشف الحساب')} '
-                      '${dates.formatMediumDate(statementDue)}',
+                          '${dates.formatMediumDate(statementDue)}',
                     if (available != null)
                       '${_accountLabel('Available', 'المتاح')} '
-                      '${available.toStringAsFixed(selectedDecimals)} $currency',
+                          '${available.toStringAsFixed(selectedDecimals)} $currency',
                     if (statement != null)
                       '${_accountLabel('Next statement', 'كشف الحساب القادم')} '
-                      '${dates.formatMediumDate(statement)}',
+                          '${dates.formatMediumDate(statement)}',
                     if (due != null)
                       '${_accountLabel('Next due date', 'تاريخ الاستحقاق القادم')} '
-                      '${dates.formatMediumDate(due)}',
+                          '${dates.formatMediumDate(due)}',
                   ];
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: Text(_accountLabel('Outstanding balance', 'الرصيد المستحق')),
+                    title: Text(
+                        _accountLabel('Outstanding balance', 'الرصيد المستحق')),
                     subtitle: Text(summary.join('\n')),
                   );
                 },
@@ -207,11 +218,15 @@ class _AddWalletPageState extends State<AddWalletPage> {
             if (widget.wallet != null && _creditSummary != null)
               OutlinedButton(
                 onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => CardStatementsPage(wallet: widget.wallet!)),
+                  MaterialPageRoute<void>(
+                      builder: (_) =>
+                          CardStatementsPage(wallet: widget.wallet!)),
                 ),
                 child: Text(_accountLabel('Card statements', 'كشوف البطاقة')),
               ),
-            if (linkedWallet != null && widget.wallet != null && _creditSummary != null)
+            if (linkedWallet != null &&
+                widget.wallet != null &&
+                _creditSummary != null)
               OutlinedButton(
                 onPressed: () async {
                   final result = await openBalanceTransfer(
@@ -219,7 +234,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
                     TransferBalancePage(
                       wallet: linkedWallet,
                       initialTarget: widget.wallet,
-                      initialTitle: _accountLabel('Credit card repayment', 'سداد بطاقة ائتمان'),
+                      initialTitle: _accountLabel(
+                          'Credit card repayment', 'سداد بطاقة ائتمان'),
                       allowEditWallet: false,
                     ),
                   );
@@ -301,8 +317,18 @@ class _AddWalletPageState extends State<AddWalletPage> {
             linkedBankWalletFk: linkedBankWalletPk,
           );
         }
+        final suffix = _newCardLastFour;
+        if (widget.wallet == null &&
+            _canLinkCard &&
+            selectedAccountType != 'credit' &&
+            suffix != null &&
+            !await database.addImportCardLink(draft.walletPk, suffix)) {
+          throw _CardSuffixInUse();
+        }
         if (openingBalance != 0 &&
-            await createCorrectionTransaction(openingBalance, draft, note: openingNote) == null) {
+            await createCorrectionTransaction(openingBalance, draft,
+                    note: openingNote) ==
+                null) {
           throw StateError('Opening balance was not saved');
         }
         return database.getWalletInstance(draft.walletPk);
@@ -316,13 +342,15 @@ class _AddWalletPageState extends State<AddWalletPage> {
         }
       }
       return saved;
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(_accountLabel(
-            'Could not save the account. Try again.',
-            'تعذّر حفظ الحساب. حاول مرة أخرى.',
-          )),
+          content: Text(error is _CardSuffixInUse
+              ? _accountLabel(
+                  'These digits are already linked to another account.',
+                  'الأرقام دي مرتبطة بحساب تاني.')
+              : _accountLabel('Could not save the account. Try again.',
+                  'تعذّر حفظ الحساب. حاول مرة أخرى.')),
         ));
       }
       return null;
@@ -332,14 +360,17 @@ class _AddWalletPageState extends State<AddWalletPage> {
   }
 
   Future<TransactionWallet> createTransactionWallet() async {
-    final order = widget.wallet?.order ?? (await database.getTotalCountOfWallets()).first ?? 0;
+    final order = widget.wallet?.order ??
+        (await database.getTotalCountOfWallets()).first ??
+        0;
     return TransactionWallet(
       walletPk: _walletPk,
       iconName: widget.wallet?.iconName,
       currencyFormat: widget.wallet?.currencyFormat,
       name: selectedTitle ?? "",
       colour: toHexString(selectedColor),
-      dateCreated: widget.wallet != null ? widget.wallet!.dateCreated : DateTime.now(),
+      dateCreated:
+          widget.wallet != null ? widget.wallet!.dateCreated : DateTime.now(),
       dateTimeModified: null,
       order: order,
       currency: selectedCurrency,
@@ -365,6 +396,7 @@ class _AddWalletPageState extends State<AddWalletPage> {
         lateFee,
         aprPercent,
         cardLastFour,
+        _newCardLastFour,
         linkedBankWalletPk,
         initialBalance,
       );
@@ -377,7 +409,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
       popRoute(context);
       return;
     }
-    if (draft.copyWith(dateCreated: walletInitial!.dateCreated) == walletInitial &&
+    if (draft.copyWith(dateCreated: walletInitial!.dateCreated) ==
+            walletInitial &&
         _currentDetails == _initialDetails) {
       popRoute(context);
     } else {
@@ -394,10 +427,10 @@ class _AddWalletPageState extends State<AddWalletPage> {
       selectedCurrency = wallet.currency ?? 'usd';
       selectedDecimals = wallet.decimals;
     }
-    if (FinanceDatabase.supportedAccountTypes.contains(widget.initialAccountType)) {
+    if (FinanceDatabase.supportedAccountTypes
+        .contains(widget.initialAccountType)) {
       selectedAccountType = widget.initialAccountType;
     }
-    currencies = currenciesJSON;
     _initialDetails = _currentDetails;
     _loadAccount();
   }
@@ -408,11 +441,14 @@ class _AddWalletPageState extends State<AddWalletPage> {
       if (wallet != null) {
         final details = await database.getAccountDetails(wallet.walletPk);
         final type = details?['account_type'] as String? ?? 'unspecified';
-        final credit =
-            type == 'credit' ? await database.getCreditCardDetails(wallet.walletPk) : null;
+        final credit = type == 'credit'
+            ? await database.getCreditCardDetails(wallet.walletPk)
+            : null;
         if (!mounted) return;
         selectedAccountType =
-            FinanceDatabase.supportedAccountTypes.contains(type) ? type : 'unspecified';
+            FinanceDatabase.supportedAccountTypes.contains(type)
+                ? type
+                : 'unspecified';
         institutionName = details?['institution_name'] as String?;
         accountArchived = details?['archived'] == 1;
         excludeFromNetWorth = details?['exclude_from_net_worth'] == 1;
@@ -437,7 +473,6 @@ class _AddWalletPageState extends State<AddWalletPage> {
         walletInitial = initial;
         _initialDetails = _currentDetails;
         _detailsReady = true;
-        _accountFieldsRevision++;
       });
       widget.runWhenOpen?.call();
     } catch (_) {
@@ -448,29 +483,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
   @override
   void dispose() {
     _titleFocusNode.dispose();
+    _nameController.dispose();
     super.dispose();
-  }
-
-  void searchCurrencies(String searchTerm) async {
-    if (searchTerm == "") {
-      setState(() => currencies = currenciesJSON);
-    } else {
-      Map<String, dynamic> outCurrencies = {};
-      for (String key in currenciesJSON.keys) {
-        dynamic currency = currenciesJSON[key];
-        if ((currency["CountryName"] != null &&
-                currency["CountryName"].toLowerCase().contains(searchTerm.toLowerCase())) ||
-            (currency["Currency"] != null &&
-                currency["Currency"].toLowerCase().contains(searchTerm.toLowerCase())) ||
-            (currency["Code"] != null &&
-                currency["Code"].toLowerCase().contains(searchTerm.toLowerCase()))) {
-          outCurrencies[key] = currency;
-        }
-      }
-      setState(() {
-        currencies = outCurrencies;
-      });
-    }
   }
 
   void openDecimalPrecisionPopup() async {
@@ -545,76 +559,204 @@ class _AddWalletPageState extends State<AddWalletPage> {
     );
   }
 
+  bool get _canLinkCard => const {'bank', 'debit', 'credit', 'prepaid'}
+      .contains(selectedAccountType);
+
+  Future<void> _chooseInstitution() async {
+    final result = await pickCashuInstitution(context, institutionName,
+        mobileWallet: selectedAccountType == 'ewallet');
+    if (result == null || !mounted) return;
+    setState(() {
+      institutionName = result.isEmpty ? null : result;
+      if (result.isNotEmpty && (selectedTitle?.trim().isEmpty ?? true)) {
+        selectedTitle = result;
+        _nameController.text = result;
+      }
+    });
+  }
+
+  late final _nameController = TextEditingController(text: widget.wallet?.name);
+
+  Future<String?> _editValue(
+    String title,
+    String initial, {
+    required String? Function(String?) validate,
+    bool decimal = false,
+    int? maxLength,
+  }) async {
+    var entered = initial;
+    final key = GlobalKey<FormState>();
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        void save() {
+          if (key.currentState?.validate() == true)
+            Navigator.pop(context, entered.trim());
+        }
+
+        return AlertDialog(
+          backgroundColor: CashuColors(context).panel,
+          scrollable: true,
+          title: Text(title),
+          content: Form(
+            key: key,
+            child: TextFormField(
+              initialValue: initial,
+              autofocus: true,
+              maxLength: maxLength,
+              keyboardType: TextInputType.numberWithOptions(decimal: decimal),
+              decoration: cashuInput(context, title),
+              onChanged: (value) =>
+                  entered = FinancialMessageParser.normalize(value),
+              validator: validate,
+              onFieldSubmitted: (_) => save(),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('cancel'.tr())),
+            FilledButton(onPressed: save, child: Text('save'.tr())),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _editCardSuffix() async {
+    final credit = selectedAccountType == 'credit';
+    final current = credit ? cardLastFour : _newCardLastFour;
+    final result = await _editValue(
+      _accountLabel('Last four digits', 'آخر ٤ أرقام'),
+      current ?? '',
+      maxLength: 4,
+      validate: (value) {
+        final digits = FinancialMessageParser.normalize(value?.trim() ?? '');
+        return digits.isEmpty || RegExp(r'^[0-9]{4}$').hasMatch(digits)
+            ? null
+            : _accountLabel('Use four digits', 'أدخل أربعة أرقام');
+      },
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      final suffix = result.isEmpty ? null : result;
+      if (credit) {
+        cardLastFour = suffix;
+      } else {
+        _newCardLastFour = suffix;
+      }
+    });
+  }
+
+  Future<void> _chooseDay({required bool statement}) async {
+    final title = statement
+        ? _accountLabel('Statement day', 'يوم كشف الحساب')
+        : _accountLabel('Payment due day', 'يوم الاستحقاق');
+    final selected = statement ? statementDay : dueDay;
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        scrollable: true,
+        title: Text(title),
+        content: SizedBox(
+            width: 310,
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (var day = 1; day <= 31; day++)
+                  ChoiceChip(
+                    label: Text(
+                        MaterialLocalizations.of(context).formatDecimal(day)),
+                    selected: selected == day,
+                    onSelected: (_) => Navigator.pop(context, day),
+                  ),
+              ],
+            )),
+        actions: [
+          if (selected != null)
+            TextButton(
+              onPressed: () => Navigator.pop(context, 0),
+              child: Text(_accountLabel('Clear day', 'امسح اليوم')),
+            ),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('cancel'.tr())),
+        ],
+      ),
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      final day = result == 0 ? null : result;
+      if (statement) {
+        statementDay = day;
+      } else {
+        dueDay = day;
+      }
+    });
+  }
+
+  Widget _optionalAmount(String title, double? raw, ValueChanged<double?> set,
+          {double? max, String? suffix}) =>
+      CashuActionRow(
+        icon: Icons.tune_rounded,
+        title: title,
+        detail: raw == null
+            ? _accountLabel('Optional', 'اختياري')
+            : '$raw${suffix ?? ''}',
+        onTap: () async {
+          final result = await _editValue(title, raw?.toString() ?? '',
+              decimal: true,
+              validate: (value) => _validateCreditNumber(value, max: max));
+          if (result == null || !mounted) return;
+          setState(() => set(double.tryParse(result)));
+        },
+      );
+
   @override
   Widget build(BuildContext context) {
+    final colors = CashuColors(context);
+    final title = widget.wallet != null
+        ? 'edit-account'.tr()
+        : widget.initialAccountType == 'credit'
+            ? _accountLabel('Add credit card', 'إضافة بطاقة ائتمان')
+            : 'add-account'.tr();
     if (!_detailsReady) {
       return PageFramework(
-        title: 'edit-account'.tr(),
-        horizontalPaddingConstrained: true,
+        title: title,
+        backgroundColor: colors.canvas,
         listWidgets: [
           if (_detailsFailed)
             Center(
-              child: TextButton(
-                onPressed: () {
-                  setState(() => _detailsFailed = false);
-                  _loadAccount();
-                },
-                child: Text(_accountLabel('Retry loading account', 'أعد تحميل الحساب')),
-              ),
-            )
+                child: TextButton(
+              onPressed: () {
+                setState(() => _detailsFailed = false);
+                _loadAccount();
+              },
+              child: Text(
+                  _accountLabel('Retry loading account', 'أعد تحميل الحساب')),
+            ))
           else
             const LinearProgressIndicator(),
         ],
       );
     }
-    List<Widget> currencyList = [];
-    for (int index = 0; index < currencies.keys.length; index++) {
-      String key = currencies.keys.toList()[index];
-      currencyList.add(Padding(
-        padding:
-            const EdgeInsetsDirectional.only(start: 18.0, end: 18, bottom: 5),
-        child: Tappable(
-          color: selectedCurrency == key
-              ? Theme.of(context).colorScheme.secondaryContainer
-              : getColor(context, "lightDarkAccent"),
-          borderRadius: 13,
-          onTap: () {
-            FocusScopeNode currentFocus = FocusScope.of(context);
-            if (!currentFocus.hasPrimaryFocus) {
-              currentFocus.unfocus();
-            }
-            setSelectedCurrency(key);
-          },
-          child: Padding(
-            padding: const EdgeInsetsDirectional.symmetric(
-                horizontal: 17, vertical: 10),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    TextFont(
-                      text: currencies[key]?["CountryName"] ??
-                          currencies[key]?["Currency"] ??
-                          "",
-                    ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    TextFont(
-                        text: (currencies[key]?["Symbol"] ?? "") +
-                            " " +
-                            (currencies[key]?["Code"] ?? "")),
-                  ],
-                )
-              ],
-            ),
-          ),
-        ),
-      ));
-    }
 
+    final replacing = widget.wallet != null;
+    final credit = selectedAccountType == 'credit';
+    final currency = selectedCurrency.toUpperCase();
+    final accounts = context.watch<AllWallets>();
+    final typeName = _accountLabel(
+      accountTypeNames[selectedAccountType]!.$1,
+      accountTypeNames[selectedAccountType]!.$2,
+    );
+    final provider = institutionName ?? _accountLabel('Optional', 'اختياري');
+    final isWallet = selectedAccountType == 'ewallet';
+    final currencyName =
+        currenciesJSON[selectedCurrency]?['Currency'] as String?;
+    String dayText(int? day) => day == null
+        ? _accountLabel('Choose a day', 'اختار اليوم')
+        : MaterialLocalizations.of(context).formatDecimal(day);
     return WillPopScope(
       onWillPop: () async {
         await _requestClose();
@@ -624,468 +766,307 @@ class _AddWalletPageState extends State<AddWalletPage> {
         resizeToAvoidBottomInset: true,
         dragDownToDismiss: true,
         horizontalPaddingConstrained: true,
-        title: widget.wallet != null
-            ? "edit-account".tr()
-            : widget.initialAccountType == 'credit'
-                ? _accountLabel('Add credit card', 'إضافة بطاقة ائتمان')
-                : "add-account".tr(),
+        backgroundColor: colors.canvas,
+        title: title,
         onBackButton: _requestClose,
         onDragDownToDismiss: _requestClose,
-        actions: [
-          CustomPopupMenuButton(
-            showButtons: enableDoubleColumn(context),
-            keepOutFirst: true,
-            items: [
-              if (widget.wallet != null &&
-                  widget.wallet!.walletPk != "0" &&
-                  widget.routesToPopAfterDelete !=
-                      RoutesToPopAfterDelete.PreventDelete)
-                DropdownItemMenu(
-                  id: "delete-account",
-                  label: "delete-account".tr(),
-                  icon: appStateSettings["outlinedIcons"]
-                      ? Icons.delete_outlined
-                      : Icons.delete_rounded,
-                  action: () {
-                    deleteWalletPopup(
-                      context,
-                      wallet: widget.wallet!,
-                      routesToPopAfterDelete: widget.routesToPopAfterDelete,
-                    );
-                  },
-                ),
-            ],
-          ),
-        ],
         staticOverlay: Align(
           alignment: AlignmentDirectional.bottomCenter,
-          child: (selectedTitle?.trim().isEmpty ?? true)
-              ? SaveBottomButton(
-                  label: "set-name".tr(),
-                  onTap: () async {
-                    FocusScope.of(context).unfocus();
-                    Future.delayed(Duration(milliseconds: 100), () {
-                      _titleFocusNode.requestFocus();
-                    });
-                  },
-                  disabled: false,
-                )
-              : SaveBottomButton(
-                  label: widget.wallet == null
-                      ? "add-account".tr()
-                      : "save-changes".tr(),
-                  onTap: () async {
-                    await addWallet();
-                  },
-                  disabled: _saving || selectedCurrency.isEmpty,
-                ),
+          child: SaveBottomButton(
+            label: (selectedTitle?.trim().isEmpty ?? true)
+                ? 'set-name'.tr()
+                : replacing
+                    ? 'save-changes'.tr()
+                    : 'add-account'.tr(),
+            onTap: () async {
+              if (selectedTitle?.trim().isEmpty ?? true) {
+                _titleFocusNode.requestFocus();
+              } else {
+                await addWallet();
+              }
+            },
+            disabled: _saving || selectedCurrency.isEmpty,
+          ),
         ),
-        slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsetsDirectional.symmetric(horizontal: 20),
-              child: TextInput(
-                autoFocus: kIsWeb && getIsFullScreen(context),
-                focusNode: _titleFocusNode,
-                labelText: "name-placeholder".tr(),
-                bubbly: false,
-                initialValue: selectedTitle,
-                onChanged: (text) {
-                  setSelectedTitle(text);
-                },
-                padding: EdgeInsetsDirectional.only(start: 7, end: 7),
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
-                topContentPadding: 20,
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: SizedBox(height: 14),
-          ),
-          SliverToBoxAdapter(
-            child: Container(
-              height: 65,
-              child: SelectColor(
-                horizontalList: true,
-                selectedColor: selectedColor,
-                setSelectedColor: setSelectedColor,
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsetsDirectional.only(
-                  start: 24, end: 24, bottom: 10),
-              child: Form(
-                key: _accountForm,
-                child: Column(
-                  key: ValueKey(_accountFieldsRevision),
-                  children: [
-                  DropdownButtonFormField<String>(
-                    value: selectedAccountType,
-                    decoration: InputDecoration(
-                      labelText: _accountLabel('Account type', 'نوع الحساب'),
-                      prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
-                      border: const OutlineInputBorder(),
-                    ),
-                    isExpanded: true,
-                    items: [
-                      for (final entry in accountTypeNames.entries)
-                        DropdownMenuItem(
-                          value: entry.key,
-                          child: Text(_accountLabel(entry.value.$1, entry.value.$2)),
-                        ),
+        listWidgets: [
+          Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 16, 78),
+            child: Form(
+              key: _accountForm,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  CashuGreenPanel(
+                    child: Row(children: [
+                      Icon(cashuAccountIcon(selectedAccountType),
+                          color: const Color(0xffb4edb8), size: 30),
+                      const SizedBox(width: 12),
+                      Flexible(
+                          child: Text(typeName,
+                              style: const TextStyle(
+                                  color: Color(0xffeff8f0),
+                                  fontSize: 21,
+                                  fontWeight: FontWeight.w800))),
+                    ]),
+                  ),
+                  CashuSectionTitle(
+                      _accountLabel('Account basics', 'بيانات الحساب')),
+                  CashuPanel(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            controller: _nameController,
+                            focusNode: _titleFocusNode,
+                            decoration: cashuInput(context,
+                                _accountLabel('Account name', 'اسم الحساب')),
+                            onChanged: setSelectedTitle,
+                          ),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<String>(
+                            initialValue: selectedAccountType,
+                            decoration: cashuInput(context,
+                                _accountLabel('Account type', 'نوع الحساب')),
+                            isExpanded: true,
+                            items: [
+                              for (final entry in accountTypeNames.entries)
+                                DropdownMenuItem(
+                                    value: entry.key,
+                                    child: Text(_accountLabel(
+                                        entry.value.$1, entry.value.$2))),
+                            ],
+                            onChanged: (value) {
+                              if (value != null)
+                                setState(() => selectedAccountType = value);
+                            },
+                          ),
+                          const SizedBox(height: 7),
+                          CashuActionRow(
+                            icon: Icons.payments_outlined,
+                            title: _accountLabel('Currency', 'العملة'),
+                            detail: currencyName == null
+                                ? currency
+                                : '$currency · $currencyName',
+                            onTap: () async {
+                              final code = await pickCashuCurrency(
+                                  context, selectedCurrency);
+                              if (mounted && code != null)
+                                setSelectedCurrency(code);
+                            },
+                          ),
+                          if (!replacing)
+                            CashuActionRow(
+                              icon: Icons.account_balance_wallet_outlined,
+                              title: _accountLabel(
+                                  'Starting balance', 'الرصيد الافتتاحي'),
+                              detail: convertToMoney(accounts, initialBalance,
+                                  currencyKey: selectedCurrency,
+                                  decimals: selectedDecimals),
+                              onTap: openEnterInitialBalanceBottomSheet,
+                            ),
+                        ]),
+                  ),
+                  if (credit) ...[
+                    CashuSectionTitle(
+                        _accountLabel('Credit card', 'بطاقة الائتمان')),
+                    CashuPanel(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                          TextFormField(
+                            initialValue: creditLimit?.toString(),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            decoration: cashuInput(context,
+                                _accountLabel('Credit limit', 'الحد الائتماني'),
+                                suffix: currency),
+                            validator: _validateCreditNumber,
+                            onChanged: (value) => creditLimit = double.tryParse(
+                                FinancialMessageParser.normalize(value.trim())),
+                          ),
+                          CashuActionRow(
+                              icon: Icons.event_outlined,
+                              title: _accountLabel(
+                                  'Statement day', 'يوم كشف الحساب'),
+                              detail: dayText(statementDay),
+                              onTap: () => _chooseDay(statement: true)),
+                          CashuActionRow(
+                              icon: Icons.today_outlined,
+                              title: _accountLabel(
+                                  'Payment due day', 'يوم الاستحقاق'),
+                              detail: dayText(dueDay),
+                              onTap: () => _chooseDay(statement: false)),
+                        ])),
+                  ],
+                  const SizedBox(height: 12),
+                  CashuOptionSection(
+                    icon: isWallet
+                        ? Icons.phone_iphone_outlined
+                        : Icons.account_balance_outlined,
+                    title: _accountLabel(
+                        'Bank and card messages', 'البنك ورسائل البطاقات'),
+                    detail: institutionName,
+                    children: [
+                      CashuActionRow(
+                          icon: Icons.domain_outlined,
+                          title: isWallet
+                              ? _accountLabel('Wallet provider', 'مزود المحفظة')
+                              : _accountLabel(
+                                  'Bank or provider', 'البنك أو التطبيق'),
+                          detail: provider,
+                          onTap: _chooseInstitution),
+                      if (credit || (!replacing && _canLinkCard))
+                        CashuActionRow(
+                            icon: Icons.pin_outlined,
+                            title: _accountLabel(
+                                'Last four digits', 'آخر ٤ أرقام'),
+                            detail:
+                                (credit ? cardLastFour : _newCardLastFour) ??
+                                    _accountLabel('Optional', 'اختياري'),
+                            onTap: _editCardSuffix),
+                      if (replacing && !accountArchived)
+                        CashuActionRow(
+                            icon: Icons.link,
+                            title: _accountLabel(
+                                'Link card messages', 'ربط رسائل البطاقات'),
+                            onTap: () => showDialog<void>(
+                                  context: context,
+                                  builder: (_) => ImportCardLinks(
+                                      initialWalletPk: widget.wallet!.walletPk),
+                                )),
                     ],
-                    onChanged: (value) {
-                      if (value != null) setState(() => selectedAccountType = value);
-                    },
                   ),
-                  TextFormField(
-                    initialValue: institutionName,
-                    decoration: InputDecoration(
-                        labelText: _accountLabel('Bank / institution (optional)', 'البنك أو المؤسسة (اختياري)')),
-                    onChanged: (value) => institutionName = value.trim().isEmpty
-                        ? null
-                        : value.trim(),
-                  ),
-                  if (selectedAccountType == 'credit') ...[
-                    TextFormField(
-                      initialValue: creditLimit?.toString(),
-                      keyboardType: TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(labelText: _accountLabel('Credit limit', 'الحد الائتماني')),
-                      validator: _validateCreditNumber,
-                      onChanged: (v) => creditLimit = double.tryParse(FinancialMessageParser.normalize(v.trim())),
-                    ),
-                    TextFormField(
-                      initialValue: statementDay?.toString(),
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(labelText: _accountLabel('Statement day (1-31)', 'يوم كشف الحساب (1–31)')),
-                      validator: (value) => _validateCreditNumber(value, day: true),
-                      onChanged: (v) => statementDay = int.tryParse(FinancialMessageParser.normalize(v.trim())),
-                    ),
-                    TextFormField(
-                      initialValue: dueDay?.toString(),
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(labelText: _accountLabel('Due day (1-31)', 'يوم الاستحقاق (1–31)')),
-                      validator: (value) => _validateCreditNumber(value, day: true),
-                      onChanged: (v) => dueDay = int.tryParse(FinancialMessageParser.normalize(v.trim())),
-                    ),
-                    TextFormField(
-                      initialValue: minimumPayment?.toString(),
-                      keyboardType: TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(labelText: _accountLabel('Fixed minimum or floor', 'مبلغ الحد الأدنى الثابت')),
-                      validator: _validateCreditNumber,
-                      onChanged: (v) => minimumPayment = double.tryParse(FinancialMessageParser.normalize(v.trim())),
-                    ),
-                    TextFormField(
-                      initialValue: minimumPercent?.toString(),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(
-                        labelText: _accountLabel('Minimum as % of statement', 'نسبة الحد الأدنى من الكشف'),
-                        helperText: _accountLabel('Uses the higher of this percentage and the fixed minimum.',
-                            'يُحتسب الأكبر بين النسبة والمبلغ الثابت.'),
-                        helperMaxLines: 2,
-                      ),
-                      validator: (value) => _validateCreditNumber(value, max: 100),
-                      onChanged: (v) => minimumPercent = double.tryParse(FinancialMessageParser.normalize(v.trim())),
-                    ),
-                    TextFormField(
-                      initialValue: lateFee?.toString(),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(
-                        labelText: _accountLabel('Flat late fee (estimate)', 'رسوم التأخير الثابتة (تقديرية)'),
-                        helperText: _accountLabel('Shown if the minimum was missed by the due date.',
-                            'تظهر عند عدم سداد الحد الأدنى بحلول تاريخ الاستحقاق.'),
-                        helperMaxLines: 2,
-                      ),
-                      validator: (value) => _validateCreditNumber(value, max: 999999999999),
-                      onChanged: (v) => lateFee = double.tryParse(FinancialMessageParser.normalize(v.trim())),
-                    ),
-                    TextFormField(
-                      initialValue: aprPercent?.toString(),
-                      keyboardType: TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(labelText: _accountLabel('APR %', 'معدل الفائدة السنوي %')),
-                      validator: _validateCreditNumber,
-                      onChanged: (v) => aprPercent = double.tryParse(FinancialMessageParser.normalize(v.trim())),
-                    ),
-                    TextFormField(
-                      initialValue: cardLastFour,
-                      keyboardType: TextInputType.number,
-                      maxLength: 4,
-                      decoration: InputDecoration(labelText: _accountLabel('Card last 4 digits', 'آخر ٤ أرقام من البطاقة')),
-                      validator: (value) {
-                        final normalized = FinancialMessageParser.normalize(value?.trim() ?? '');
-                        return normalized.isEmpty || RegExp(r'^\d{4}$').hasMatch(normalized)
-                            ? null : _accountLabel('Use four digits', 'أدخل أربعة أرقام');
-                      },
-                      onChanged: (v) => cardLastFour = v.trim().isEmpty
-                          ? null : FinancialMessageParser.normalize(v.trim()),
-                    ),
-                    _creditAccountDetails(),
-                  ],
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(_accountLabel('Exclude from net worth', 'استبعاد من صافي الثروة')),
-                    value: excludeFromNetWorth,
-                    onChanged: (value) =>
-                        setState(() => excludeFromNetWorth = value),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(_accountLabel('Archive account', 'أرشفة الحساب')),
-                    value: accountArchived,
-                    onChanged: (value) =>
-                        setState(() => accountArchived = value),
-                  ),
-                  if (widget.wallet != null && !accountArchived)
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.link),
-                      label: Text(_accountLabel('Link card messages', 'ربط رسائل البطاقات')),
-                      onPressed: () => showDialog<void>(
-                        context: context,
-                        builder: (_) => ImportCardLinks(initialWalletPk: widget.wallet!.walletPk),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: SizedBox(height: 15),
-          ),
-          SliverToBoxAdapter(
-            child: widget.wallet == null ||
-                    widget.routesToPopAfterDelete ==
-                        RoutesToPopAfterDelete.PreventDelete
-                ? SizedBox.shrink()
-                : Padding(
-                    padding: const EdgeInsetsDirectional.only(
-                      start: 24,
-                      end: 24,
-                      bottom: 10,
-                    ),
-                    child: SettingsContainer(
-                      isOutlined: true,
-                      onTap: () async {
-                        if (widget.wallet != null)
-                          mergeWalletPopup(
-                            context,
-                            walletOriginal: widget.wallet!,
-                            routesToPopAfterDelete:
-                                widget.routesToPopAfterDelete,
-                          );
-                      },
-                      title: "merge-account".tr(),
-                      icon: appStateSettings["outlinedIcons"]
-                          ? Icons.merge_outlined
-                          : Icons.merge_rounded,
-                      iconScale: 1,
-                      isWideOutlined: true,
-                    ),
-                  ),
-          ),
-          if (widget.wallet != null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsetsDirectional.only(
-                  start: 20,
-                  end: 20,
-                  bottom: 10,
-                ),
-                child: WidgetSizeBuilder(widgetBuilder: (Size? size) {
-                  return Container(
-                    height: size?.height,
-                    child: Row(
+                  if (credit) ...[
+                    const SizedBox(height: 10),
+                    CashuOptionSection(
+                      icon: Icons.receipt_long_outlined,
+                      title:
+                          _accountLabel('Repayment and fees', 'السداد والرسوم'),
                       children: [
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsetsDirectional.symmetric(
-                                horizontal: 4),
-                            child: SettingsContainer(
-                              isOutlinedColumn: true,
-                              isOutlined: true,
-                              onTap: () async {
-                                // Save any changes made to the wallet
-                                final wallet = await addWallet(popContext: false);
-                                if (!mounted || wallet == null) return;
-                                openBottomSheet(
-                                  context,
-                                  fullSnap: true,
-                                  CorrectBalancePopup(wallet: wallet),
-                                );
-                              },
-                              title: "correct-total-balance".tr(),
-                              icon: appStateSettings["outlinedIcons"]
-                                  ? Icons.library_add_outlined
-                                  : Icons.library_add_rounded,
-                              iconScale: 1,
-                              isWideOutlined: true,
-                              horizontalPadding: 5,
-                            ),
-                          ),
-                        ),
-                        if (Provider.of<AllWallets>(context)
-                                .indexedByPk
-                                .keys
-                                .length >
-                            1)
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsetsDirectional.symmetric(
-                                  horizontal: 4),
-                              child: SettingsContainer(
-                                isOutlinedColumn: true,
-                                isOutlined: true,
-                                onTap: () async {
-                                  if (widget.wallet != null) {
-                                    // Save any changes made to the wallet
-                                    final wallet = await addWallet(popContext: false);
-                                    if (!mounted || wallet == null) return;
-                                    openBalanceTransfer(
-                                      context,
-                                      TransferBalancePage(
-                                        wallet: wallet,
-                                        allowEditWallet: false,
-                                      ),
-                                    );
-                                  }
-                                },
-                                title: "transfer-balance".tr(),
-                                icon: appStateSettings["outlinedIcons"]
-                                    ? Icons.compare_arrows_outlined
-                                    : Icons.compare_arrows_rounded,
-                                iconScale: 1,
-                                isWideOutlined: true,
-                                horizontalPadding: 5,
-                              ),
-                            ),
-                          ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsetsDirectional.symmetric(
-                                horizontal: 4),
-                            child: SettingsContainer(
-                              isOutlinedColumn: true,
-                              isOutlined: true,
-                              onTap: () async {
-                                openDecimalPrecisionPopup();
-                              },
-                              title: "decimal-precision".tr(),
-                              icon: appStateSettings["outlinedIcons"]
-                                  ? Symbols.decimal_increase_sharp
-                                  : Symbols.decimal_increase_rounded,
-                              iconScale: 1,
-                              isWideOutlined: true,
-                              horizontalPadding: 5,
-                            ),
-                          ),
-                        ),
+                        _creditAccountDetails(),
+                        _optionalAmount(
+                            _accountLabel('Fixed minimum or floor',
+                                'مبلغ الحد الأدنى الثابت'),
+                            minimumPayment,
+                            (v) => minimumPayment = v),
+                        _optionalAmount(
+                            _accountLabel('Minimum as % of statement',
+                                'نسبة الحد الأدنى من الكشف'),
+                            minimumPercent,
+                            (v) => minimumPercent = v,
+                            max: 100,
+                            suffix: '%'),
+                        _optionalAmount(
+                            _accountLabel('Flat late fee (estimate)',
+                                'رسوم التأخير الثابتة (تقديرية)'),
+                            lateFee,
+                            (v) => lateFee = v,
+                            max: 999999999999),
+                        _optionalAmount(
+                            _accountLabel('APR %', 'معدل الفائدة السنوي %'),
+                            aprPercent,
+                            (v) => aprPercent = v,
+                            suffix: '%'),
                       ],
                     ),
-                  );
-                }),
-              ),
-            ),
-          if (widget.wallet == null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsetsDirectional.only(
-                  bottom: 10,
-                  start: 20,
-                  end: 20,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsetsDirectional.only(bottom: 14),
-                      child: TextFont(
-                        text: "starting-at".tr() + " ",
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
+                  ],
+                  const SizedBox(height: 10),
+                  CashuOptionSection(
+                    icon: Icons.tune_rounded,
+                    title:
+                        _accountLabel('Account preferences', 'تفضيلات الحساب'),
+                    children: [
+                      SizedBox(
+                          height: 65,
+                          child: SelectColor(
+                              horizontalList: true,
+                              selectedColor: selectedColor,
+                              setSelectedColor: setSelectedColor)),
+                      CashuActionRow(
+                          icon: Symbols.decimal_increase_rounded,
+                          title: 'decimal-precision'.tr(),
+                          detail: MaterialLocalizations.of(context)
+                              .formatDecimal(selectedDecimals),
+                          onTap: openDecimalPrecisionPopup),
+                      SwitchListTile(
+                        title: Text(_accountLabel('Exclude from net worth',
+                            'استبعاد من صافي الثروة')),
+                        value: excludeFromNetWorth,
+                        onChanged: (v) =>
+                            setState(() => excludeFromNetWorth = v),
                       ),
-                    ),
-                    Flexible(
-                      child: TappableTextEntry(
-                        title: convertToMoney(
-                          Provider.of<AllWallets>(context),
-                          currencyKey: selectedCurrency,
-                          initialBalance,
-                          decimals: selectedDecimals,
-                        ),
-                        placeholder: convertToMoney(
-                          Provider.of<AllWallets>(context),
-                          currencyKey: selectedCurrency,
-                          initialBalance,
-                        ),
-                        showPlaceHolderWhenTextEquals: convertToMoney(
-                          Provider.of<AllWallets>(context),
-                          currencyKey: selectedCurrency,
-                          0,
-                        ),
-                        onTap: () {
-                          openEnterInitialBalanceBottomSheet();
-                        },
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        internalPadding: EdgeInsetsDirectional.symmetric(
-                            vertical: 2, horizontal: 4),
-                        padding: EdgeInsetsDirectional.symmetric(
-                            vertical: 10, horizontal: 3),
+                      SwitchListTile(
+                        title: Text(
+                            _accountLabel('Archive account', 'أرشفة الحساب')),
+                        value: accountArchived,
+                        onChanged: (v) => setState(() => accountArchived = v),
                       ),
+                    ],
+                  ),
+                  if (replacing) ...[
+                    const SizedBox(height: 10),
+                    CashuOptionSection(
+                      icon: Icons.settings_outlined,
+                      title: _accountLabel('Manage account', 'إدارة الحساب'),
+                      children: [
+                        CashuActionRow(
+                            icon: Icons.edit_outlined,
+                            title: 'correct-total-balance'.tr(),
+                            onTap: () async {
+                              final wallet = await addWallet(popContext: false);
+                              if (!mounted || wallet == null) return;
+                              openBottomSheet(
+                                  context,
+                                  fullSnap: true,
+                                  CorrectBalancePopup(wallet: wallet));
+                            }),
+                        if (accounts.list.length > 1)
+                          CashuActionRow(
+                              icon: Icons.compare_arrows,
+                              title: 'transfer-balance'.tr(),
+                              onTap: () async {
+                                final wallet =
+                                    await addWallet(popContext: false);
+                                if (!mounted || wallet == null) return;
+                                openBalanceTransfer(
+                                    context,
+                                    TransferBalancePage(
+                                        wallet: wallet,
+                                        allowEditWallet: false));
+                              }),
+                        if (widget.routesToPopAfterDelete !=
+                            RoutesToPopAfterDelete.PreventDelete)
+                          CashuActionRow(
+                              icon: Icons.merge_outlined,
+                              title: 'merge-account'.tr(),
+                              onTap: () => mergeWalletPopup(context,
+                                  walletOriginal: widget.wallet!,
+                                  routesToPopAfterDelete:
+                                      widget.routesToPopAfterDelete)),
+                        if (widget.wallet!.walletPk != '0' &&
+                            widget.routesToPopAfterDelete !=
+                                RoutesToPopAfterDelete.PreventDelete)
+                          CashuActionRow(
+                              icon: Icons.delete_outline,
+                              title: 'delete-account'.tr(),
+                              onTap: () => deleteWalletPopup(context,
+                                  wallet: widget.wallet!,
+                                  routesToPopAfterDelete:
+                                      widget.routesToPopAfterDelete)),
+                      ],
                     ),
                   ],
-                ),
+                ],
               ),
             ),
-          if (widget.wallet == null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsetsDirectional.only(
-                  start: 24,
-                  end: 24,
-                  bottom: 10,
-                ),
-                child: SettingsContainer(
-                  isOutlinedColumn: false,
-                  isOutlined: true,
-                  onTap: () async {
-                    openDecimalPrecisionPopup();
-                  },
-                  title: "decimal-precision".tr(),
-                  icon: appStateSettings["outlinedIcons"]
-                      ? Symbols.decimal_increase_sharp
-                      : Symbols.decimal_increase_rounded,
-                  iconScale: 1,
-                  isWideOutlined: true,
-                  horizontalPadding: 15,
-                ),
-              ),
-            ),
-          SliverToBoxAdapter(child: SizedBox(height: 10)),
-          CurrencyPicker(
-            showExchangeRateInfoNotice: true,
-            onSelected: setSelectedCurrency,
-            initialCurrency: selectedCurrency,
-            onHasFocus: () {
-              // Disable scroll when focus - because iOS header height is different than that of Android.
-              // Future.delayed(Duration(milliseconds: 500), () {
-              //   addWalletPageKey.currentState?.scrollTo(250);
-              // });
-            },
           ),
-          SliverToBoxAdapter(child: SizedBox(height: 65)),
-          // SliverToBoxAdapter(
-          //   child: KeyboardHeightAreaAnimated(),
-          // ),
         ],
       ),
     );
   }
 }
+
+class _CardSuffixInUse implements Exception {}
 
 class CorrectBalancePopup extends StatefulWidget {
   const CorrectBalancePopup({
@@ -1402,7 +1383,8 @@ Future<String?> createCorrectionTransaction(
   return null;
 }
 
-Future<bool> openBalanceTransfer(BuildContext context, TransferBalancePage page) async =>
+Future<bool> openBalanceTransfer(
+        BuildContext context, TransferBalancePage page) async =>
     await pushRoute(context, page) == true;
 
 class TransferBalancePage extends StatefulWidget {
@@ -1444,14 +1426,19 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
   late final _title = TextEditingController(text: widget.initialTitle ?? '');
   late final _wallets = database.watchAllWallets().asyncMap((wallets) async {
     final details = await database.getAllAccountDetails();
-    return wallets.where((wallet) => details[wallet.walletPk]?['archived'] != 1).toList();
+    return wallets
+        .where((wallet) => details[wallet.walletPk]?['archived'] != 1)
+        .toList();
   });
   late DateTime? _date = widget.initialDate;
   late final _openedAt = DateTime.now();
   late final bool _reverseOnOpen = widget.initialIsNegative == true;
-  late String? _sourcePk = (_reverseOnOpen ? widget.initialTarget : widget.wallet)?.walletPk;
-  late String? _targetPk = (_reverseOnOpen ? widget.wallet : widget.initialTarget)?.walletPk;
-  late String? _explicitCurrency = widget.initialAmountWallet?.currency?.toLowerCase();
+  late String? _sourcePk =
+      (_reverseOnOpen ? widget.initialTarget : widget.wallet)?.walletPk;
+  late String? _targetPk =
+      (_reverseOnOpen ? widget.wallet : widget.initialTarget)?.walletPk;
+  late String? _explicitCurrency =
+      widget.initialAmountWallet?.currency?.toLowerCase();
   bool _instaPay = false;
   bool _saving = false;
   String? _error;
@@ -1471,7 +1458,9 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
       return null;
     }
     final parsed = double.tryParse(normalized);
-    return parsed != null && parsed > 0 && parsed <= 999999999999 ? parsed : null;
+    return parsed != null && parsed > 0 && parsed <= 999999999999
+        ? parsed
+        : null;
   }
 
   @override
@@ -1491,7 +1480,9 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
     if (_saving) return;
     double? ratioTo(TransactionWallet wallet) {
       final destination = wallet.currency?.toLowerCase();
-      return currency == destination ? 1 : strictCurrencyRatio(currency, destination);
+      return currency == destination
+          ? 1
+          : strictCurrencyRatio(currency, destination);
     }
 
     final fromRatio = ratioTo(source);
@@ -1531,7 +1522,8 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
     final creditId = uuid.v4();
     final title = _title.text.trim();
     final arabic = _arabic;
-    final note = "transferred-balance".tr() + '\n' + source.name + ' → ' + target.name;
+    final note =
+        "transferred-balance".tr() + '\n' + source.name + ' → ' + target.name;
     final debit = Transaction(
       transactionPk: debitId,
       pairedTransactionFk: creditId,
@@ -1554,7 +1546,8 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
       note: note,
       categoryFk: '0',
       walletFk: target.walletPk,
-      dateCreated: _fixedRepayment ? when : when.add(const Duration(seconds: 1)),
+      dateCreated:
+          _fixedRepayment ? when : when.add(const Duration(seconds: 1)),
       income: true,
       paid: true,
       skipPaid: false,
@@ -1573,7 +1566,9 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
       final repayment = widget.statementRepayment;
       final saved = repayment == null
           ? await database.saveAtomicLocalTransfer(debit, credit,
-              idempotencyKey: idempotencyKey, instaPay: instaPay, arabicFeeLabel: arabic)
+              idempotencyKey: idempotencyKey,
+              instaPay: instaPay,
+              arabicFeeLabel: arabic)
           : await saveCardStatementRepayment(database, repayment, debit, credit,
               idempotencyKey: idempotencyKey);
       if (!mounted) return;
@@ -1629,8 +1624,11 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
                   value: wallet.walletPk,
                   enabled: wallet.walletPk != other?.walletPk,
                   child: Text(
-                    [wallet.name, if (wallet.currency != null) wallet.currency!.toUpperCase()]
-                        .join(' · '),
+                    [
+                      wallet.name,
+                      if (wallet.currency != null)
+                        wallet.currency!.toUpperCase()
+                    ].join(' · '),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -1675,14 +1673,19 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
   Widget _transferForm(List<TransactionWallet> wallets) {
     final indexed = {for (final wallet in wallets) wallet.walletPk: wallet};
     final allWallets = AllWallets(list: wallets, indexedByPk: indexed);
-    final current = indexed[appStateSettings['selectedWalletPk']] ?? wallets.firstOrNull;
+    final current =
+        indexed[appStateSettings['selectedWalletPk']] ?? wallets.firstOrNull;
     final target = indexed[_targetPk];
     final source = indexed[_sourcePk] ??
-        (_sourcePk == null && !_reverseOnOpen && !_fixedRepayment && current != target
+        (_sourcePk == null &&
+                !_reverseOnOpen &&
+                !_fixedRepayment &&
+                current != target
             ? current
             : null);
-    final currency =
-        _explicitCurrency ?? source?.currency?.toLowerCase() ?? target?.currency?.toLowerCase();
+    final currency = _explicitCurrency ??
+        source?.currency?.toLowerCase() ??
+        target?.currency?.toLowerCase();
     final currencies = {
       for (final wallet in wallets)
         if (wallet.currency != null) wallet.currency!.toLowerCase(),
@@ -1691,9 +1694,12 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
         widget.initialObjectiveLoanPk == null &&
         isInstaPayCurrency(source?.currency) &&
         isInstaPayCurrency(target?.currency);
-    final useInstaPay = canUseInstaPay && isInstaPayCurrency(currency) && _instaPay;
+    final useInstaPay =
+        canUseInstaPay && isInstaPayCurrency(currency) && _instaPay;
     final principal = _principal;
-    final fee = useInstaPay && principal != null ? instaPayTransferFee(principal) : null;
+    final fee = useInstaPay && principal != null
+        ? instaPayTransferFee(principal)
+        : null;
     String money(double amount) => convertToMoney(
           allWallets,
           amount,
@@ -1702,7 +1708,8 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
         );
     final scheme = Theme.of(context).colorScheme;
 
-    if (wallets.length < 2 || (_fixedRepayment && (source == null || target == null))) {
+    if (wallets.length < 2 ||
+        (_fixedRepayment && (source == null || target == null))) {
       return Center(
           child: Padding(
         padding: const EdgeInsetsDirectional.all(24),
@@ -1721,57 +1728,52 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
           child: ListView(
             padding: const EdgeInsetsDirectional.fromSTEB(20, 16, 20, 12),
             children: [
-              Card(
-                margin: EdgeInsets.zero,
-                elevation: 0,
-                color: scheme.surfaceContainerLow,
-                child: Padding(
-                  padding: const EdgeInsetsDirectional.all(16),
-                  child: Column(
-                    children: [
-                      _accountField(
-                        label: _label('From account', 'من حساب'),
-                        wallets: wallets,
-                        selected: source,
-                        other: target,
-                        onChanged: (id) => setState(() {
-                          _sourcePk = id;
-                          _error = null;
-                        }),
-                      ),
-                      if (!_fixedRepayment)
-                        IconButton(
-                          tooltip: _label('Swap accounts', 'بدّل الحسابين'),
-                          icon: const Icon(Icons.swap_vert_rounded),
-                          onPressed: _saving || source == null || target == null
-                              ? null
-                              : () => setState(() {
-                                    _sourcePk = target.walletPk;
-                                    _targetPk = source.walletPk;
-                                    _error = null;
-                                  }),
-                        )
-                      else
-                        const SizedBox(height: 12),
-                      _accountField(
-                        label: _label('To account', 'إلى حساب'),
-                        wallets: wallets,
-                        selected: target,
-                        other: source,
-                        onChanged: (id) => setState(() {
-                          _targetPk = id;
-                          _error = null;
-                        }),
-                      ),
-                    ],
-                  ),
+              CashuPanel(
+                child: Column(
+                  children: [
+                    _accountField(
+                      label: _label('From account', 'من حساب'),
+                      wallets: wallets,
+                      selected: source,
+                      other: target,
+                      onChanged: (id) => setState(() {
+                        _sourcePk = id;
+                        _error = null;
+                      }),
+                    ),
+                    if (!_fixedRepayment)
+                      IconButton(
+                        tooltip: _label('Swap accounts', 'بدّل الحسابين'),
+                        icon: const Icon(Icons.swap_vert_rounded),
+                        onPressed: _saving || source == null || target == null
+                            ? null
+                            : () => setState(() {
+                                  _sourcePk = target.walletPk;
+                                  _targetPk = source.walletPk;
+                                  _error = null;
+                                }),
+                      )
+                    else
+                      const SizedBox(height: 12),
+                    _accountField(
+                      label: _label('To account', 'إلى حساب'),
+                      wallets: wallets,
+                      selected: target,
+                      other: source,
+                      onChanged: (id) => setState(() {
+                        _targetPk = id;
+                        _error = null;
+                      }),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 20),
               TextField(
                 controller: _amount,
                 enabled: !_saving,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
                 decoration: InputDecoration(
                   labelText: _label('Transfer amount', 'مبلغ التحويل'),
                   border: const OutlineInputBorder(),
@@ -1788,10 +1790,12 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
                 DropdownButtonFormField<String>(
                   key: ValueKey(('transfer-currency', currency)),
                   initialValue: currencies.contains(currency) ? currency : null,
-                  decoration: InputDecoration(labelText: 'select-currency'.tr()),
+                  decoration:
+                      InputDecoration(labelText: 'select-currency'.tr()),
                   items: [
                     for (final code in currencies)
-                      DropdownMenuItem(value: code, child: Text(code.toUpperCase())),
+                      DropdownMenuItem(
+                          value: code, child: Text(code.toUpperCase())),
                   ],
                   onChanged: _saving
                       ? null
@@ -1807,11 +1811,15 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
                 ),
               if (canUseInstaPay)
                 SwitchListTile(
-                  contentPadding: const EdgeInsetsDirectional.symmetric(horizontal: 12),
-                  title: Text(_label('InstaPay transfer', 'تحويل عبر إنستاباي')),
+                  contentPadding:
+                      const EdgeInsetsDirectional.symmetric(horizontal: 12),
+                  title:
+                      Text(_label('InstaPay transfer', 'تحويل عبر إنستاباي')),
                   subtitle: Text(fee == null
-                      ? _label('0.1%, EGP 0.50 to 20', '٠٫١٪، من ٥٠ قرش لحد ٢٠ جنيه')
-                      : _label('Fee ${money(fee)} · Total debit ${money(principal! + fee)}',
+                      ? _label(
+                          '0.1%, EGP 0.50 to 20', '٠٫١٪، من ٥٠ قرش لحد ٢٠ جنيه')
+                      : _label(
+                          'Fee ${money(fee)} · Total debit ${money(principal! + fee)}',
                           'الرسوم ${money(fee)} · إجمالي الخصم ${money(principal! + fee)}')),
                   value: useInstaPay,
                   onChanged: _saving
@@ -1822,10 +1830,10 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
                             _error = null;
                           }),
                 ),
-              ExpansionTile(
-                title: Text('transaction-details'.tr()),
+              CashuOptionSection(
+                icon: Icons.tune_rounded,
+                title: _label('Date and reference', 'التاريخ والمرجع'),
                 initiallyExpanded: widget.showAllEditDetails,
-                childrenPadding: const EdgeInsetsDirectional.fromSTEB(12, 0, 12, 12),
                 children: [
                   TextField(
                     controller: _title,
@@ -1835,10 +1843,11 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
                   const SizedBox(height: 12),
                   DateButton(
                     initialSelectedDate: _date ?? _openedAt,
-                    initialSelectedTime: TimeOfDay.fromDateTime(_date ?? _openedAt),
+                    initialSelectedTime:
+                        TimeOfDay.fromDateTime(_date ?? _openedAt),
                     setSelectedDate: (date) => _date = date,
-                    setSelectedTime: (time) =>
-                        _date = (_date ?? _openedAt).copyWith(hour: time.hour, minute: time.minute),
+                    setSelectedTime: (time) => _date = (_date ?? _openedAt)
+                        .copyWith(hour: time.hour, minute: time.minute),
                   ),
                 ],
               ),
@@ -1855,12 +1864,17 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
           child: SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: _saving || source == null || target == null || principal == null
+              onPressed: _saving ||
+                      source == null ||
+                      target == null ||
+                      principal == null
                   ? null
-                  : () => _save(source, target, currency, principal, instaPay: useInstaPay),
+                  : () => _save(source, target, currency, principal,
+                      instaPay: useInstaPay),
               icon: _saving
                   ? const SizedBox.square(
-                      dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.compare_arrows),
               label: Text(_label('Save transfer', 'حفظ التحويل')),
             ),
@@ -1873,7 +1887,11 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('transfer-balance'.tr())),
+      backgroundColor: CashuColors(context).canvas,
+      appBar: AppBar(
+        backgroundColor: CashuColors(context).canvas,
+        title: Text('transfer-balance'.tr()),
+      ),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -1888,7 +1906,8 @@ class _TransferBalancePageState extends State<TransferBalancePage> {
                     'تعذّر تحميل الحسابات.',
                   )));
                 final wallets = snapshot.data;
-                if (wallets == null) return const Center(child: CircularProgressIndicator());
+                if (wallets == null)
+                  return const Center(child: CircularProgressIndicator());
                 return _transferForm(wallets);
               },
             ),

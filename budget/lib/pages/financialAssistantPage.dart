@@ -1,3 +1,4 @@
+import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/addWalletPage.dart';
@@ -322,71 +323,157 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
     super.dispose();
   }
 
+  void _quickQuery(String question, FinancialAssistantIntentType type,
+      SpendingPeriod period) {
+    _input.text = question;
+    _applyIntent(FinancialAssistantIntent(
+      type: type,
+      rawText: question,
+      requiresConfirmation: false,
+      spendingPeriod: period,
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final intent = _intent;
+    final colors = CashuColors(context);
+    final busy = _listening || _requestingAi;
     return PageFramework(
       title: _label('Offline assistant', 'المساعد دون اتصال'),
+      backgroundColor: colors.canvas,
+      horizontalPaddingConstrained: true,
       capitalizeTitle: false,
       listWidgets: [
         Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextField(
-                controller: _input,
-                enabled: !_requestingAi,
-                maxLength: 250,
-                decoration: InputDecoration(
-                  labelText: _label(
-                    'Ask about balances or describe a transaction',
-                    'اسأل عن الرصيد أو صِف معاملة',
-                  ),
-                  hintText: _label('I paid 250 EGP', 'دفعت ٢٥٠ جنيه'),
-                ),
-                onChanged: (_) => setState(() {
-                  _intent = null;
-                  _wallet = null;
-                  _accountTotals = null;
-                }),
+              CashuGreenPanel(
+                child: Row(children: [
+                  const Icon(Icons.auto_awesome_outlined,
+                      color: Color(0xffb4edb8), size: 28),
+                  const SizedBox(width: 12),
+                  Flexible(
+                      child: Text(
+                          _label('Get a quick account summary',
+                              'اعرف ملخّص حساباتك'),
+                          style: const TextStyle(
+                              color: Color(0xffeff8f0),
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18))),
+                ]),
               ),
-              FutureBuilder<bool>(
-                future: _voiceAvailable,
-                builder: (context, snapshot) => snapshot.data == true
-                    ? OutlinedButton.icon(
-                        onPressed: _requestingAi ? null : _dictate,
-                        icon: Icon(_listening ? Icons.stop : Icons.mic_none),
-                        label: Text(_listening
-                            ? _label('Cancel dictation', 'إلغاء الإملاء')
-                            : _label('Dictate offline', 'الإملاء دون اتصال')),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-              FilledButton(
-                onPressed: _listening || _requestingAi ? null : _interpret,
-                child: Text(_label('Continue', 'متابعة')),
-              ),
-              Wrap(spacing: 8, children: [
-                OutlinedButton(
-                  onPressed:
-                      _requestingAi || _listening ? null : _interpretOnline,
-                  child: Text(_label('Use OpenAI', 'استخدام OpenAI')),
+              const SizedBox(height: 10),
+              CashuPanel(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    for (final (icon, text, type, period) in [
+                      (
+                        Icons.account_balance_wallet_outlined,
+                        _label('Current balances', 'الأرصدة الحالية'),
+                        FinancialAssistantIntentType.queryBalance,
+                        SpendingPeriod.currentMonth
+                      ),
+                      (
+                        Icons.calendar_today_outlined,
+                        _label('Spending this month', 'مصروفات الشهر ده'),
+                        FinancialAssistantIntentType.querySpending,
+                        SpendingPeriod.currentMonth
+                      ),
+                      (
+                        Icons.history_rounded,
+                        _label('Spending last month', 'مصروفات الشهر اللي فات'),
+                        FinancialAssistantIntentType.querySpending,
+                        SpendingPeriod.previousMonth
+                      ),
+                    ])
+                      CashuActionRow(
+                          icon: icon,
+                          title: text,
+                          onTap: busy
+                              ? null
+                              : () => _quickQuery(text, type, period)),
+                  ],
                 ),
-                TextButton(
-                  onPressed: _requestingAi ? null : _editAiSettings,
-                  child:
-                      Text(_label('AI settings', 'إعدادات الذكاء الاصطناعي')),
-                ),
-              ]),
+              ),
               if (_requestingAi) const LinearProgressIndicator(),
-              if (intent != null && _aiSuggested)
-                Text(_label('OpenAI suggestion', 'اقتراح OpenAI')),
-              if (_accountTotals != null)
-                _queryResult(
-                    intent!.type == FinancialAssistantIntentType.querySpending)
-              else if (intent != null)
-                _draft(intent),
+              if (intent != null) ...[
+                CashuSectionTitle(_aiSuggested
+                    ? _label('OpenAI suggestion', 'اقتراح OpenAI')
+                    : _label('Result', 'النتيجة')),
+                CashuPanel(
+                  child: _accountTotals != null
+                      ? _queryResult(intent.type ==
+                          FinancialAssistantIntentType.querySpending)
+                      : _draft(intent),
+                ),
+              ],
+              CashuSectionTitle(
+                  _label('Ask or record a transaction', 'اسأل أو سجّل معاملة')),
+              CashuPanel(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: _input,
+                        enabled: !_requestingAi,
+                        maxLength: 250,
+                        textInputAction: TextInputAction.go,
+                        decoration: cashuInput(
+                            context,
+                            _label(
+                                'e.g. I paid 250 EGP', 'مثال: دفعت ٢٥٠ جنيه')),
+                        onSubmitted: busy ? null : (_) => _interpret(),
+                        onChanged: (_) => setState(() {
+                          _intent = null;
+                          _wallet = null;
+                          _accountTotals = null;
+                          _aiSuggested = false;
+                        }),
+                      ),
+                      Row(children: [
+                        Expanded(
+                            child: FilledButton(
+                          onPressed: busy ? null : _interpret,
+                          child: Text(_label('Continue', 'متابعة')),
+                        )),
+                        FutureBuilder<bool>(
+                          future: _voiceAvailable,
+                          builder: (context, snapshot) => snapshot.data == true
+                              ? IconButton(
+                                  onPressed: _requestingAi ? null : _dictate,
+                                  icon: Icon(
+                                      _listening ? Icons.stop : Icons.mic_none),
+                                  tooltip: _listening
+                                      ? _label(
+                                          'Cancel dictation', 'إلغاء الإملاء')
+                                      : _label('Dictate offline',
+                                          'الإملاء دون اتصال'),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
+                      ]),
+                    ]),
+              ),
+              const SizedBox(height: 12),
+              CashuOptionSection(
+                icon: Icons.cloud_outlined,
+                title: _label(
+                    'Online assistant options', 'خيارات المساعد أونلاين'),
+                children: [
+                  CashuActionRow(
+                      icon: Icons.auto_awesome_outlined,
+                      title: _label('Use OpenAI', 'استخدام OpenAI'),
+                      onTap: busy ? null : _interpretOnline),
+                  CashuActionRow(
+                      icon: Icons.key_outlined,
+                      title: _label('AI settings', 'إعدادات الذكاء الاصطناعي'),
+                      onTap: _requestingAi ? null : _editAiSettings),
+                ],
+              ),
             ],
           ),
         ),

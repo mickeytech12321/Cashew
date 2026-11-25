@@ -1,3 +1,4 @@
+import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/pages/bankCertificatesPage.dart';
 import 'package:budget/pages/syncConflictsPage.dart';
@@ -99,6 +100,7 @@ class MoreActionsPageState extends State<MoreActionsPage> {
       return PageFramework(
         key: pageState,
         title: "more-actions".tr(),
+        backgroundColor: CashuColors(context).canvas,
         backButton: false,
         horizontalPaddingConstrained: true,
         actions: [
@@ -120,9 +122,7 @@ class MoreActionsPageState extends State<MoreActionsPage> {
             ],
           ),
         ],
-        listWidgets: [
-          MorePages()
-        ],
+        listWidgets: [MorePages()],
       );
     });
   }
@@ -148,8 +148,8 @@ class MorePages extends StatelessWidget {
             _SettingsLink(
               Icons.settings_outlined,
               'settings'.tr(),
-              subtitle:
-                  label('Appearance, privacy and backup', 'المظهر والخصوصية والنسخ الاحتياطي'),
+              subtitle: label('Appearance, privacy and backup',
+                  'المظهر والخصوصية والنسخ الاحتياطي'),
               page: SettingsPageFramework(key: settingsPageFrameworkStateKey),
             ),
             _SettingsLink(Icons.compare_arrows, 'transfer-balance'.tr(),
@@ -157,29 +157,36 @@ class MorePages extends StatelessWidget {
             _SettingsLink(
               Icons.grid_view_rounded,
               label('Financial tools', 'الأدوات المالية'),
-              subtitle:
-                  label('InstaPay, bank certificates and cards', 'إنستاباي والشهادات البنكية والبطاقات'),
+              subtitle: label('InstaPay, bank certificates and cards',
+                  'إنستاباي والشهادات البنكية والبطاقات'),
               page: const _FinancialToolsPage(),
             ),
-            if (!hasSidebar && appStateSettings['showBillSplitterShortcut'] == true)
-              _SettingsLink(Icons.receipt_long_outlined, 'bill-splitter'.tr(), page: BillSplitter()),
+            if (!hasSidebar &&
+                appStateSettings['showBillSplitterShortcut'] == true)
+              _SettingsLink(Icons.receipt_long_outlined, 'bill-splitter'.tr(),
+                  page: BillSplitter()),
           ]),
           if (!hasSidebar)
             _SettingsGroup([
-              _SettingsLink(Icons.account_balance_wallet_outlined, 'accounts'.tr(),
+              _SettingsLink(
+                  Icons.account_balance_wallet_outlined, 'accounts'.tr(),
                   page: EditWalletsPage()),
               _SettingsLink(Icons.donut_large, 'budgets'.tr(),
-                  page:
-                      budgetShortcut ? EditBudgetPage() : BudgetsListPage(enableBackButton: true)),
-              _SettingsLink(Icons.category_outlined, 'categories'.tr(), page: EditCategoriesPage()),
-              _SettingsLink(Icons.title, 'titles'.tr(), page: EditAssociatedTitlesPage()),
-              _SettingsLink(
-                  Icons.bar_chart_outlined, navBarIconsData['allSpending']!.labelLong.tr(),
+                  page: budgetShortcut
+                      ? EditBudgetPage()
+                      : BudgetsListPage(enableBackButton: true)),
+              _SettingsLink(Icons.category_outlined, 'categories'.tr(),
+                  page: EditCategoriesPage()),
+              _SettingsLink(Icons.title, 'titles'.tr(),
+                  page: EditAssociatedTitlesPage()),
+              _SettingsLink(Icons.bar_chart_outlined,
+                  navBarIconsData['allSpending']!.labelLong.tr(),
                   page: WalletDetailsPage(wallet: null)),
             ], title: label('Manage', 'الإدارة')),
           if (!hasSidebar)
             _SettingsGroup([
-              _SettingsLink(Icons.repeat, 'subscriptions'.tr(), page: SubscriptionsPage()),
+              _SettingsLink(Icons.repeat, 'subscriptions'.tr(),
+                  page: SubscriptionsPage()),
               _SettingsLink(Icons.event_outlined, 'scheduled'.tr(),
                   page: UpcomingOverdueTransactions(overdueTransactions: null)),
               _SettingsLink(Icons.flag_outlined, 'goals'.tr(),
@@ -193,11 +200,14 @@ class MorePages extends StatelessWidget {
                   page: NotificationsPage()),
             if (!hasSidebar)
               GoogleAccountLoginButton(
-                  key: settingsGoogleAccountLoginButtonKey, isOutlinedButton: false),
-            _SettingsLink(Icons.info_outline, 'about-app'.tr(namedArgs: {'app': globalAppName}),
+                  key: settingsGoogleAccountLoginButtonKey,
+                  isOutlinedButton: false),
+            _SettingsLink(Icons.info_outline,
+                'about-app'.tr(namedArgs: {'app': globalAppName}),
                 page: AboutPage()),
             _SettingsLink(Icons.rate_review_outlined, 'feedback'.tr(),
-                onTap: () => openBottomSheet(context, RatingPopup(), fullSnap: true)),
+                onTap: () =>
+                    openBottomSheet(context, RatingPopup(), fullSnap: true)),
           ]),
         ],
       ),
@@ -265,6 +275,8 @@ class SettingsPageFrameworkState extends State<SettingsPageFramework> {
   Widget build(BuildContext context) {
     return PageFramework(
       title: "settings".tr(),
+      backgroundColor: CashuColors(context).canvas,
+      horizontalPaddingConstrained: true,
       dragDownToDismiss: true,
       listWidgets: [SettingsPageContent()],
     );
@@ -275,7 +287,8 @@ String _settingsLabel(BuildContext context, String en, String ar) =>
     Localizations.localeOf(context).languageCode == 'ar' ? ar : en;
 
 class _SettingsLink extends StatelessWidget {
-  const _SettingsLink(this.icon, this.title, {this.subtitle, this.page, this.onTap});
+  const _SettingsLink(this.icon, this.title,
+      {this.subtitle, this.page, this.onTap});
 
   final IconData icon;
   final String title;
@@ -284,25 +297,12 @@ class _SettingsLink extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return ListTile(
-      contentPadding: const EdgeInsetsDirectional.fromSTEB(14, 3, 12, 3),
-      leading: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: colors.secondaryContainer,
-          borderRadius: BorderRadius.circular(13),
-        ),
-        child: Icon(icon, size: 22, color: colors.onSecondaryContainer),
-      ),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: subtitle == null ? null : Text(subtitle!),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap ?? () => pushRoute(context, page!),
-    );
-  }
+  Widget build(BuildContext context) => CashuActionRow(
+        icon: icon,
+        title: title,
+        detail: subtitle,
+        onTap: onTap ?? () => pushRoute(context, page!),
+      );
 }
 
 class _SettingsGroup extends StatelessWidget {
@@ -328,12 +328,8 @@ class _SettingsGroup extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   )),
             ),
-          Card(
-            margin: EdgeInsets.zero,
-            elevation: 0,
-            clipBehavior: Clip.antiAlias,
-            color: theme.colorScheme.surfaceContainerLow,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          CashuPanel(
+            padding: EdgeInsets.zero,
             child: Column(
               children: [
                 for (var index = 0; index < children.length; index++) ...[
@@ -362,6 +358,7 @@ class _SettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) => PageFramework(
         title: title,
+        backgroundColor: CashuColors(context).canvas,
         dragDownToDismiss: true,
         horizontalPaddingConstrained: true,
         listWidgets: [
@@ -399,115 +396,157 @@ class _SettingsPageContentState extends State<SettingsPageContent> {
     final backups = label('Backup and data', 'النسخ ونقل البيانات');
     final widgets = label('Home screen widgets', 'ودجت الشاشة الرئيسية');
 
-    final sections = <(String, _SettingsLink)>[
+    final basics = label('Everyday settings', 'الإعدادات اليومية');
+    final accounts = label('Money and accounts', 'الفلوس والحسابات');
+    final data = label('Data and privacy', 'البيانات والخصوصية');
+    final extras = label('More preferences', 'خيارات إضافية');
+
+    final sections = <(String, String, _SettingsLink)>[
       (
+        basics,
         'theme style black amoled palette animations color dark icons ثيم ستايل داكن أسود لون أيقونات',
-        _SettingsLink(
-          Icons.palette_outlined,
-          appearance,
-          subtitle: label(
-              'Themes, colors, fonts and home screen', 'الثيمات والألوان والخطوط والشاشة الرئيسية'),
-          page: const CashUAppearancePage(),
-        ),
+        _SettingsLink(Icons.palette_outlined, appearance,
+            subtitle:
+                label('Light, dark and colors', 'الفاتح والداكن والألوان'),
+            page: const CashUAppearancePage()),
       ),
       (
-        'locale clock calendar keypad arabic english عربي انجليزي ساعة أرقام',
-        _SettingsLink(
-          Icons.language,
-          formats,
-          subtitle: label('Language, dates, currency and number format',
-              'اللغة والتواريخ والعملة وتنسيق الأرقام'),
-          page: _SettingsSection(formats, [
-            _SettingsGroup([
-              Builder(
-                  builder: (pageContext) => _SettingsLink(
-                        Icons.language,
-                        'language'.tr(),
-                        subtitle: languageDisplayFilter(appStateSettings['locale'].toString()),
-                        onTap: () => openLanguagePicker(pageContext),
-                      )),
-              PrimaryCurrencySetting(),
-              NumberFormattingSetting(),
-              PercentagePrecisionSetting(),
-              Time24HourFormatSetting(),
-              FirstDayOfWeekSetting(updateHomePage: true),
-              NumberPadFormatSetting(),
-            ]),
-          ]),
-        ),
+        basics,
+        'locale arabic english language عربي انجليزي لغة',
+        _SettingsLink(Icons.language, 'language'.tr(),
+            subtitle:
+                languageDisplayFilter(appStateSettings['locale'].toString()),
+            onTap: () => openLanguagePicker(context)),
       ),
       (
-        'spending default account transaction budget goals categories حساب معاملات مصروف',
-        _SettingsLink(
-          Icons.tune,
-          finance,
-          subtitle: label('Accounts, transactions, budgets, goals and titles',
-              'الحسابات والمعاملات والميزانيات والأهداف والعناوين'),
-          page: _SettingsSection(finance, [
-            _SettingsGroup([TransactionsSettings()], title: 'transactions'.tr()),
-            _SettingsGroup([WalletsSettings()], title: 'accounts'.tr()),
-            _SettingsGroup([BudgetSettings()], title: 'budgets'.tr()),
-            _SettingsGroup([ObjectiveSettings()], title: 'goals'.tr()),
-            _SettingsGroup([TitlesSettings()], title: 'titles'.tr()),
-          ]),
-        ),
+        basics,
+        'clock calendar keypad number first day time month تقويم ساعة أرقام بداية الاسبوع',
+        _SettingsLink(Icons.calendar_month_outlined, formats,
+            subtitle: label('Dates and numbers', 'التواريخ والأرقام'),
+            page: _SettingsSection(formats, [
+              _SettingsGroup([
+                Time24HourFormatSetting(),
+                FirstDayOfWeekSetting(updateHomePage: true)
+              ], title: label('Dates and time', 'التاريخ والوقت')),
+              _SettingsGroup([
+                NumberFormattingSetting(),
+                PercentagePrecisionSetting(),
+                NumberPadFormatSetting()
+              ], title: label('Numbers', 'الأرقام')),
+            ])),
       ),
       (
-        'security fingerprint reminder تذكير بصمة أمان',
-        _SettingsLink(
-          Icons.shield_outlined,
-          privacy,
-          subtitle: label('Biometric lock and alerts', 'القفل بالبصمة والتنبيهات'),
-          page: _SettingsSection(privacy, [
-            _SettingsGroup([
-              BiometricsSettingToggle(),
-              if (notificationsGlobalEnabled)
-                _SettingsLink(Icons.notifications_outlined, 'notifications'.tr(),
-                    page: NotificationsPage()),
-            ]),
-          ]),
-        ),
+        accounts,
+        'wallets accounts management credit debit رصيد حساب بطاقة كارت',
+        _SettingsLink(Icons.account_balance_wallet_outlined, 'accounts'.tr(),
+            page: EditWalletsPage()),
       ),
       (
+        accounts,
+        'currency primary default عمله جنيه دولار',
+        _SettingsLink(Icons.payments_outlined,
+            label('Primary currency', 'العملة الأساسية'),
+            page:
+                _SettingsSection(label('Primary currency', 'العملة الأساسية'), [
+              const _SettingsGroup([PrimaryCurrencySetting()]),
+            ])),
+      ),
+      (
+        accounts,
+        'category categories expense income تصنيف تصنيفات فئات',
+        _SettingsLink(Icons.category_outlined, 'categories'.tr(),
+            page: EditCategoriesPage()),
+      ),
+      (
+        accounts,
+        'bank messages sms notifications cards import financial automation رسائل بنوك استيراد إشعارات',
+        _SettingsLink(
+            Icons.sms_outlined, label('Bank messages', 'الرسائل البنكية'),
+            subtitle: label('Import and card links', 'الاستيراد وربط البطاقات'),
+            page: const FinancialImportPage()),
+      ),
+      (
+        data,
         'backup restore export import sheets sqlite sync oauth conflicts استيراد تصدير استعادة مزامنة نسخ',
-        _SettingsLink(
-          Icons.cloud_outlined,
-          backups,
-          subtitle:
-              label('Local backups, Google Drive and CSV', 'النسخ المحلي وGoogle Drive وملفات CSV'),
-          page: _SettingsSection(backups, [
-            _SettingsGroup([
-              ExportDB(),
-              ImportDB(),
-              GoogleAccountLoginButton(
-                  isOutlinedButton: false, forceButtonName: 'google-drive'.tr()),
-              _SettingsLink(
-                  Icons.sync_problem_outlined, label('Sync conflicts', 'تعارضات المزامنة'),
-                  page: const SyncConflictsPage()),
-            ], title: 'backups'.tr()),
-            _SettingsGroup([ExportCSV(), ImportCSV()], title: 'import-and-export'.tr()),
-          ]),
-        ),
+        _SettingsLink(Icons.cloud_outlined, backups,
+            subtitle: label('Google Drive and local files',
+                'Google Drive والملفات المحلية'),
+            page: _SettingsSection(backups, [
+              _SettingsGroup([
+                ExportDB(),
+                ImportDB(),
+                GoogleAccountLoginButton(
+                    isOutlinedButton: false,
+                    forceButtonName: 'google-drive'.tr()),
+                _SettingsLink(Icons.sync_problem_outlined,
+                    label('Sync conflicts', 'تعارضات المزامنة'),
+                    page: const SyncConflictsPage()),
+              ], title: 'backups'.tr()),
+              _SettingsGroup([ExportCSV(), ImportCSV()],
+                  title: 'import-and-export'.tr()),
+            ])),
       ),
       (
+        data,
+        'security fingerprint reminder lock تذكير بصمة أمان قفل',
+        _SettingsLink(Icons.shield_outlined, privacy,
+            subtitle: label('App lock and alerts', 'قفل التطبيق والتنبيهات'),
+            page: _SettingsSection(privacy, [
+              _SettingsGroup([
+                BiometricsSettingToggle(),
+                if (notificationsGlobalEnabled)
+                  _SettingsLink(
+                      Icons.notifications_outlined, 'notifications'.tr(),
+                      page: NotificationsPage()),
+              ]),
+            ])),
+      ),
+      (
+        extras,
+        'spending default account transaction budget goals titles حساب معاملات مصروف ميزانية عناوين',
+        _SettingsLink(Icons.tune_rounded, finance,
+            page: _SettingsSection(finance, [
+              for (final (icon, name, settings) in [
+                (
+                  Icons.receipt_long_outlined,
+                  'transactions'.tr(),
+                  TransactionsSettings()
+                ),
+                (
+                  Icons.account_balance_wallet_outlined,
+                  'accounts'.tr(),
+                  WalletsSettings()
+                ),
+                (Icons.donut_large_outlined, 'budgets'.tr(), BudgetSettings()),
+                (Icons.flag_outlined, 'goals'.tr(), ObjectiveSettings()),
+                (Icons.title, 'titles'.tr(), TitlesSettings()),
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: CashuOptionSection(
+                      icon: icon, title: name, children: [settings]),
+                ),
+            ])),
+      ),
+      (
+        extras,
         'widget launcher android home shortcut اختصار ويدجت الشاشة',
-        _SettingsLink(
-          Icons.widgets_outlined,
-          widgets,
-          subtitle: label('Balances, colors and widget opacity', 'الأرصدة والألوان وشفافية الودجت'),
-          page: _SettingsSection(widgets, [
-            _SettingsGroup([WidgetSettings()])
-          ]),
-        ),
+        _SettingsLink(Icons.widgets_outlined, widgets,
+            page: _SettingsSection(widgets, [
+              _SettingsGroup([WidgetSettings()])
+            ])),
       ),
     ];
-    String searchable(String text) => text.trim().toLowerCase().replaceAll(RegExp(r'[أإآ]'), 'ا');
+    String searchable(String text) =>
+        text.trim().toLowerCase().replaceAll(RegExp(r'[أإآ]'), 'ا');
     final query = searchable(_search.text);
     final matches = [
-      for (final (terms, link) in sections)
-        if (searchable('${link.title} ${link.subtitle} $terms').contains(query)) link,
+      for (final (section, terms, link) in sections)
+        if (searchable('${link.title} ${link.subtitle ?? ''} $terms')
+            .contains(query))
+          (section, link),
     ];
-    final colors = Theme.of(context).colorScheme;
+    final colors = CashuColors(context);
     return Padding(
       padding: const EdgeInsetsDirectional.symmetric(horizontal: 16),
       child: Column(
@@ -528,7 +567,7 @@ class _SettingsPageContentState extends State<SettingsPageContent> {
                       onPressed: () => setState(_search.clear),
                     ),
               filled: true,
-              fillColor: colors.surfaceContainerHigh,
+              fillColor: colors.panel,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(18),
                 borderSide: BorderSide.none,
@@ -542,8 +581,14 @@ class _SettingsPageContentState extends State<SettingsPageContent> {
               child: Text(label('No matching settings', 'مفيش إعدادات مطابقة'),
                   textAlign: TextAlign.center),
             )
+          else if (query.isNotEmpty)
+            _SettingsGroup([for (final (_, link) in matches) link])
           else
-            _SettingsGroup(matches),
+            for (final section in [basics, accounts, data, extras])
+              _SettingsGroup([
+                for (final (group, link) in matches)
+                  if (group == section) link,
+              ], title: section),
         ],
       ),
     );
@@ -559,10 +604,10 @@ class CashUAppearancePage extends StatefulWidget {
 
 class _CashUAppearancePageState extends State<CashUAppearancePage> {
   Future<void> _setTheme(String mode) async {
-    if (mode == 'dark' || mode == 'black') {
-      await updateSettings('forceFullDarkBackground', mode == 'black', updateGlobalState: false);
-    }
-    await updateSettings('theme', mode, updateGlobalState: true, forceGlobalStateUpdate: true);
+    await updateSettings('forceFullDarkBackground', mode == 'black',
+        updateGlobalState: false);
+    await updateSettings('theme', mode,
+        updateGlobalState: true, forceGlobalStateUpdate: true);
     if (mounted) {
       setState(() {});
       updateWidgetColorsAndText(context);
@@ -580,7 +625,8 @@ class _CashUAppearancePageState extends State<CashUAppearancePage> {
           includeThemeColor: false,
           selectedColor: HexColor(appStateSettings['accentColor']),
           setSelectedColor: (color) async {
-            await updateSettings('accentColor', toHexString(color), updateGlobalState: false);
+            await updateSettings('accentColor', toHexString(color),
+                updateGlobalState: false);
             await updateSettings('accentSystemColor', false,
                 updateGlobalState: true, forceGlobalStateUpdate: true);
             if (mounted) {
@@ -611,11 +657,23 @@ class _CashUAppearancePageState extends State<CashUAppearancePage> {
         'light',
         'light'.tr(),
         Icons.light_mode_outlined,
-        const Color(0xfff5f5fb),
-        const Color(0xff25263a)
+        const Color(0xffeef5eb),
+        const Color(0xff17271f)
       ),
-      ('dark', 'dark'.tr(), Icons.dark_mode_outlined, const Color(0xff27283c), Colors.white),
-      ('black', label('Pure black', 'أسود خالص'), Icons.contrast, Colors.black, Colors.white),
+      (
+        'dark',
+        'dark'.tr(),
+        Icons.dark_mode_outlined,
+        const Color(0xff202a26),
+        Colors.white
+      ),
+      (
+        'black',
+        label('Pure black', 'أسود خالص'),
+        Icons.contrast,
+        Colors.black,
+        Colors.white
+      ),
     ];
 
     return _SettingsSection(label('Appearance', 'المظهر'), [
@@ -639,7 +697,9 @@ class _CashUAppearancePageState extends State<CashUAppearancePage> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                           side: BorderSide(
-                            color: mode == id ? foreground : foreground.withValues(alpha: .3),
+                            color: mode == id
+                                ? foreground
+                                : foreground.withValues(alpha: .3),
                             width: mode == id ? 2 : 1,
                           ),
                         ),
@@ -651,12 +711,16 @@ class _CashUAppearancePageState extends State<CashUAppearancePage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(mode == id ? Icons.check_circle_outline : icon,
+                                Icon(
+                                    mode == id
+                                        ? Icons.check_circle_outline
+                                        : icon,
                                     color: foreground),
                                 const SizedBox(height: 8),
                                 Text(name,
-                                    style:
-                                        TextStyle(color: foreground, fontWeight: FontWeight.w600)),
+                                    style: TextStyle(
+                                        color: foreground,
+                                        fontWeight: FontWeight.w600)),
                               ],
                             ),
                           ),
@@ -671,27 +735,39 @@ class _CashUAppearancePageState extends State<CashUAppearancePage> {
         _SettingsLink(
           Icons.color_lens_outlined,
           'accent-color'.tr(),
-          subtitle:
-              label('Palettes, custom color and system color', 'ألوان جاهزة ولون مخصص ولون النظام'),
+          subtitle: label('Palettes, custom color and system color',
+              'ألوان جاهزة ولون مخصص ولون النظام'),
           onTap: _openAccentColors,
         ),
         SettingsContainerSwitch(
-          title: (getPlatform() == PlatformOS.isIOS ? 'colorful-interface' : 'material-you').tr(),
+          title: (getPlatform() == PlatformOS.isIOS
+                  ? 'colorful-interface'
+                  : 'material-you')
+              .tr(),
           initialValue: appStateSettings['materialYou'],
           icon: Icons.brush_outlined,
-          onSwitched: (value) => updateSettings('materialYou', value, updateGlobalState: true),
+          onSwitched: (value) =>
+              updateSettings('materialYou', value, updateGlobalState: true),
         ),
       ], title: 'theme'.tr()),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: CashuOptionSection(
+          icon: Icons.tune_rounded,
+          title: label('More display controls', 'خيارات عرض إضافية'),
+          children: [
+            FontPickerSetting(),
+            OutlinedIconsSetting(),
+            HeaderHeightSetting(),
+            IncreaseTextContrastSetting(),
+            AppAnimationSetting(),
+            CountingNumberAnimationSetting(),
+          ],
+        ),
+      ),
       _SettingsGroup([
-        FontPickerSetting(),
-        OutlinedIconsSetting(),
-        HeaderHeightSetting(),
-        IncreaseTextContrastSetting(),
-        AppAnimationSetting(),
-        CountingNumberAnimationSetting(),
-      ], title: 'style'.tr()),
-      _SettingsGroup([
-        _SettingsLink(Icons.home_outlined, 'edit-home-page'.tr(), page: EditHomePage()),
+        _SettingsLink(Icons.home_outlined, 'edit-home-page'.tr(),
+            page: EditHomePage()),
       ]),
     ]);
   }
@@ -709,7 +785,8 @@ class _FinancialToolsPage extends StatelessWidget {
       if (!context.mounted) return;
       if (accounts.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(label('Add an active EGP account first.', 'أضف حسابًا نشطًا بالجنيه الأول.')),
+          content: Text(label('Add an active EGP account first.',
+              'أضف حسابًا نشطًا بالجنيه الأول.')),
         ));
         return;
       }
@@ -719,17 +796,20 @@ class _FinancialToolsPage extends StatelessWidget {
       );
       final wallet = await database.getWalletInstance(selected.id);
       if (!context.mounted) return;
-      pushRoute(context, AddTransactionPage(
-        selectedIncome: false,
-        selectedWallet: wallet,
-        initialInstaPay: true,
-        startInitialAddTransactionSequence: false,
-        routesToPopAfterDelete: RoutesToPopAfterDelete.None,
-      ));
+      pushRoute(
+          context,
+          AddTransactionPage(
+            selectedIncome: false,
+            selectedWallet: wallet,
+            initialInstaPay: true,
+            startInitialAddTransactionSequence: false,
+            routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+          ));
     } catch (_) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(label('Could not load the payment account.', 'تعذّر فتح حساب الدفع.')),
+        content: Text(label(
+            'Could not load the payment account.', 'تعذّر فتح حساب الدفع.')),
       ));
     }
   }
@@ -755,22 +835,29 @@ class _FinancialToolsPage extends StatelessWidget {
             routesToPopAfterDelete: RoutesToPopAfterDelete.None,
           ),
         ),
-        _SettingsLink(Icons.link_outlined, label('Link card messages', 'ربط رسائل البطاقات'),
-            onTap: () => showDialog<void>(context: context, builder: (_) => const ImportCardLinks())),
+        _SettingsLink(Icons.link_outlined,
+            label('Link card messages', 'ربط رسائل البطاقات'),
+            onTap: () => showDialog<void>(
+                context: context, builder: (_) => const ImportCardLinks())),
       ], title: label('Payments and banking', 'الدفع والبنوك')),
       _SettingsGroup([
         _SettingsLink(Icons.compare_arrows, 'transfer-balance'.tr(),
             page: const TransferBalancePage(allowEditWallet: true)),
         _SettingsLink(Icons.history, label('Transfer history', 'سجل التحويلات'),
             page: const TransferHistoryPage()),
-        _SettingsLink(Icons.sms_outlined, label('Bank messages', 'الرسائل البنكية'),
+        _SettingsLink(
+            Icons.sms_outlined, label('Bank messages', 'الرسائل البنكية'),
             page: const FinancialImportPage()),
-        _SettingsLink(Icons.edit_note_outlined, label('Financial assistant', 'المساعد المالي'),
+        _SettingsLink(Icons.edit_note_outlined,
+            label('Financial assistant', 'المساعد المالي'),
             page: const FinancialAssistantPage()),
-        _SettingsLink(Icons.receipt_long_outlined, 'bill-splitter'.tr(), page: BillSplitter()),
-        _SettingsLink(Icons.ballot_outlined, 'transaction-activity-log'.tr(), page: ActivityPage()),
+        _SettingsLink(Icons.receipt_long_outlined, 'bill-splitter'.tr(),
+            page: BillSplitter()),
+        _SettingsLink(Icons.ballot_outlined, 'transaction-activity-log'.tr(),
+            page: ActivityPage()),
         if (appStateSettings['emailScanning'] == true)
-          _SettingsLink(Icons.mark_email_unread_outlined, 'auto-email-transactions'.tr(),
+          _SettingsLink(
+              Icons.mark_email_unread_outlined, 'auto-email-transactions'.tr(),
               page: AutoTransactionsPageEmail()),
         if (appStateSettings['notificationScanningDebug'] == true &&
             getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid)
@@ -779,17 +866,20 @@ class _FinancialToolsPage extends StatelessWidget {
               page: AutoTransactionsPageNotifications()),
       ], title: 'transactions'.tr()),
       _SettingsGroup([
-        _SettingsLink(Icons.bar_chart_outlined, label('Financial insights', 'التحليلات المالية'),
+        _SettingsLink(Icons.bar_chart_outlined,
+            label('Financial insights', 'التحليلات المالية'),
             page: const FinancialInsightsPage()),
-        _SettingsLink(
-            Icons.timeline_outlined, label('Cash-flow scenarios', 'سيناريوهات التدفق النقدي'),
+        _SettingsLink(Icons.timeline_outlined,
+            label('Cash-flow scenarios', 'سيناريوهات التدفق النقدي'),
             page: const PlanningScenariosPage()),
-        _SettingsLink(
-            Icons.account_balance_outlined, label('Assets and liabilities', 'الأصول والالتزامات'),
+        _SettingsLink(Icons.account_balance_outlined,
+            label('Assets and liabilities', 'الأصول والالتزامات'),
             page: const WealthAssetsPage()),
-        _SettingsLink(Icons.show_chart_outlined, label('Investments', 'الاستثمارات'),
+        _SettingsLink(
+            Icons.show_chart_outlined, label('Investments', 'الاستثمارات'),
             page: const InvestmentsPage()),
-        _SettingsLink(Icons.groups_outlined, label('Household profiles', 'ملفات أفراد الأسرة'),
+        _SettingsLink(Icons.groups_outlined,
+            label('Household profiles', 'ملفات أفراد الأسرة'),
             page: const HouseholdPage()),
       ], title: label('Planning and wealth', 'التخطيط والثروة')),
     ]);

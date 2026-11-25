@@ -139,3 +139,98 @@ class _LedgerLines extends CustomPainter {
   @override
   bool shouldRepaint(_LedgerLines oldDelegate) => false;
 }
+
+class CashuActionRow extends StatelessWidget {
+  const CashuActionRow({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.detail,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? detail;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = CashuColors(context);
+    return ListTile(
+      contentPadding: const EdgeInsetsDirectional.fromSTEB(12, 2, 12, 2),
+      leading: CashuIconTile(icon, size: 36),
+      title: Text(title,
+          style: TextStyle(color: colors.ink, fontWeight: FontWeight.w700)),
+      subtitle: detail == null
+          ? null
+          : Text(detail!, style: TextStyle(color: colors.muted)),
+      trailing: onTap == null
+          ? null
+          : Icon(
+              Directionality.of(context) == TextDirection.rtl
+                  ? Icons.chevron_left_rounded
+                  : Icons.chevron_right_rounded,
+              color: colors.muted,
+            ),
+      onTap: onTap,
+    );
+  }
+}
+
+class CashuOptionSection extends StatelessWidget {
+  const CashuOptionSection({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.detail,
+    this.initiallyExpanded = false,
+    required this.children,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? detail;
+  final bool initiallyExpanded;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = CashuColors(context);
+    return CashuPanel(
+      padding: EdgeInsets.zero,
+      child: ExpansionTile(
+        initiallyExpanded: initiallyExpanded,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        tilePadding: const EdgeInsetsDirectional.fromSTEB(12, 3, 12, 3),
+        childrenPadding:
+            const EdgeInsetsDirectional.only(start: 10, end: 10, bottom: 10),
+        leading: CashuIconTile(icon, size: 36),
+        title: Text(title,
+            style: TextStyle(color: colors.ink, fontWeight: FontWeight.w700)),
+        subtitle: detail == null
+            ? null
+            : Text(detail!, style: TextStyle(color: colors.muted)),
+        children: children,
+      ),
+    );
+  }
+}
+
+InputDecoration cashuInput(BuildContext context, String label,
+    {String? suffix}) {
+  final colors = CashuColors(context);
+  final border = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(13),
+    borderSide: BorderSide(color: colors.border),
+  );
+  return InputDecoration(
+    labelText: label,
+    suffixText: suffix,
+    filled: true,
+    fillColor: colors.canvas,
+    border: border,
+    enabledBorder: border,
+  );
+}

@@ -4,6 +4,13 @@
 > Rule: no APK build and no merge to `main` until explicitly requested.
 > DONE records a completed milestone. TESTED records an implemented path with automated verification. CODED indicates implementation with additional verification pending. PARTIAL and TODO indicate incomplete work.
 
+## CashU forms and settings
+
+- **Phase 02 / 08 · TESTED.** The account form shows account name and type, a currency picker, and the existing opening balance action. Institution selection has Egyptian bank and wallet suggestions, a searchable custom option, and fills a blank account name. Credit-card dates use a day picker and optional terms are grouped under repayment and fees. Existing account management, appearances, adjustments and transfers remain available.
+- **Phase 03 / 08 · TESTED.** A new eligible account can add an optional four-digit card link in its normal account save. A duplicate link rolls back the new account. The bank message inbox keeps paste, linked cards and optional filters in separate expandable sections. The phase continues to require review for recorded expenses.
+- **Phase 04 / 05 / 06 / 08 · TESTED.** Certificates use the optional bank chooser. Wealth entry uses asset type and currency choices with quantity for multi-unit assets. The assistant can show balances and monthly spending without typing or contacting a provider. Transaction notes and attachments, category search, and advanced display settings open on demand. The home layout is unchanged.
+- Settings groups common actions around everyday use, accounts, privacy and optional preferences. Flutter 3.50.1 passed 134 tests, including credit limit and statement-day persistence, provider selection, Arabic card digits and offline assistant queries. No schema migration or APK build was needed.
+
 ## CashU wallet redesign
 
 - **Phase 02 / 03 / 08 · TESTED.** The mobile and desktop home surface now combines a month and account selection, validated balances, spending, and banking shortcuts. A dedicated picker routes to account types, certificates, assets, debt and investments. The new account carousel respects the home widget and pin controls. Existing finance and settings routes are available.

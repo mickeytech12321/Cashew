@@ -1,3 +1,4 @@
+import 'package:budget/widgets/cashuPickers.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
@@ -170,7 +171,7 @@ class _CertificateForm extends StatefulWidget {
 
 class _CertificateFormState extends State<_CertificateForm> {
   final _name = TextEditingController();
-  final _bank = TextEditingController();
+  String? _bank;
   final _principal = TextEditingController();
   final _returnAmount = TextEditingController();
   final _rate = TextEditingController();
@@ -188,7 +189,7 @@ class _CertificateFormState extends State<_CertificateForm> {
 
   @override
   void dispose() {
-    for (final controller in [_name, _bank, _principal, _returnAmount, _rate]) {
+    for (final controller in [_name, _principal, _returnAmount, _rate]) {
       controller.dispose();
     }
     super.dispose();
@@ -265,7 +266,7 @@ class _CertificateFormState extends State<_CertificateForm> {
       await database.createBankCertificate(BankCertificate(
         id: _id,
         name: _name.text.trim(),
-        bank: _bank.text.trim(),
+        bank: _bank ?? '',
         walletPk: _account!,
         currency: 'egp',
         principalMinor: _minor(_principal.text)!,
@@ -418,10 +419,23 @@ class _CertificateFormState extends State<_CertificateForm> {
                           children: [
                             input(_name,
                                 label('Certificate name', 'اسم الشهادة')),
-                            input(
-                                _bank,
-                                label('Bank name (optional)',
-                                    'اسم البنك (اختياري)')),
+                            CashuActionRow(
+                              icon: Icons.account_balance_outlined,
+                              title:
+                                  label('Bank or provider', 'البنك أو التطبيق'),
+                              detail: _bank ?? label('Optional', 'اختياري'),
+                              onTap: _saving
+                                  ? null
+                                  : () async {
+                                      final result = await pickCashuInstitution(
+                                          context, _bank,
+                                          mobileWallet: false);
+                                      if (result != null && mounted) {
+                                        setState(() => _bank =
+                                            result.isEmpty ? null : result);
+                                      }
+                                    },
+                            ),
                             input(
                                 _principal, label('Principal', 'قيمة الشهادة'),
                                 amount: true),
