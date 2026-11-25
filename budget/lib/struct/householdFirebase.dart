@@ -276,6 +276,30 @@ class HouseholdFirebaseSession {
             await _online(_entriesQuery(space, account).get(_serverOnly))),
       );
 
+  /// Conflicts are reviewed against the server under the original access grant.
+  Future<SharedHouseholdEntry?> latestConflictEntry(
+    SharedHousehold space,
+    HouseholdMutation draft,
+  ) async {
+    if (space.id != draft.space) throw StateError('Household changed');
+    final available = await accounts(space);
+    if (available.offline) throw TimeoutException('Household is offline');
+    final account = available.items
+        .where((item) => item.id == draft.account)
+        .firstOrNull;
+    if (account == null ||
+        !account.role.canEdit ||
+        account.generation != draft.generation) {
+      throw StateError('Household edit access changed');
+    }
+    _checkSession();
+    final doc = await _online(_entryRef(draft).get(_serverOnly));
+    _checkSession();
+    final data = doc.data();
+    if (data == null || data['deleted'] == true) return null;
+    return SharedHouseholdEntry.fromJson({...data, 'id': doc.id});
+  }
+
   Stream<HouseholdRead<SharedHouseholdEntry>> liveEntries(
       String space, String account) async* {
     _checkSession();
@@ -457,13 +481,16 @@ class HouseholdFirebaseSession {
     });
   }
 
-  Future<HouseholdSendResult> _send(HouseholdMutation change) async {
-    _checkSession();
-    final reference = _space(change.space)
+  DocumentReference<Map<String, dynamic>> _entryRef(HouseholdMutation change) =>
+      _space(change.space)
         .collection('accounts')
         .doc(change.account)
         .collection('entries')
         .doc(change.entry.id);
+
+  Future<HouseholdSendResult> _send(HouseholdMutation change) async {
+    _checkSession();
+    final reference = _entryRef(change);
     try {
       return await _service.firestore.runTransaction((transaction) async {
         _checkSession();

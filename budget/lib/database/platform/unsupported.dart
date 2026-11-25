@@ -18,3 +18,11 @@ Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) 
 Future overwriteDefaultDB(Uint8List dataStore) => throw UnimplementedError();
 
 Future<void> discardPendingDatabaseRestore() async {}
+
+Future<({bool previous, bool rejected})> databaseRestoreStatus() async =>
+    (previous: false, rejected: false);
+
+Future<void> stagePreviousDatabaseRestore() async =>
+    throw UnsupportedError('Local recovery copies are unavailable.');
+
+Future<void> dismissRejectedDatabaseRestore() async {}

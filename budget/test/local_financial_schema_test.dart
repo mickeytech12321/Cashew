@@ -29,6 +29,20 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('bank import keeps the stored schema-47 fingerprint value', () {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    expect(
+      db.financialImportFingerprint(
+        sourceType: ' SMS ',
+        sender: 'CIB',
+        rawText: ' Purchase EGP 125 ',
+        occurredAt: DateTime.utc(2026, 11, 25, 9, 30),
+      ),
+      '769d4159e763bd0e',
+    );
+  });
+
   test('bank import pauses before linking a duplicate and can save a separate payment',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());
@@ -171,8 +185,72 @@ void main() {
     expect(await applyPendingNativeRestore(liveFile), isTrue);
     expect(await applyPendingNativeRestore(liveFile), isFalse);
     final restored = FinanceDatabase(NativeDatabase(liveFile));
-    addTearDown(restored.close);
     expect((await restored.getWalletInstance('wallet')).name, 'Restored');
+    await restored.close();
+    final previous = previousNativeRestoreFile(liveFile);
+    await stageNativeRestore(liveFile, await previous.readAsBytes());
+    expect(await applyPendingNativeRestore(liveFile), isTrue);
+    final recovered = FinanceDatabase(NativeDatabase(liveFile));
+    addTearDown(recovered.close);
+    expect((await recovered.getWalletInstance('wallet')).name, 'Keep until restart');
+  });
+
+  test('a broken staged backup is reported and startup keeps the live ledger',
+      () async {
+    final folder = await Directory.systemTemp.createTemp('cashew-broken-stage-');
+    addTearDown(() => folder.delete(recursive: true));
+    final liveFile = File('${folder.path}/db.sqlite');
+    final live = FinanceDatabase(NativeDatabase(liveFile));
+    await live.into(live.wallets).insert(WalletsCompanion.insert(
+        walletPk: const Value('wallet'), name: 'Intact', order: 0));
+    await live.close();
+    final truncated = (await liveFile.readAsBytes()).sublist(0, 512);
+    validateCashewBackupHeader(truncated);
+    await pendingNativeRestoreFile(liveFile).writeAsBytes(truncated);
+
+    expect(await applyPendingNativeRestore(liveFile), isFalse);
+    expect(await applyPendingNativeRestore(liveFile), isFalse);
+    expect(await rejectedNativeRestoreFile(liveFile).exists(), isTrue);
+    final reopened = FinanceDatabase(NativeDatabase(liveFile));
+    addTearDown(reopened.close);
+    expect((await reopened.getWalletInstance('wallet')).name, 'Intact');
+  });
+
+  test('startup retry keeps the original checkpoint after SQLite has copied the backup',
+      () async {
+    final folder = await Directory.systemTemp.createTemp('cashew-restore-retry-');
+    addTearDown(() => folder.delete(recursive: true));
+    final liveFile = File('${folder.path}/db.sqlite');
+    Future<void> seed(File file, String name) async {
+      final db = FinanceDatabase(NativeDatabase(file));
+      try {
+        await db.into(db.wallets).insert(WalletsCompanion.insert(
+            walletPk: const Value('wallet'), name: name, order: 0));
+      } finally {
+        await db.close();
+      }
+    }
+    final checkpoint = File('${liveFile.path}.restore-checkpoint');
+    await seed(checkpoint, 'Original ledger');
+    await seed(liveFile, 'Already copied');
+    await liveFile.copy('${liveFile.path}.restore-applying');
+
+    await expectLater(
+        applyPendingNativeRestore(liveFile, onApplied: () async {
+          throw StateError('Simulated interruption before saving restore preferences');
+        }),
+        throwsStateError);
+    var resumed = false;
+    expect(
+        await applyPendingNativeRestore(liveFile, onApplied: () async {
+          resumed = true;
+        }),
+        isTrue);
+    expect(resumed, isTrue);
+    expect(await checkpoint.exists(), isFalse);
+    final previous = FinanceDatabase(NativeDatabase(previousNativeRestoreFile(liveFile)));
+    addTearDown(previous.close);
+    expect((await previous.getWalletInstance('wallet')).name, 'Original ledger');
   });
 
   test('credit CSV imports atomically and preserves a previously saved statement', () async {
@@ -1248,6 +1326,13 @@ void main() {
     } finally {
       await legacy.close();
     }
+
+    final restoredFile = File('${directory.path}/db.sqlite');
+    await stageNativeRestore(restoredFile, await file.readAsBytes());
+    expect(await applyPendingNativeRestore(restoredFile), isTrue);
+    final restored = FinanceDatabase(NativeDatabase(restoredFile));
+    expect((await restored.getWalletInstance('existing')).name, 'Existing wallet');
+    await restored.close();
 
     final upgraded = FinanceDatabase(NativeDatabase(file));
     addTearDown(upgraded.close);

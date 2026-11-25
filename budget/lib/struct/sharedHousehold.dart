@@ -294,6 +294,47 @@ class HouseholdLocalStore {
         [state.name, scope, id],
       );
 
+  /// Replace the exact conflict the user reviewed in a single SQLite write.
+  Future<bool> restageConflict(
+    HouseholdMutation draft,
+    SharedHouseholdEntry latest,
+    String mutationId,
+  ) async {
+    if (latest.id != draft.entry.id ||
+        latest.revision <= draft.entry.revision ||
+        mutationId == draft.id) {
+      throw StateError('A newer revision and a new mutation ID are required');
+    }
+    final values = draft.deleted ? latest : draft.entry;
+    final replacement = HouseholdMutation(
+      id: mutationId,
+      space: draft.space,
+      account: draft.account,
+      generation: draft.generation,
+      deleted: draft.deleted,
+      entry: SharedHouseholdEntry(
+        id: latest.id,
+        title: values.title,
+        minor: values.minor,
+        day: values.day,
+        revision: latest.revision,
+      ),
+    );
+    final updated = await database.customUpdate(
+      'UPDATE shared_household_outbox SET mutation_id = ?, payload = ?, '
+      "delivery = 'pending' WHERE scope = ? AND mutation_id = ? "
+      "AND delivery = 'conflict' AND payload = ?",
+      variables: [
+        Variable<String>(mutationId),
+        Variable<String>(jsonEncode(replacement.toJson())),
+        Variable<String>(scope),
+        Variable<String>(draft.id),
+        Variable<String>(jsonEncode(draft.toJson())),
+      ],
+    );
+    return updated == 1;
+  }
+
   Future<void> remove(String id) => database.customStatement(
         'DELETE FROM shared_household_outbox WHERE scope = ? AND mutation_id = ?',
         [scope, id],

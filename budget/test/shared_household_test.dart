@@ -141,6 +141,36 @@ void main() {
     expect(await store.outbox(), isEmpty);
   });
 
+  test('conflict approval stages a fresh revision once and preserves identity scope',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await HouseholdLocalStore.initialize(db);
+    final store = HouseholdLocalStore(db, 'project/first');
+    final anotherUser = HouseholdLocalStore(db, 'project/second');
+    final draft = change(33, target: changeId(34), revision: 2, title: 'Draft');
+    final latest = change(35, target: changeId(34), revision: 4, title: 'Server').entry;
+    await store.stage(draft);
+    expect(await store.restageConflict(draft, latest, changeId(36)), isFalse);
+    await store.mark(draft.id, HouseholdDelivery.conflict);
+    expect(await anotherUser.restageConflict(draft, latest, changeId(36)), isFalse);
+    expect(await store.restageConflict(draft, latest, changeId(36)), isTrue);
+    expect(await store.restageConflict(draft, latest, changeId(37)), isFalse);
+    final queued = (await store.outbox()).single;
+    expect(queued.delivery, HouseholdDelivery.pending);
+    expect(queued.change.id, changeId(36));
+    expect(queued.change.generation, draft.generation);
+    expect(queued.change.entry.title, 'Draft');
+    expect(queued.change.entry.revision, 4);
+
+    final outbox = HouseholdOutbox(store, (mutation) async {
+      expect(mutation.id, changeId(36));
+      return HouseholdSendResult.conflict;
+    });
+    await outbox.sync();
+    expect((await store.outbox()).single.delivery, HouseholdDelivery.conflict);
+  });
+
   test('a private wallet can supply only a settled opening balance for review',
       () async {
     final db = FinanceDatabase(NativeDatabase.memory());

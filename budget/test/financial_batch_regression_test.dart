@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:budget/database/tables.dart';
+import 'package:budget/struct/cardStatementRepayment.dart';
 import 'package:budget/struct/syncClient.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
@@ -355,5 +356,47 @@ void main() {
     final onTime = await db.getCreditCardSummary('source', asOf: asOf);
     expect(onTime['estimated_late_fee'], isNull);
     expect((await db.select(db.transactions).get()).length, 2);
+  });
+
+  test('a recorded statement repayment rechecks the balance and writes one paired transfer',
+      () async {
+    final db = await transferDatabase();
+    final closing = DateTime(2026, 11, 15);
+    final asOf = DateTime(2026, 11, 24, 12);
+    await db.saveAccountDetails(walletPk: 'target', accountType: 'credit');
+    await db.saveCreditCardDetails(walletPk: 'target', linkedBankWalletFk: 'source');
+    await db.saveCreditCardStatement(
+        walletPk: 'target',
+        closingDate: closing,
+        dueDate: DateTime(2026, 12, 5),
+        statementBalance: 400,
+        minimumDue: 60);
+
+    Future<CardStatementRepayment?> reload() =>
+        loadCardStatementRepayment(db, 'target', closing, asOf: asOf);
+    final reviewed = (await reload())!;
+    expect(reviewed.source.walletPk, 'source');
+    expect((reviewed.minimum, reviewed.remaining), (60, 400));
+    expect(await db.select(db.transactions).get(), isEmpty);
+    final debit = leg('a', -60, asOf).copyWith(dateCreated: asOf);
+    final credit = leg('b', 60, asOf).copyWith(dateCreated: asOf);
+    Future<bool?> pay() => saveCardStatementRepayment(
+        db, reviewed, debit, credit, idempotencyKey: 'minimum', asOf: asOf);
+
+    await db.saveAccountDetails(walletPk: 'source', accountType: 'bank', archived: true);
+    expect(await pay(), isNull);
+    await db.saveAccountDetails(walletPk: 'source', accountType: 'bank');
+    expect(await pay(), isTrue);
+    expect(await pay(), isNull);
+    expect((await db.getTransactionFromPk('a')).pairedTransactionFk, 'b');
+    expect((await db.getTransactionFromPk('b')).pairedTransactionFk, 'a');
+    final after = (await reload())!;
+    expect((after.minimum, after.remaining), (0, 340));
+    expect(await db.select(db.transactions).get(), hasLength(2));
+    expect(await db.undoLocalTransfer('a'), isTrue);
+    expect((await reload())!.remaining, 400);
+    expect(await db.redoLocalTransfer('a'), isTrue);
+    expect((await reload())!.remaining, 340);
+    expect((await db.getTransactionFromPk('b')).dateCreated, asOf);
   });
 }

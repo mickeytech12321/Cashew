@@ -14,8 +14,16 @@ Future<FinanceDatabase> constructDb(String dbName,
     {Uint8List? initialDataWeb}) async {
   final dbFolder = await getApplicationDocumentsDirectory();
   final file = File(p.join(dbFolder.path, '$dbName.sqlite'));
-  if (dbName == 'db' && await applyPendingNativeRestore(file)) {
-    await sharedPreferences.setString("dateOfLastSyncedWithClient", "{}");
+  if (dbName == 'db') {
+    await applyPendingNativeRestore(file, onApplied: () async {
+      final cursorCleared =
+          await sharedPreferences.setString('dateOfLastSyncedWithClient', '{}');
+      final eventSaved =
+          await sharedPreferences.setBool('nativeBackupRestoreApplied', true);
+      if (!cursorCleared || !eventSaved) {
+        throw StateError('Could not save restored database preferences');
+      }
+    });
   }
   final db = LazyDatabase(() async {
     // return NativeDatabase(file);
@@ -86,11 +94,32 @@ Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) 
 }
 
 Future<void> overwriteDefaultDB(Uint8List dataStore) async {
-  final folder = await getApplicationDocumentsDirectory();
-  await stageNativeRestore(File(p.join(folder.path, 'db.sqlite')), dataStore);
+  await stageNativeRestore(await _defaultDatabaseFile(), dataStore);
 }
 
 Future<void> discardPendingDatabaseRestore() async {
+  await discardPendingNativeRestore(await _defaultDatabaseFile());
+}
+
+Future<({bool previous, bool rejected})> databaseRestoreStatus() async {
+  final live = await _defaultDatabaseFile();
+  return (
+    previous: await previousNativeRestoreFile(live).exists(),
+    rejected: await rejectedNativeRestoreFile(live).exists(),
+  );
+}
+
+Future<void> stagePreviousDatabaseRestore() async {
+  final live = await _defaultDatabaseFile();
+  await stageNativeRestore(live, await previousNativeRestoreFile(live).readAsBytes());
+}
+
+Future<void> dismissRejectedDatabaseRestore() async {
+  final rejected = rejectedNativeRestoreFile(await _defaultDatabaseFile());
+  if (await rejected.exists()) await rejected.delete();
+}
+
+Future<File> _defaultDatabaseFile() async {
   final folder = await getApplicationDocumentsDirectory();
-  await discardPendingNativeRestore(File(p.join(folder.path, 'db.sqlite')));
+  return File(p.join(folder.path, 'db.sqlite'));
 }

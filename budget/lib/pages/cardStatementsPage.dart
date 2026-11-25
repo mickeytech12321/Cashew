@@ -1,4 +1,7 @@
 import 'package:budget/pages/addTransactionPage.dart';
+import 'package:budget/pages/addWalletPage.dart';
+import 'package:budget/struct/cardStatementRepayment.dart';
+import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'dart:convert';
 
@@ -222,6 +225,74 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
           database.getCreditCardStatements(widget.wallet.walletPk));
   }
 
+  Future<void> _repay(DateTime closed) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final repayment = await loadCardStatementRepayment(
+          database, widget.wallet.walletPk, closed);
+      if (!mounted) return;
+      if (repayment == null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_label(
+            'Choose an active repayment account in card settings and check the latest statement.',
+            'اختر حساب سداد نشطًا في إعدادات البطاقة وتحقق من أحدث كشف.',
+          )),
+        ));
+        return;
+      }
+      final amount = await showDialog<double>(
+        context: context,
+        builder: (dialog) => SimpleDialog(
+          title: Text(_label('Review repayment amount', 'مراجعة مبلغ السداد')),
+          children: [
+            if (repayment.minimum > 0 && repayment.minimum < repayment.remaining)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(dialog, repayment.minimum),
+                child: Text(_label(
+                  'Estimated minimum · ${_amount(repayment.minimum, repayment.card.currency!)}',
+                  'الحد الأدنى التقديري · ${_amount(repayment.minimum, repayment.card.currency!)}',
+                )),
+              ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialog, repayment.remaining),
+              child: Text(_label(
+                'Estimated remaining balance · ${_amount(repayment.remaining, repayment.card.currency!)}',
+                'الرصيد المتبقي التقديري · ${_amount(repayment.remaining, repayment.card.currency!)}',
+              )),
+            ),
+          ],
+        ),
+      );
+      if (amount == null || !mounted) return;
+      await openBottomSheet(
+        context,
+        TransferBalancePopup(
+          wallet: repayment.source,
+          initialTarget: repayment.card,
+          initialAmount: amount,
+          initialAmountWallet: repayment.card,
+          initialTitle: _label('Credit card repayment', 'سداد بطاقة ائتمان'),
+          allowEditWallet: false,
+          statementRepayment: repayment,
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_label('Could not open repayment.', 'تعذّر فتح السداد.')),
+        ));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _statements = database.getCreditCardStatements(widget.wallet.walletPk);
+        });
+      }
+    }
+  }
+
   String _amount(double value, String currency) =>
       '${value.toStringAsFixed(widget.wallet.decimals.clamp(0, 12))} ${currency.toUpperCase()}';
 
@@ -232,6 +303,7 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
       title: _label('Card statements', 'كشوف البطاقة'),
       capitalizeTitle: false,
       listWidgets: [
+        if (_saving) const LinearProgressIndicator(),
         Padding(
           padding: const EdgeInsets.all(16),
           child: FilledButton(
@@ -344,10 +416,21 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
                       '${_label('Difference from recorded balance', 'الفرق عن الرصيد المسجّل')} '
                           '${_amount(row.balance - row.ledgerBalance!, row.currency)}',
                   ].join('\n')),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: _label('Delete statement', 'حذف كشف الحساب'),
-                    onPressed: _saving ? null : () => _delete(row.closed),
+                  trailing: PopupMenuButton<String>(
+                    enabled: !_saving,
+                    onSelected: (action) =>
+                        action == 'repay' ? _repay(row.closed) : _delete(row.closed),
+                    itemBuilder: (context) => [
+                      if (!row.superseded && (row.remaining ?? 0) > 0)
+                        PopupMenuItem(
+                          value: 'repay',
+                          child: Text(_label('Record repayment', 'تسجيل سداد')),
+                        ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text(_label('Delete statement', 'حذف كشف الحساب')),
+                      ),
+                    ],
                   ),
                   onTap: _saving ||
                           widget.wallet.currency?.toLowerCase() != row.currency

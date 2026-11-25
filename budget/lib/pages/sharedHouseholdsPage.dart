@@ -1087,8 +1087,82 @@ class _SharedLedgerPageState extends State<_SharedLedgerPage>
     if (ok && mounted) await _stage(entry, deleted: true);
   }
 
+  Future<void> _reviewConflict(HouseholdMutation draft) async {
+    if (_saving || _syncing) return;
+    setState(() => _saving = true);
+    try {
+      final latest =
+          await widget.session.latestConflictEntry(widget.space, draft);
+      if (!mounted) return;
+      if (latest == null) {
+        _notice(context, 'The entry was removed. You can discard the draft.',
+            'حُذف القيد. يمكنك استبعاد المسودة.');
+        return;
+      }
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          scrollable: true,
+          title: Text(_text(dialog, 'Review shared change', 'مراجعة التغيير المشترك')),
+          content: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_text(dialog, 'Current server entry', 'القيد الحالي على الخادم')),
+              Text(latest.title),
+              Text('${latest.day} · ${_amount(latest.minor)}'),
+              const SizedBox(height: 16),
+              Text(_text(dialog, 'Your saved change', 'تغييرك المحفوظ')),
+              if (draft.deleted)
+                Text(_text(dialog, 'Delete this entry', 'حذف هذا القيد'))
+              else ...[
+                Text(draft.entry.title),
+                Text('${draft.entry.day} · ${_amount(draft.entry.minor)}'),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog),
+              child: Text(_text(dialog, 'Cancel', 'إلغاء')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialog, true),
+              child: Text(draft.deleted
+                  ? _text(dialog, 'Confirm deletion', 'تأكيد الحذف')
+                  : _text(dialog, 'Apply saved edit', 'تطبيق التعديل المحفوظ')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      final queued =
+          await widget.session.store.restageConflict(draft, latest, uuid.v4());
+      if (!mounted) return;
+      setState(() => _pending = _pendingForAccount());
+      if (queued) {
+        unawaited(_sync());
+      } else {
+        _notice(context, 'This draft has already changed.',
+            'تغيّرت هذه المسودة بالفعل.');
+      }
+    } on TimeoutException {
+      if (mounted) {
+        _notice(context, 'Connect to review the latest entry.',
+            'اتصل بالإنترنت لمراجعة أحدث نسخة من القيد.');
+      }
+    } catch (_) {
+      if (mounted) {
+        _notice(context, 'Could not review this change. Check account access and refresh.',
+            'تعذّرت مراجعة التغيير. تحقق من صلاحية الحساب وحدّث السجل.');
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _discard(String id) async {
-    if (_syncing) return;
+    if (_syncing || _saving) return;
     try {
       await widget.session.store.remove(id);
       if (mounted) setState(() => _pending = _pendingForAccount());
@@ -1133,7 +1207,10 @@ class _SharedLedgerPageState extends State<_SharedLedgerPage>
               _pending,
               (context, items) => _OutboxList(
                     items: items,
-                    onDiscard: _syncing ? null : _discard,
+                    onDiscard: _syncing || _saving ? null : _discard,
+                    onReview: widget.account.role.canEdit && !_syncing && !_saving
+                        ? _reviewConflict
+                        : null,
                   )),
           _load(_entries, (context, snapshot) {
             final balance = snapshot.items.fold(
@@ -1184,9 +1261,10 @@ class _SharedLedgerPageState extends State<_SharedLedgerPage>
 }
 
 class _OutboxList extends StatelessWidget {
-  const _OutboxList({required this.items, required this.onDiscard});
+  const _OutboxList({required this.items, required this.onDiscard, this.onReview});
   final List<HouseholdOutboxItem> items;
   final Future<void> Function(String)? onDiscard;
+  final Future<void> Function(HouseholdMutation)? onReview;
 
   @override
   Widget build(BuildContext context) {
@@ -1204,28 +1282,39 @@ class _OutboxList extends StatelessWidget {
                 _text(context, 'Waiting to sync', 'في انتظار المزامنة'),
               HouseholdDelivery.conflict => _text(
                   context,
-                  'Changed elsewhere. Refresh the ledger before editing again.',
-                  'تغيّر القيد على جهاز آخر. حدّث السجل قبل التعديل مجددًا.'),
+                  'Changed on another device.',
+                  'تغيّر القيد على جهاز آخر.'),
               HouseholdDelivery.denied => _text(
                   context,
                   'Server declined access to this edit.',
                   'رفض الخادم صلاحية هذا التعديل.'),
             }),
-            trailing: IconButton(
-              icon: const Icon(Icons.close),
-              tooltip: _text(
-                  context, 'Discard queued change', 'استبعاد التغيير المعلق'),
-              onPressed: onDiscard == null
-                  ? null
-                  : () async {
-                      final ok = await _confirm(
-                          context,
-                          _text(context, 'Discard this saved change?',
-                              'استبعاد التغيير المحفوظ؟'),
-                          description: item.change.entry.title);
-                      if (ok && context.mounted)
-                        await onDiscard!(item.change.id);
-                    },
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (onReview != null && item.delivery == HouseholdDelivery.conflict)
+                  IconButton(
+                    icon: const Icon(Icons.compare_arrows),
+                    tooltip: _text(context, 'Review conflict', 'مراجعة التعارض'),
+                    onPressed: () => onReview!(item.change),
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: _text(
+                      context, 'Discard queued change', 'استبعاد التغيير المعلق'),
+                  onPressed: onDiscard == null
+                      ? null
+                      : () async {
+                          final ok = await _confirm(
+                              context,
+                              _text(context, 'Discard this saved change?',
+                                  'استبعاد التغيير المحفوظ؟'),
+                              description: item.change.entry.title);
+                          if (ok && context.mounted)
+                            await onDiscard!(item.change.id);
+                        },
+                ),
+              ],
             ),
           ),
       ],

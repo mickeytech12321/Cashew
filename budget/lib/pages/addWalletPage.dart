@@ -4,6 +4,7 @@ import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/editWalletsPage.dart';
 import 'package:budget/pages/settingsPage.dart';
+import 'package:budget/struct/cardStatementRepayment.dart';
 import 'package:budget/struct/currencyFunctions.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
@@ -1383,6 +1384,7 @@ class TransferBalancePopup extends StatefulWidget {
     this.initialTitle,
     this.initialObjectiveLoanPk,
     this.initialIsNegative,
+    this.statementRepayment,
     super.key,
   });
   final TransactionWallet? wallet;
@@ -1395,12 +1397,14 @@ class TransferBalancePopup extends StatefulWidget {
   final String? initialTitle;
   final String? initialObjectiveLoanPk;
   final bool? initialIsNegative;
+  final CardStatementRepayment? statementRepayment;
 
   @override
   State<TransferBalancePopup> createState() => _TransferBalancePopupState();
 }
 
 class _TransferBalancePopupState extends State<TransferBalancePopup> {
+  bool get _fixedRepayment => widget.statementRepayment != null;
   DateTime dateInitialized = DateTime.now();
   late double enteredAmount = widget.initialAmount ?? 0;
   late bool isNegative = widget.initialIsNegative ?? false;
@@ -1470,7 +1474,7 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
               ),
             ),
           ),
-          onTap: () async {
+          onTap: _fixedRepayment ? null : () async {
             dynamic result = await selectWalletPopup(
               context,
               selectedWallet: wallet,
@@ -1602,7 +1606,7 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
       note: note,
       categoryFk: "0",
       walletFk: incomingWallet.walletPk,
-      dateCreated: when.add(const Duration(seconds: 1)),
+      dateCreated: _fixedRepayment ? when : when.add(const Duration(seconds: 1)),
       dateTimeModified: null,
       income: true,
       paid: true,
@@ -1618,9 +1622,22 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
     ].join(':');
 
     await initializeBalanceCorrectionCategory();
-    final saved = await database.saveAtomicLocalTransfer(
-      outgoing, incoming, idempotencyKey: idempotencyKey);
-    if (!saved || !mounted) return;
+    final statement = widget.statementRepayment;
+    final saved = statement == null
+        ? await database.saveAtomicLocalTransfer(
+            outgoing, incoming, idempotencyKey: idempotencyKey)
+        : await saveCardStatementRepayment(database, statement, outgoing,
+            incoming, idempotencyKey: idempotencyKey);
+    if (saved == null && mounted) {
+      final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+      openSnackbar(SnackbarMessage(
+        icon: Icons.warning_outlined,
+        title: isArabic
+            ? 'تغيّر الكشف أو حساب السداد. افتح السداد مجددًا.'
+            : 'The statement or repayment account changed. Reopen repayment.',
+      ));
+    }
+    if (saved != true || !mounted) return;
 
     openSnackbar(SnackbarMessage(
       title: "transferred-balance".tr(),
@@ -1731,7 +1748,7 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
                     inverse: true,
                   ),
                   borderRadius: 100,
-                  onTap: () {
+                  onTap: _fixedRepayment ? null : () {
                     setState(() {
                       isNegative = !isNegative;
                       if (isNegative == true)
@@ -1771,7 +1788,7 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
                     onLongPress: onLongPress,
                     color: Colors.transparent,
                     borderRadius: 15,
-                    onTap: Provider.of<AllWallets>(context)
+                    onTap: _fixedRepayment || Provider.of<AllWallets>(context)
                             .allContainSameCurrency()
                         ? null
                         : () async {

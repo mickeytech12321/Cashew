@@ -548,9 +548,11 @@ Future<void> loadBackup(
 
     if (!context.mounted) return;
     popRoute(context);
-    await resetLanguageToSystem(context);
-    await updateSettings("databaseJustImported", true,
-        pagesNeedingRefresh: [], updateGlobalState: false);
+    if (kIsWeb) {
+      await resetLanguageToSystem(context);
+      await updateSettings("databaseJustImported", true,
+          pagesNeedingRefresh: [], updateGlobalState: false);
+    }
     openSnackbar(
       SnackbarMessage(
         title: "backup-restored".tr(),

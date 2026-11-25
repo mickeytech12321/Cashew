@@ -3772,6 +3772,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     Transaction transaction, {
     bool insert = false,
     bool updateSharedEntry = true,
+    bool preserveBalanceCorrectionTime = false,
     Transaction? originalTransaction,
   }) async {
     if (updateSharedEntry == true && appStateSettings["sharedBudgets"] == false)
@@ -3802,7 +3803,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     // Preserve order of balance correction transaction
     // Negative entries at 30 seconds on the minute
     // Positive entries at 31 seconds on the minute
-    if (transaction.categoryFk == "0") {
+    if (transaction.categoryFk == "0" && !preserveBalanceCorrectionTime) {
       if (transaction.amount < 0) {
         transaction = transaction.copyWith(
             dateCreated: transaction.dateCreated
@@ -3944,6 +3945,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     Transaction outgoing,
     Transaction incoming, {
     required String idempotencyKey,
+    bool preserveTime = false,
   }) async {
     if (idempotencyKey.trim().isEmpty ||
         outgoing.transactionPk.isEmpty || incoming.transactionPk.isEmpty ||
@@ -3983,8 +3985,10 @@ class FinanceDatabase extends _$FinanceDatabase {
         pairedTransactionFk: Value(incoming.transactionPk));
       final credit = incoming.copyWith(
         pairedTransactionFk: Value(outgoing.transactionPk));
-      final first = await createOrUpdateTransaction(debit, updateSharedEntry: false);
-      final second = await createOrUpdateTransaction(credit, updateSharedEntry: false);
+      final first = await createOrUpdateTransaction(debit,
+          updateSharedEntry: false, preserveBalanceCorrectionTime: preserveTime);
+      final second = await createOrUpdateTransaction(credit,
+          updateSharedEntry: false, preserveBalanceCorrectionTime: preserveTime);
       if (first == null || second == null) throw StateError('Transfer write failed');
       await customStatement(
         'INSERT INTO financial_actions (action_pk, action_type, created_at, idempotency_key) VALUES (?, ?, ?, ?)',
@@ -4117,7 +4121,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       }
       for (final leg in restored) {
         final saved = await createOrUpdateTransaction(
-          leg, updateSharedEntry: false);
+          leg, updateSharedEntry: false, preserveBalanceCorrectionTime: true);
         if (saved == null) throw StateError('Transfer restore failed');
         final persisted = await (select(transactions)
               ..where((row) => row.transactionPk.equals(leg.transactionPk)))
@@ -4687,10 +4691,12 @@ class FinanceDatabase extends _$FinanceDatabase {
       rawText.replaceAll(RegExp(r'\\s+'), ' ').trim().toLowerCase(),
       occurredAt.millisecondsSinceEpoch.toString(),
     ].join('|');
-    var hash = 0xcbf29ce484222325;
+    // Keep the same lower 63 bits on Dart VM and JavaScript.
+    var hash = BigInt.parse('cbf29ce484222325', radix: 16);
+    final prime = BigInt.from(0x100000001b3);
+    final mask = (BigInt.one << 63) - BigInt.one;
     for (final unit in utf8.encode(normalized)) {
-      hash ^= unit;
-      hash = (hash * 0x100000001b3) & 0x7fffffffffffffff;
+      hash = ((hash ^ BigInt.from(unit)) * prime) & mask;
     }
     return hash.toRadixString(16).padLeft(16, '0');
   }
