@@ -123,7 +123,7 @@
 - **Coded.** Web restore writes the validated database to the primary storage key and clears only its obsolete schema-version key when using the local-storage fallback. Other local storage entries are preserved. Interactive browser restore still needs verification.
 
 - **Tested.** Settings can delete the local pre-restore copy after confirmation. The restore regression checks repeated deletion and verifies that the open ledger remains available. Android excludes the recovery checkpoints and working directory from cloud backup and device transfer. The live database retains its existing backup policy.
-- **Coded.** The release-test build can use the separate package `com.mickey.cashew.preview` for side-by-side testing. The standard application ID and release signing settings stay in place. Preview signing and installation instructions are in [Google setup](GOOGLE_DRIVE_SETUP.md#build-an-isolated-android-preview).
+- **Tested for packaging.** The release-test build can use the separate package `com.mickey.cashew.preview` for side-by-side testing. The standard application ID and release signing settings stay in place. Preview signing and installation instructions are in [Google setup](GOOGLE_DRIVE_SETUP.md#build-an-isolated-android-preview).
 - **Tested.** The dependency lockfile records a clean Flutter 3.50.1 package resolution for this branch. The Android plugin registry has 27 plugins, including SQLite, and excludes the removed billing plugins. Changing only the dependency versions recorded in the lockfile requires no database migration.
 
 ## Latest verification
@@ -131,6 +131,7 @@
 - All **109 Flutter tests** passed together on Flutter **3.50.1** against the clean package resolution, including the generated v46 backup restore and the new checks for local recovery copy deletion. Verification used the repository compatibility script, native SQLite and loopback-only networking.
 - Dart analysis reported zero errors, 156 warnings and 710 informational diagnostics. Schema 47 remains unchanged and this batch needs no data rewrite.
 - Web JavaScript compilation succeeded after applying the version-specific Drift and sqlite3 compatibility adjustment through `scripts/prepare_flutter_compat.py web`. The same helper now owns the Flutter layout patch and the Android dependency adjustments used by CI. Browser backup and restore were not exercised interactively.
+- The ARM64 Android release-test APK was assembled from `d21c21ed` with Flutter 3.50.1, JDK 17 and Android SDK 36. Build `5.4.3+416` passed APK signature, ZIP alignment, package identity, SQLite, Flutter assets and backup-rule checks. SHA-256 of the verified APK is `56bb6d93db7b790b852ead7765206ebcb17459fe668a5da500002253d9015ac4`.
 - Android device checks, the household conflict review against Firebase and live provider calls were not run in this batch. Earlier Firestore emulator results cover the unchanged household rules.
 
 ## Verification still required
