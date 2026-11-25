@@ -58,6 +58,8 @@ The APK is at `budget/build/app/outputs/flutter-apk/app-release.apk` from the re
 
 ## CashU on the web
 
+The hosted app is [CashU on Vercel](https://cashu-gamma.vercel.app/). This origin is registered on the project’s existing Web OAuth client. The publisher’s test-user list still applies.
+
 Run `bash scripts/build_cashu_web.sh` from the repository root. The web build uses Flutter 3.50.1 and the SQLite compatibility setup. Serve `budget/build/web` over HTTP for local testing or deploy it through the supplied Vercel configuration. The budget and transaction database is stored in the browser for that site origin.
 
 The browser uses the public Web client ID for the CashU OAuth project. A `CASHEW_GOOGLE_WEB_CLIENT_ID` build environment variable can select another publisher-owned Web OAuth client. In Google Auth Platform → Clients, register the exact hosted HTTPS origin under **Authorized JavaScript origins** for the selected client. Use a stable Vercel domain for repeated testing. For a local OAuth test, register the exact localhost URL and port. Browser builds do not need an Android signing fingerprint.

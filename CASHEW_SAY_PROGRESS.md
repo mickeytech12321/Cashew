@@ -6,9 +6,9 @@
 
 ## CashU browser preview
 
-- **Phase 08 · TESTED.** The CashU release web bundle builds with Flutter 3.50.1 and includes the existing financial workflows. The build serves CanvasKit assets locally, keeps SQLite in browser storage, and has its own startup and error screens. Added a repeatable web build and Vercel configuration.
-- **Phase 07 / 09 · CODED.** The browser account screen uses Google's supported sign-in button and the project's public Web OAuth client ID. Granting Drive access is a separate action. New web profiles start with automatic backup and sync disabled. The Vercel project, OAuth JavaScript origin and interactive Drive verification are pending.
-- The full Flutter suite passed 128 tests. This batch targets web and did not build an Android APK.
+- **Phase 08 · TESTED.** [CashU on Vercel](https://cashu-gamma.vercel.app/) serves commit `4ff8681e` from `feature/free-edition`. Vercel built the release with Flutter 3.50.1. The live app loaded and opened the Data Backup page. A local Chromium run at mobile width completed onboarding, reopened the saved browser profile and reached Bank certificates.
+- **Phase 07 / 09 · PARTIAL.** The CashU domain is registered and verified in the existing Google Web OAuth client's authorized origins. The live page rendered Google's sign-in button. The browser session could not open the Google popup. Completing sign-in and verifying Drive backup and restore remain pending. Drive permission is a separate prompt, and new web profiles start with automatic backup and sync disabled.
+- The unchanged Flutter app suite passed 128 tests in the web preparation batch. The deployment follow-up verified the build script with warm and cold version-command output. No Android APK was built.
 
 ## CashU banking workflows
 
