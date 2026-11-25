@@ -222,7 +222,7 @@ class EnterName extends StatelessWidget {
   }
 }
 
-Future<String> enterNameBottomSheet(context,
+Future<String?> enterNameBottomSheet(context,
     {bool updatePageWhenSet = true}) async {
   return await openBottomSheet(
     context,

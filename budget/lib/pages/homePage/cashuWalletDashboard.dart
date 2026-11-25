@@ -1,11 +1,13 @@
 import 'package:budget/database/tables.dart';
-import 'package:budget/functions.dart' show pushRoute;
+import 'package:budget/functions.dart' show getWelcomeMessage, pushRoute;
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/bankCertificatesPage.dart';
 import 'package:budget/pages/cashuAddAssetPage.dart';
 import 'package:budget/pages/editHomePage.dart';
 import 'package:budget/pages/editWalletsPage.dart';
 import 'package:budget/pages/financialAssistantPage.dart';
+import 'package:budget/pages/homePage/homePageUsername.dart' show PartyHat;
+import 'package:budget/pages/settingsPage.dart' show enterNameBottomSheet;
 import 'package:budget/pages/homePage/homePageWalletSwitcher.dart'
     show EditHomePagePinnedWalletsPopup;
 import 'package:budget/pages/walletDetailsPage.dart';
@@ -49,6 +51,9 @@ class _CashuWalletDashboardState extends State<CashuWalletDashboard> {
     final colors = CashuColors(context);
     final wallets = context.watch<AllWallets>();
     String label(String en, String ar) => cashuLabel(context, en, ar);
+    final username = (appStateSettings['username'] as String?)?.trim() ?? '';
+    final personalize =
+        isHomeScreenSectionEnabled(context, 'showUsernameWelcomeBanner');
     final currencyByDefault = wallets
         .indexedByPk[appStateSettings['selectedWalletPk']]?.currency
         ?.trim()
@@ -62,16 +67,43 @@ class _CashuWalletDashboardState extends State<CashuWalletDashboard> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(children: [
-              Image.asset('assets/icon/icon.png', width: 35, height: 35),
-              const SizedBox(width: 10),
+              if (personalize)
+                IconButton(
+                  tooltip: label('Edit display name', 'تعديل الاسم'),
+                  padding: EdgeInsets.zero,
+                  onPressed: () async {
+                    await enterNameBottomSheet(context);
+                    if (mounted) setState(() {});
+                  },
+                  icon: Image.asset('assets/icon/icon.png',
+                      width: 35, height: 35),
+                )
+              else
+                Image.asset('assets/icon/icon.png', width: 35, height: 35),
+              const SizedBox(width: 8),
               Expanded(
-                  child: Text(
-                label('My wallet', 'محفظتي'),
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: colors.ink,
-                      fontWeight: FontWeight.w800,
-                    ),
-              )),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label('My wallet', 'محفظتي'),
+                        style:
+                            Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                  color: colors.ink,
+                                  fontWeight: FontWeight.w800,
+                                )),
+                    if (personalize && username.isNotEmpty)
+                      PartyHat(
+                        size: 17,
+                        child: Text(
+                          appStateSettings['enableGreetingMessage'] == true
+                              ? '${getWelcomeMessage()} $username'
+                              : username,
+                          style: TextStyle(color: colors.muted),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
               _AppearanceButton(),
               IconButton(
                 tooltip: label('Customize Home', 'تخصيص الرئيسية'),
@@ -309,12 +341,10 @@ class _CashuAccountStripState extends State<CashuAccountStrip> {
                     child: SizedBox(
                         width: 166,
                         child: CashuPanel(
-                          onTap: () {
-                            final wallet = wallets.indexedByPk[item.id];
-                            if (wallet != null)
-                              pushRoute(
-                                  context, WalletDetailsPage(wallet: wallet));
-                          },
+                          highlighted:
+                              appStateSettings['selectedWalletPk'] == item.id,
+                          onTap: () => pushRoute(context,
+                              WatchedWalletDetailsPage(walletPk: item.id)),
                           padding: const EdgeInsets.all(12),
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -410,14 +440,19 @@ class _OverviewAction extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   @override
-  Widget build(BuildContext context) => ActionChip(
+  Widget build(BuildContext context) => Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: ActionChip(
         avatar: Icon(icon, size: 17, color: CashuColors(context).accent),
         label: Text(label),
         onPressed: onTap,
         backgroundColor: CashuColors(context).panel,
         side: BorderSide(color: CashuColors(context).border),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      );
+      ));
 }
 
 class _AppearanceButton extends StatelessWidget {
