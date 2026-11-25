@@ -298,11 +298,12 @@ void main() {
     await old.setInvestmentMarketPrice('legacy', 42, first);
     await old.customStatement('DROP TABLE credit_card_payment_rules');
     await old.customStatement('DROP TABLE investment_market_sources');
+    await old.customStatement('PRAGMA user_version = 47');
     await old.close();
 
     final reopened = FinanceDatabase(NativeDatabase(file));
     addTearDown(reopened.close);
-    expect(reopened.schemaVersion, 47);
+    expect(reopened.schemaVersion, 48);
     expect(
         (await reopened.getCreditCardDetails('card'))?['minimum_payment'], 35);
     expect(await reopened.getInvestmentMarketSource('legacy'), isNull);

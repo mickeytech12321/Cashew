@@ -35,4 +35,16 @@ void main() {
       expect(isGoogleOAuthClientId(invalid), isFalse);
     }
   });
+
+  test('Android OAuth uses a valid build ID or a locally configured public ID',
+      () {
+    const built = '1234-built.apps.googleusercontent.com';
+    const saved = '1234-preview.apps.googleusercontent.com';
+    expect(resolveGoogleAndroidClientId(buildId: built, savedId: saved), built);
+    expect(
+        resolveGoogleAndroidClientId(buildId: '', savedId: ' $saved '), saved);
+    expect(resolveGoogleAndroidClientId(buildId: '', savedId: 'GOCSPX-example'),
+        isNull);
+    expect(resolveGoogleAndroidClientId(buildId: ''), isNull);
+  });
 }

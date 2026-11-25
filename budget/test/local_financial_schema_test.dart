@@ -1352,7 +1352,7 @@ void main() {
             .data
             .values
             .single,
-        47);
+        48);
   });
 
   test(
@@ -1374,6 +1374,9 @@ void main() {
           startingBalance: 100,
         );
         await original.customStatement('DROP TABLE credit_card_details');
+        await original.customStatement('DROP TABLE transaction_to_tag_links');
+        await original.customStatement('DROP TABLE tags');
+        await original.customStatement('PRAGMA user_version = 47');
       } finally {
         await original.close();
       }

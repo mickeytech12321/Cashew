@@ -122,8 +122,8 @@ void showCashewBackupImportError(BuildContext context, Object error) {
         ? 'تعذّر تحديد إصدار النسخة الاحتياطية. جرّب تصديرها مرة أخرى من Cashew.'
         : 'The backup has no schema version. Try exporting it again from Cashew.',
     CashewBackupUnsupportedData() => ar
-        ? 'النسخة فيها وسوم أو بيانات أحدث محتاجة دعم إضافي قبل الاستعادة.'
-        : 'The backup contains tags or newer fields that require additional restore support.',
+        ? 'تركيب جداول هذه النسخة الاحتياطية غير مدعوم.'
+        : 'This backup uses an unsupported database layout.',
     _ => error.toString(),
   };
   openSnackbar(SnackbarMessage(

@@ -1,4 +1,4 @@
-package com.mickey.cashew
+package com.cashu.mickey
 
 import android.appwidget.AppWidgetManager
 import android.content.Context

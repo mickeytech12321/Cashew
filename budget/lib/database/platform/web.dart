@@ -27,9 +27,10 @@ Future<T> readCashewSyncSnapshot<T>(
   Uint8List bytes, Future<T> Function(FinanceDatabase) read,
 ) async {
   validateCashewBackupHeader(bytes);
-  final candidate = await constructDb('sync', initialDataWeb: bytes);
+  final candidate = CashewRestoreCandidate(
+      WebDatabase.withStorage(InMemoryWebStorage(bytes)));
   try {
-    await validateCashewBackupDatabase(candidate);
+    await candidate.validate();
     return await read(candidate);
   } finally {
     await candidate.close();
@@ -72,7 +73,7 @@ Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) 
 }
 
 Future<void> overwriteDefaultDB(Uint8List dataStore) async {
-  validateCashewBackupHeader(dataStore, allowCompatibleRestore: true);
+  validateCashewBackupHeader(dataStore);
   final memory = InMemoryWebStorage(Uint8List.fromList(dataStore));
   final candidate = CashewRestoreCandidate(WebDatabase.withStorage(memory));
   try {

@@ -40,19 +40,16 @@ void main() {
     }
     final upstream = sqlite.sqlite3.open(source.path);
     try {
-      upstream.execute(
-          'ALTER TABLE wallets ADD COLUMN archived INTEGER NOT NULL DEFAULT 0');
       upstream.execute('UPDATE wallets SET archived = 1');
-      upstream.execute('ALTER TABLE wallets ADD COLUMN emoji_icon_name TEXT');
-      upstream.execute(
-          'ALTER TABLE categories ADD COLUMN archived INTEGER NOT NULL DEFAULT 0');
-      upstream.execute(
-          'ALTER TABLE associated_titles ADD COLUMN archived INTEGER NOT NULL DEFAULT 0');
-      upstream.execute(
-          'ALTER TABLE scanner_templates ADD COLUMN default_title TEXT');
-      upstream.execute('CREATE TABLE tags (tag_pk TEXT PRIMARY KEY)');
-      upstream.execute('CREATE TABLE transaction_to_tag_links '
-          '(transaction_pk TEXT, tag_pk TEXT, PRIMARY KEY (transaction_pk, tag_pk))');
+      upstream.execute("UPDATE wallets SET emoji_icon_name = '🏦'");
+      upstream.execute('UPDATE categories SET archived = 1');
+      upstream.execute('INSERT INTO tags (tag_pk, date_created, "order", name) '
+          "VALUES ('saved', 1795564800, 0, 'Saved tag')");
+      upstream.execute("INSERT INTO transaction_to_tag_links "
+          "VALUES ('original', 'saved')");
+      upstream.execute("INSERT INTO delete_logs "
+          "(delete_log_pk, entry_pk, type, date_time_modified) "
+          "VALUES ('upstream-only', 'removed-tag', 9, 1795564800)");
       final ownedTables =
           db.allTables.map((table) => table.actualTableName).toSet();
       final tables = upstream.select("SELECT name FROM sqlite_master WHERE "
@@ -74,10 +71,10 @@ void main() {
   tearDown(() => working.delete(recursive: true));
 
   test(
-      'v48 full restore keeps untagged financial records and leaves source bytes intact',
+      'v48 restores financial records, tags and wallet fields without changing the source',
       () async {
     final original = await source.readAsBytes();
-    expect(() => validateCashewBackupHeader(original), throwsFormatException);
+    expect(() => validateCashewBackupHeader(original), returnsNormally);
     await stageNativeRestore(live, original);
     final staged = pendingNativeRestoreFile(live);
     final bytes = await staged.readAsBytes();
@@ -88,14 +85,42 @@ void main() {
       expect((await db.getWalletInstance('upstream')).name, 'Imported');
       expect((await db.getTransactionFromPk('original')).amount, -30);
       expect((await db.getAccountDetails('upstream'))?['archived'], 1);
+      expect(
+          (await db.customSelect('SELECT name FROM tags').getSingle())
+              .read<String>('name'),
+          'Saved tag');
+      expect(
+          (await db
+                  .customSelect('SELECT tag_pk FROM transaction_to_tag_links')
+                  .getSingle())
+              .read<String>('tag_pk'),
+          'saved');
+      expect(await db.getAllDeleteLogs(), isEmpty);
+      expect(await db.getAllNewDeleteLogs(DateTime(2025)), isEmpty);
+      expect(
+          (await db
+                  .customSelect('SELECT entry_pk FROM delete_logs')
+                  .getSingle())
+              .read<String>('entry_pk'),
+          'removed-tag');
+      final wallet = await db.getWalletInstance('upstream');
+      await db.createOrUpdateWallet(wallet.copyWith(name: 'Renamed'));
+      await db.setAccountArchived('upstream', false);
+      final columns = await db
+          .customSelect(
+            'SELECT archived, emoji_icon_name FROM wallets',
+          )
+          .getSingle();
+      expect(columns.read<String>('emoji_icon_name'), '🏦');
+      expect(columns.read<int>('archived'), 0);
+      expect((await db.getWalletInstance('upstream')).name, 'Renamed');
     } finally {
       await db.close();
     }
     expect(await source.readAsBytes(), original);
   });
 
-  test(
-      'v48 with tags, changed layouts and unknown versions leave staging intact',
+  test('v48 changed layouts and future versions leave prior staging intact',
       () async {
     final original = await source.readAsBytes();
     await stageNativeRestore(live, original);
@@ -103,17 +128,9 @@ void main() {
     final before = await staged.readAsBytes();
     final upstream = sqlite.sqlite3.open(source.path);
     try {
-      upstream.execute("INSERT INTO tags VALUES ('saved')");
-      await expectLater(stageNativeRestore(live, await source.readAsBytes()),
-          throwsA(isA<CashewBackupUnsupportedData>()));
-      upstream.execute('DELETE FROM tags');
-      upstream.execute("UPDATE wallets SET emoji_icon_name = 'emoji'");
-      await expectLater(stageNativeRestore(live, await source.readAsBytes()),
-          throwsA(isA<CashewBackupUnsupportedData>()));
-      upstream.execute('UPDATE wallets SET emoji_icon_name = NULL');
       upstream.execute('ALTER TABLE wallets ADD COLUMN new_data TEXT');
       await expectLater(stageNativeRestore(live, await source.readAsBytes()),
-          throwsA(isA<CashewBackupVersionException>()));
+          throwsA(isA<CashewBackupUnsupportedData>()));
       upstream.execute('PRAGMA user_version = 49');
       await expectLater(stageNativeRestore(live, await source.readAsBytes()),
           throwsA(isA<CashewBackupVersionException>()));

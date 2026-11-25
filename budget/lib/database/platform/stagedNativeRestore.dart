@@ -24,7 +24,7 @@ Future<Directory> _temporaryRestoreDirectory(File live) async {
 
 /// Validate and migrate an isolated candidate before publishing it for startup.
 Future<void> stageNativeRestore(File live, Uint8List bytes) async {
-  validateCashewBackupHeader(bytes, allowCompatibleRestore: true);
+  validateCashewBackupHeader(bytes);
   final temporary = await _temporaryRestoreDirectory(live);
   try {
     final candidate = await File(p.join(temporary.path, 'candidate.sqlite'))

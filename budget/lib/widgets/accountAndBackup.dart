@@ -1,5 +1,6 @@
 import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:budget/colors.dart';
 import 'package:budget/database/generatePreviewData.dart';
@@ -76,6 +77,72 @@ class GoogleAuthClient extends http.BaseClient {
 signIn.GoogleSignIn? googleSignIn;
 signIn.GoogleSignInAccount? googleUser;
 Future<void>? _googleInitialization;
+String? _initializedAndroidClientId;
+const _googleWebClientIdPreference = 'cashuGoogleWebClientId';
+
+bool get canConfigureGoogleAndroidClient =>
+    getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid &&
+    !isGoogleOAuthClientId(googleAndroidServerClientId.trim());
+
+String? get _androidClientId => resolveGoogleAndroidClientId(
+      buildId: googleAndroidServerClientId,
+      savedId: sharedPreferences.getString(_googleWebClientIdPreference),
+    );
+
+Future<String?> configureGoogleAndroidClient(BuildContext context) async {
+  final arabic = Localizations.localeOf(context).languageCode == 'ar';
+  var input = _androidClientId ?? '';
+  final clientId = await showDialog<String>(
+    context: context,
+    builder: (context) {
+      final form = GlobalKey<FormState>();
+      return AlertDialog(
+        title: Text(arabic ? 'إعداد Google Drive' : 'Google Drive setup'),
+        content: Form(
+          key: form,
+          child: TextFormField(
+            initialValue: input,
+            onChanged: (value) => input = value.trim(),
+            autocorrect: false,
+            enableSuggestions: false,
+            textDirection: ui.TextDirection.ltr,
+            decoration: InputDecoration(
+              labelText: 'Web OAuth Client ID',
+              helperText: arabic
+                  ? 'من نفس مشروع Google Cloud الذي سجّلت فيه حزمة أندرويد'
+                  : 'Use the Google Cloud project that registered this Android app',
+              helperMaxLines: 3,
+            ),
+            validator: (value) => isGoogleOAuthClientId(value?.trim() ?? '')
+                ? null
+                : (arabic ? 'أدخل معرّف Web OAuth صحيحًا' : 'Enter a valid Web OAuth client ID'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('cancel'.tr()),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (form.currentState!.validate()) Navigator.of(context).pop(input);
+            },
+            child: Text('save'.tr()),
+          ),
+        ],
+      );
+    },
+  );
+  if (clientId == null) return null;
+  if (!await sharedPreferences.setString(_googleWebClientIdPreference, clientId)) {
+    openSnackbar(SnackbarMessage(
+      title: arabic ? 'تعذّر حفظ إعداد Google' : 'Could not save Google setup',
+      icon: Icons.warning_outlined,
+    ));
+    return null;
+  }
+  return clientId;
+}
 
 Future<GoogleAuthClient> getGoogleAuthorizedClient(List<String> scopes) async {
   final account = googleUser;
@@ -85,16 +152,17 @@ Future<GoogleAuthClient> getGoogleAuthorizedClient(List<String> scopes) async {
   return GoogleAuthClient(headers);
 }
 
-Future<signIn.GoogleSignIn> _initializeGoogleSignIn() async {
+Future<signIn.GoogleSignIn> _initializeGoogleSignIn(String? androidClientId) async {
   final platform = getPlatform(ignoreEmulation: true);
   final instance = signIn.GoogleSignIn.instance;
   final ready = _googleInitialization ??= instance.initialize(
-    serverClientId: platform == PlatformOS.isAndroid ? googleAndroidServerClientId : null,
+    serverClientId: androidClientId,
     clientId: platform == PlatformOS.isIOS && enableCashewCloudServices
         ? DefaultFirebaseOptions.currentPlatform.iosClientId : null,
   );
   try {
     await ready;
+    _initializedAndroidClientId = androidClientId;
     googleSignIn = instance;
     return instance;
   } catch (_) {
@@ -113,19 +181,26 @@ Future<bool> signInGoogle(
   if (await checkLockedFeatureIfInDemoMode(context) == false) return false;
   final silent = silentSignIn == true;
   final platform = getPlatform(ignoreEmulation: true);
-  if (platform == PlatformOS.isAndroid &&
-      !isGoogleOAuthClientId(googleAndroidServerClientId)) {
-    if (!silent) {
-      final arabic = context != null && context.mounted &&
-          Localizations.localeOf(context).languageCode == 'ar';
-      openSnackbar(SnackbarMessage(
-        title: "sign-in-error".tr(),
-        description: arabic
-            ? 'تسجيل Google يحتاج نسخة أندرويد مهيّأة لـGoogle Drive. يمكنك استعادة بياناتك من ملف محلي في الإعدادات.'
-            : 'Google sign-in requires an Android build configured for Drive. You can restore a local backup from Settings.',
-      ));
+  String? androidClientId;
+  if (platform == PlatformOS.isAndroid) {
+    androidClientId = _androidClientId;
+    if (androidClientId == null) {
+      if (silent || context == null || !context.mounted) return false;
+      androidClientId = await configureGoogleAndroidClient(context);
+      if (androidClientId == null || !context.mounted) return false;
     }
-    return false;
+    if (_initializedAndroidClientId != null &&
+        _initializedAndroidClientId != androidClientId) {
+      if (!silent) {
+        final arabic = context != null && context.mounted &&
+            Localizations.localeOf(context).languageCode == 'ar';
+        openSnackbar(SnackbarMessage(
+          title: arabic ? 'أعد تشغيل CashU لتطبيق الإعداد' : 'Restart CashU to apply the Google setup',
+          icon: Icons.info_outline,
+        ));
+      }
+      return false;
+    }
   }
   final scopes = requestedGoogleScopes(
     mail: gMailPermissions == true && appStateSettings["emailScanning"] != false,
@@ -136,7 +211,7 @@ Future<bool> signInGoogle(
   if (showLoading) openLoadingPopup(context);
   var success = false;
   try {
-    final instance = await _initializeGoogleSignIn();
+    final instance = await _initializeGoogleSignIn(androidClientId);
     final previous = googleUser;
     final account = previous ?? (silent
         ? await instance.attemptLightweightAuthentication()

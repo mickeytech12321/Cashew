@@ -1,3 +1,4 @@
+import 'package:budget/struct/instaPayTransfer.dart';
 import 'package:budget/pages/cardStatementsPage.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -1425,7 +1426,21 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
           : Provider.of<AllWallets>(context, listen: false)
               .indexedByPk[appStateSettings["selectedWalletPk"]]);
 
-  // double transferFee = 0;
+  bool _instaPay = false;
+
+  bool get _canShowInstaPay =>
+      !_fixedRepayment &&
+      widget.initialObjectiveLoanPk == null &&
+      walletFrom?.walletPk != walletTo?.walletPk &&
+      isInstaPayCurrency(walletFrom?.currency) &&
+      isInstaPayCurrency(walletTo?.currency);
+
+  bool get _canUseInstaPay =>
+      _canShowInstaPay && isInstaPayCurrency(walletForCurrency?.currency);
+
+  bool get _useInstaPay => _canUseInstaPay && _instaPay;
+
+  bool get _arabic => Localizations.localeOf(context).languageCode == 'ar';
 
   @override
   void initState() {
@@ -1535,9 +1550,10 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
       return;
     }
 
+    final instaPay = _useInstaPay;
     final enteredCurrency = walletForCurrency?.currency;
     double? ratioTo(TransactionWallet wallet) {
-      if (enteredCurrency == wallet.currency) return 1;
+      if (instaPay || enteredCurrency == wallet.currency) return 1;
       return strictCurrencyRatio(enteredCurrency, wallet.currency);
     }
 
@@ -1559,6 +1575,16 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
         icon: appStateSettings["outlinedIcons"]
             ? Icons.warning_outlined : Icons.warning_rounded,
         title: "invalid-amount".tr(),
+      ));
+      return;
+    }
+
+    if (instaPay && instaPayTransferFee(enteredAmount.abs()) == null) {
+      openSnackbar(SnackbarMessage(
+        icon: Icons.warning_outlined,
+        title: _arabic
+            ? 'أدخل مبلغًا بالجنيه بحد أقصى منزلتين عشريتين.'
+            : 'Enter an EGP amount with up to two decimal places.',
       ));
       return;
     }
@@ -1613,7 +1639,7 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
       skipPaid: false,
     );
     final idempotencyKey = [
-      'transfer',
+      instaPay ? 'instapay-transfer' : 'transfer',
       outgoingWallet.walletPk,
       incomingWallet.walletPk,
       when.microsecondsSinceEpoch,
@@ -1625,7 +1651,8 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
     final statement = widget.statementRepayment;
     final saved = statement == null
         ? await database.saveAtomicLocalTransfer(
-            outgoing, incoming, idempotencyKey: idempotencyKey)
+            outgoing, incoming, idempotencyKey: idempotencyKey,
+            instaPay: instaPay, arabicFeeLabel: _arabic)
         : await saveCardStatementRepayment(database, statement, outgoing,
             incoming, idempotencyKey: idempotencyKey);
     if (saved == null && mounted) {
@@ -1651,6 +1678,12 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
 
   @override
   Widget build(BuildContext context) {
+    final instaPayFee =
+        _useInstaPay ? instaPayTransferFee(enteredAmount.abs()) : null;
+    String formatEgp(double amount) => convertToMoney(
+          Provider.of<AllWallets>(context), amount,
+          addCurrencyName: true, currencyKey: walletFrom?.currency,
+        );
     Widget editTransferDetails = Column(
       children: [
         TextInput(
@@ -1856,22 +1889,6 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
                 ),
               );
             },
-            // extraWidgetAboveNumbers: SettingsContainerSwitch(
-            //   title: "withdraw-amount".tr(),
-            //   onSwitched: (value) {
-            //     setState(() {
-            //       isNegative = value;
-            //       if (isNegative == true)
-            //         enteredAmount = enteredAmount.abs() * -1;
-            //       else
-            //         enteredAmount = enteredAmount.abs();
-            //     });
-            //   },
-            //   enableBorderRadius: true,
-            //   initialValue: false,
-            //   syncWithInitialValue: false,
-            //   runOnSwitchedInitially: true,
-            // ),
             hideNextButton: true,
             showCalculation: false,
             amountPassed: enteredAmount.toString(),
@@ -1885,54 +1902,24 @@ class _TransferBalancePopupState extends State<TransferBalancePopup> {
             },
             allowZero: true,
           ),
+          if (_canShowInstaPay)
+            SwitchListTile(
+              contentPadding: const EdgeInsetsDirectional.symmetric(horizontal: 4),
+              title: Text(_arabic ? 'تحويل عبر إنستاباي' : 'InstaPay transfer'),
+              subtitle: Text(!_canUseInstaPay
+                  ? (_arabic ? 'اختار الجنيه المصري كعملة المبلغ' : 'Select EGP as the amount currency')
+                  : instaPayFee == null
+                  ? (_arabic ? '٠٫١٪، من ٥٠ قرش لحد ٢٠ جنيه' : '0.1%, EGP 0.50 to 20')
+                  : (_arabic
+                      ? 'الرسوم ${formatEgp(instaPayFee)} · إجمالي الخصم ${formatEgp(enteredAmount.abs() + instaPayFee)}'
+                      : 'Fee ${formatEgp(instaPayFee)} · Total debit ${formatEgp(enteredAmount.abs() + instaPayFee)}')),
+              value: _useInstaPay,
+              onChanged: _canUseInstaPay
+                  ? (enabled) => setState(() => _instaPay = enabled)
+                  : null,
+            ),
           Row(
             children: [
-              // Padding(
-              //   padding: const EdgeInsetsDirectional.only(end: 5),
-              //   child: Button(
-              //     label: transferFee == 0
-              //         ? "transfer-fee".tr()
-              //         : convertToMoney(
-              //             Provider.of<AllWallets>(context),
-              //             transferFee.abs(),
-              //             addCurrencyName: true,
-              //           ),
-              //     onTap: () async {
-              //       await openBottomSheet(
-              //         context,
-              //         fullSnap: true,
-              //         PopupFramework(
-              //           title: "transfer-fee".tr(),
-              //           subtitle: "deducted-from".tr().capitalizeFirst +
-              //               " " +
-              //               walletFrom.name,
-              //           hasPadding: false,
-              //           underTitleSpace: false,
-              //           child: SelectAmount(
-              //             padding: EdgeInsetsDirectional.symmetric(horizontal: 18),
-              //             onlyShowCurrencyIcon: true,
-              //             allowZero: true,
-              //             allDecimals: true,
-              //             convertToMoney: true,
-              //             setSelectedAmount: (amount, __) {
-              //               transferFee = amount;
-              //             },
-              //             amountPassed: transferFee.toString(),
-              //             next: () {
-              //               popRoute(context);
-              //             },
-              //             nextLabel: "set-amount".tr(),
-              //             currencyKey: null,
-              //             enableWalletPicker: false,
-              //           ),
-              //         ),
-              //       );
-              //       setState(() {});
-              //     },
-              //     color: Theme.of(context).colorScheme.tertiaryContainer,
-              //     textColor: Theme.of(context).colorScheme.onTertiaryContainer,
-              //   ),
-              // ),
               Expanded(
                 child: Button(
                   expandedLayout: true,

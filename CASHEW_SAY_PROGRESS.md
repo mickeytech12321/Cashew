@@ -4,6 +4,11 @@
 > Rule: no APK build and no merge to `main` until explicitly requested.
 > DONE records a completed milestone. TESTED records an implemented path with automated verification. CODED indicates implementation with additional verification pending. PARTIAL and TODO indicate incomplete work.
 
+## CashU 5.4.4
+- **Phase 00 / 09 · TESTED.** Database schema 48 provisions upstream tag storage and preserves tags, links, wallet icons, archive flags and scanner defaults when restoring a compatible upstream v48 SQLite backup. Local financial data remains in place when upgrading older CashU databases. A private upstream v48 sample was restored in isolation and every original table matched row for row. The full Flutter 3.50.1 suite passed 114 tests. UI editing and Drive synchronization of upstream tags are pending.
+- **Phase 01 · TESTED.** Transfer Balance offers InstaPay for EGP-to-EGP transfers. It previews the sender debit and the 0.1% fee (EGP 0.50–20), records the fee as a separate expense, and includes it in the same local transaction and undo/redo journal as both principal entries. Automated coverage includes rounding, retry, archived accounts, and undo/redo with edit conflicts. Android UI verification remains. Cross-device sync treats the fee as an ordinary transaction.
+- **Phase 07 / 09 · PARTIAL.** App branding is CashU. The Android package is `com.cashu.mickey` with separate Android app data from previous builds. Android Google sign-in uses a configured build ID or a public Web OAuth client ID entered in the Google Drive screen. Registration of the new signed Android package in the existing Google Cloud project and sign-in/Drive verification on a device remain pending.
+
 ## Phase 00 — Baseline stability
 - DONE: Release baseline #157 launched successfully on device (user-confirmed before this tracker).
 - CODED: local extension tables are provisioned transactionally on open, including installations that already report schema 47. Existing rows and schema version are preserved. The generated v46 upgrade test preserves an existing wallet, and the partial schema-47 reopen test preserves an existing scenario and provisions a missing table.

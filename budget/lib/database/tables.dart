@@ -1,3 +1,4 @@
+import 'package:budget/struct/instaPayTransfer.dart';
 import 'package:budget/struct/investmentMarketPrices.dart';
 import 'package:budget/struct/creditStatementCsv.dart' show BankStatementLine;
 import 'package:budget/struct/investmentLedger.dart';
@@ -33,7 +34,7 @@ part 'tables.g.dart';
 part 'transferSync.dart';
 part 'metadataSync.dart';
 
-int schemaVersionGlobal = 47;
+const int schemaVersionGlobal = 48;
 
 // To update and migrate the database, check the README
 
@@ -810,6 +811,10 @@ class FinanceDatabase extends _$FinanceDatabase {
         ],
         updates: {wallets},
       );
+      await customStatement(
+        'UPDATE wallets SET archived = ? WHERE wallet_pk = ?',
+        [archived ? 1 : 0, walletPk],
+      );
     });
   }
 
@@ -1005,6 +1010,62 @@ class FinanceDatabase extends _$FinanceDatabase {
       resolution TEXT CHECK (resolution IS NULL OR resolution IN ('local','remote','manual'))
     )''');
     await customStatement('CREATE INDEX IF NOT EXISTS sync_conflicts_open_idx ON sync_conflicts(resolved_at, detected_at)');
+  }
+
+  // Keep the upstream v48 fields on disk, including tags this UI cannot edit.
+  Future<void> _createFinancialSchema48() async {
+    await createLocalFinancialSchema47();
+    await customStatement('''CREATE TABLE IF NOT EXISTS tags (
+      date_created INTEGER NOT NULL,
+      date_time_modified INTEGER,
+      "order" INTEGER NOT NULL,
+      archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+      name TEXT NOT NULL,
+      colour TEXT,
+      icon_name TEXT,
+      emoji_icon_name TEXT,
+      tag_pk TEXT PRIMARY KEY NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS transaction_to_tag_links (
+      transaction_pk TEXT REFERENCES transactions(transaction_pk),
+      tag_pk TEXT REFERENCES tags(tag_pk),
+      PRIMARY KEY (transaction_pk, tag_pk)
+    )''');
+    const upstreamColumns = {
+      'wallets': {
+        'archived': 'INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))',
+        'emoji_icon_name': 'TEXT',
+      },
+      'categories': {
+        'archived': 'INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))',
+      },
+      'associated_titles': {
+        'archived': 'INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))',
+      },
+      'scanner_templates': {'default_title': 'TEXT'},
+    };
+    for (final table in upstreamColumns.entries) {
+      final columns =
+          await customSelect('PRAGMA table_info("${table.key}")').get();
+      final names = columns.map((column) => column.read<String>('name')).toSet();
+      for (final column in table.value.entries) {
+        if (!names.contains(column.key)) {
+          await customStatement(
+            'ALTER TABLE "${table.key}" ADD COLUMN "${column.key}" ${column.value}',
+          );
+        }
+      }
+    }
+    await customStatement(
+      "INSERT OR IGNORE INTO account_details(wallet_fk, archived) "
+      "SELECT wallet_pk, 1 FROM wallets WHERE archived = 1",
+    );
+    await customStatement(
+      'UPDATE wallets SET archived = (SELECT archived FROM account_details '
+      'WHERE wallet_fk = wallets.wallet_pk) WHERE EXISTS (SELECT 1 FROM '
+      'account_details WHERE wallet_fk = wallets.wallet_pk '
+      'AND archived <> wallets.archived)',
+    );
   }
 
   @override
@@ -1478,8 +1539,8 @@ class FinanceDatabase extends _$FinanceDatabase {
         );
       },
       beforeOpen: (details) async {
-        // Earlier schema-47 releases shipped only a subset of these tables.
-        await transaction(createLocalFinancialSchema47);
+        // Also repair missing extension tables from earlier builds.
+        await transaction(_createFinancialSchema48);
         // This code exists because migration 42to43 may have not run correctly...
         // See explanation in 41to42
         try {
@@ -2979,15 +3040,23 @@ class FinanceDatabase extends _$FinanceDatabase {
     return true;
   }
 
+  // Keep upstream-only tombstones for future backup round trips. The older
+  // sync protocol cannot decode their enum values or missing timestamps.
+  SimpleSelectStatement<$DeleteLogsTable, DeleteLog> _supportedDeleteLogs() =>
+      select(deleteLogs)
+        ..where((log) => log.type.isIn(
+              DeleteLogType.values.map((type) => type.index),
+            ) & log.dateTimeModified.isNotNull());
+
   Future<List<DeleteLog>> getAllNewDeleteLogs(DateTime lastSynced) async {
-    return (select(deleteLogs)
+    return (_supportedDeleteLogs()
           ..where(
               (tbl) => tbl.dateTimeModified.isBiggerOrEqualValue(lastSynced)))
         .get();
   }
 
   Future<List<DeleteLog>> getAllDeleteLogs() async {
-    return select(deleteLogs).get();
+    return _supportedDeleteLogs().get();
   }
 
   Future<bool> createDeleteLog(DeleteLogType type, String deletedPk,
@@ -3056,8 +3125,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       );
     }
 
-    return into(wallets)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    return into(wallets).insertOnConflictUpdate(companionToInsert);
   }
 
   //create or update a new objective
@@ -3126,8 +3194,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           companionToInsert.copyWith(scannerTemplatePk: Value.absent());
     }
 
-    return into(scannerTemplates)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    return into(scannerTemplates).insertOnConflictUpdate(companionToInsert);
   }
 
   Future<int> createOrUpdateCategoryLimit(CategoryBudgetLimit categoryLimit,
@@ -3449,8 +3516,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           companionToInsert.copyWith(associatedTitlePk: Value.absent());
     }
 
-    return into(associatedTitles)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    return into(associatedTitles).insertOnConflictUpdate(companionToInsert);
   }
 
   Future moveAssociatedTitle(
@@ -3929,8 +3995,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       companionToInsert = companionToInsert.copyWith(methodAdded: Value(null));
     }
 
-    return into(transactions)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    return into(transactions).insertOnConflictUpdate(companionToInsert);
   }
 
   // ************************************************************
@@ -3946,6 +4011,8 @@ class FinanceDatabase extends _$FinanceDatabase {
     Transaction incoming, {
     required String idempotencyKey,
     bool preserveTime = false,
+    bool instaPay = false,
+    bool arabicFeeLabel = false,
   }) async {
     if (idempotencyKey.trim().isEmpty ||
         outgoing.transactionPk.isEmpty || incoming.transactionPk.isEmpty ||
@@ -3973,9 +4040,23 @@ class FinanceDatabase extends _$FinanceDatabase {
       final source = await getWalletInstanceOrNull(outgoing.walletFk);
       final target = await getWalletInstanceOrNull(incoming.walletFk);
       if (source == null || target == null) throw StateError('Missing wallet');
-      if (source.currency == target.currency &&
+      if ((instaPay || source.currency == target.currency) &&
           (outgoing.amount.abs() - incoming.amount).abs() > 0.00000001) {
         throw ArgumentError('Same-currency transfer amounts differ');
+      }
+      final fee = instaPay ? instaPayTransferFee(outgoing.amount.abs()) : null;
+      if (instaPay &&
+          (fee == null ||
+              !isInstaPayCurrency(source.currency) ||
+              !isInstaPayCurrency(target.currency) ||
+              outgoing.objectiveLoanFk != null ||
+              incoming.objectiveLoanFk != null)) {
+        throw ArgumentError('InstaPay requires a valid EGP transfer');
+      }
+      if (instaPay &&
+          ((await getAccountDetails(source.walletPk))?['archived'] == 1 ||
+              (await getAccountDetails(target.walletPk))?['archived'] == 1)) {
+        throw StateError('An InstaPay account is archived');
       }
       final existing = await (select(transactions)
         ..where((t) => t.transactionPk.isIn(
@@ -3990,14 +4071,43 @@ class FinanceDatabase extends _$FinanceDatabase {
       final second = await createOrUpdateTransaction(credit,
           updateSharedEntry: false, preserveBalanceCorrectionTime: preserveTime);
       if (first == null || second == null) throw StateError('Transfer write failed');
+      final entryIds = [debit.transactionPk, credit.transactionPk];
+      if (fee != null) {
+        final label = arabicFeeLabel ? 'رسوم إنستاباي' : 'InstaPay fees';
+        await into(categories).insert(
+          CategoriesCompanion.insert(
+            categoryPk: const Value(_instaPayFeesCategoryPk),
+            name: label,
+            order: await getAmountOfCategories(),
+          ),
+          mode: InsertMode.insertOrIgnore,
+        );
+        final expensePk = uuid.v4();
+        final savedDebit = await getTransactionFromPk(debit.transactionPk);
+        await into(transactions).insert(Transaction(
+          transactionPk: expensePk,
+          walletFk: debit.walletFk,
+          categoryFk: _instaPayFeesCategoryPk,
+          name: label,
+          amount: -fee,
+          note: debit.note,
+          dateCreated: savedDebit.dateCreated,
+          dateTimeModified: DateTime.now(),
+          income: false,
+          paid: true,
+          skipPaid: false,
+        ));
+        entryIds.add(expensePk);
+      }
       await customStatement(
         'INSERT INTO financial_actions (action_pk, action_type, created_at, idempotency_key) VALUES (?, ?, ?, ?)',
         [outgoing.transactionPk, 'transfer', DateTime.now().millisecondsSinceEpoch, idempotencyKey],
       );
       final savedLegs = await (select(transactions)
-        ..where((t) => t.transactionPk.isIn(
-          [debit.transactionPk, credit.transactionPk]))).get();
-      if (savedLegs.length != 2) throw StateError('Transfer legs missing');
+        ..where((t) => t.transactionPk.isIn(entryIds))).get();
+      if (savedLegs.length != entryIds.length) {
+        throw StateError('Transfer entries missing');
+      }
       for (final leg in savedLegs) {
         await customStatement(
           'INSERT INTO financial_action_changes (change_pk, action_fk, entity_type, entity_pk, after_json) VALUES (?, ?, ?, ?, ?)',
@@ -4042,7 +4152,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       if (action == null || action.data['action_type'] != 'transfer' ||
           action.data['undone_at'] != null) return false;
       final changes = await getLocalFinancialActionChanges(actionPk);
-      if (changes.length != 2) throw StateError('Invalid transfer journal');
+      final currentEntries = <Transaction>[];
       final ids = <String>[];
       for (final change in changes) {
         final id = change['entity_pk'];
@@ -4055,8 +4165,10 @@ class FinanceDatabase extends _$FinanceDatabase {
         if (current == null || jsonEncode(current.toJson()) != change['after_json']) {
           throw StateError('Transfer has changed; undo refused');
         }
+        currentEntries.add(current);
         ids.add(id);
       }
+      _validateTransferJournal(actionPk, currentEntries);
       final externalLinks = await (select(transactions)
         ..where((t) => t.pairedTransactionFk.isIn(ids) &
             t.transactionPk.isNotIn(ids))).get();
@@ -4081,7 +4193,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     });
   }
 
-  // Redo a transfer only when its journal is intact and neither leg exists.
+  // Redo a transfer only when its journal is intact and all entries are absent.
   Future<bool> redoLocalTransfer(String actionPk) async {
     return transaction(() async {
       final action = await customSelect(
@@ -4091,7 +4203,6 @@ class FinanceDatabase extends _$FinanceDatabase {
       if (action == null || action.data['action_type'] != 'transfer' ||
           action.data['undone_at'] == null) return false;
       final changes = await getLocalFinancialActionChanges(actionPk);
-      if (changes.length != 2) throw StateError('Invalid transfer journal');
       final restored = <Transaction>[];
       for (final change in changes) {
         final id = change['entity_pk'];
@@ -4114,11 +4225,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         }
         restored.add(restoredTransaction);
       }
-      if (restored.length != 2 ||
-          restored[0].pairedTransactionFk != restored[1].transactionPk ||
-          restored[1].pairedTransactionFk != restored[0].transactionPk) {
-        throw StateError('Transfer pairing mismatch');
-      }
+      _validateTransferJournal(actionPk, restored);
       for (final leg in restored) {
         final saved = await createOrUpdateTransaction(
           leg, updateSharedEntry: false, preserveBalanceCorrectionTime: true);
@@ -4141,6 +4248,38 @@ class FinanceDatabase extends _$FinanceDatabase {
       );
       return true;
     });
+  }
+
+  static const _instaPayFeesCategoryPk = 'cashu-instapay-fees';
+
+  void _validateTransferJournal(String actionPk, List<Transaction> entries) {
+    final byId = {for (final entry in entries) entry.transactionPk: entry};
+    final debit = byId[actionPk];
+    final credit = byId[debit?.pairedTransactionFk];
+    if (entries.length != byId.length ||
+        entries.length < 2 || entries.length > 3 ||
+        debit == null || credit == null ||
+        debit.amount >= 0 || credit.amount <= 0 ||
+        debit.categoryFk != '0' || credit.categoryFk != '0' ||
+        debit.walletFk == credit.walletFk ||
+        credit.pairedTransactionFk != actionPk) {
+      throw StateError('Transfer pairing mismatch');
+    }
+    if (entries.length == 3) {
+      final fee = entries.singleWhere(
+        (entry) => entry.transactionPk != actionPk &&
+            entry.transactionPk != credit.transactionPk,
+      );
+      if (fee.walletFk != debit.walletFk ||
+          fee.dateCreated != debit.dateCreated ||
+          fee.pairedTransactionFk != null ||
+          fee.categoryFk != _instaPayFeesCategoryPk ||
+          fee.income || !fee.paid ||
+          fee.amount.abs() != instaPayTransferFee(-debit.amount) ||
+          fee.amount >= 0) {
+        throw StateError('InstaPay fee mismatch');
+      }
+    }
   }
 
   Future<Map<String, dynamic>?> getCreditCardDetails(String walletPk) async {
@@ -6011,7 +6150,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         final found = await (select(transactions)
               ..where((row) => row.transactionPk.isIn(keys))).get();
         current.addEntries(found.map((row) => MapEntry(row.transactionPk, row)));
-        final removed = await (select(deleteLogs)
+        final removed = await (_supportedDeleteLogs()
               ..where((row) => row.entryPk.isIn(keys) &
                   row.type.equalsValue(DeleteLogType.Transaction))).get();
         for (final log in removed) {
@@ -6027,7 +6166,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       final metadataTombstones = <(DeleteLogType, String), DateTime>{};
       for (var offset = 0; offset < metadataIds.length; offset += 400) {
         final keys = metadataIds.skip(offset).take(400);
-        final rows = await (select(deleteLogs)
+        final rows = await (_supportedDeleteLogs()
               ..where((row) => row.entryPk.isIn(keys) &
                   row.type.equalsValue(DeleteLogType.Transaction).not())).get();
         for (final row in rows) {
@@ -6236,8 +6375,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   Future<bool> updateBatchTransactionsOnly(
       List<Transaction> transactionsInserting) async {
     await batch((batch) {
-      batch.insertAll(transactions, transactionsInserting,
-          mode: InsertMode.insertOrReplace);
+      batch.insertAllOnConflictUpdate(transactions, transactionsInserting);
     });
     return true;
   }
@@ -6263,8 +6401,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   Future<bool> updateBatchWalletsOnly(
       List<TransactionWallet> walletsInserting) async {
     await batch((batch) {
-      batch.insertAll(wallets, walletsInserting,
-          mode: InsertMode.insertOrReplace);
+      batch.insertAllOnConflictUpdate(wallets, walletsInserting);
     });
     return true;
   }
@@ -6272,8 +6409,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   Future<bool> updateBatchCategoriesOnly(
       List<TransactionCategory> categoriesInserting) async {
     await batch((batch) {
-      batch.insertAll(categories, categoriesInserting,
-          mode: InsertMode.insertOrReplace);
+      batch.insertAllOnConflictUpdate(categories, categoriesInserting);
     });
     return true;
   }
@@ -6457,8 +6593,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     }
 
     // We need to ensure the value is set back to null, so insert/replace
-    int result = await into(categories)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    int result = await into(categories).insertOnConflictUpdate(companionToInsert);
 
     if (updateSharedEntry)
       updateTransactionOnServerAfterChangingCategoryInformation(category);
@@ -6836,7 +6971,7 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Stream<List<TransactionActivityLog>> watchAllTransactionDeleteActivityLog(
       {int? limit}) {
-    final query = select(deleteLogs)
+    final query = _supportedDeleteLogs()
       ..where((l) => l.type.equals(DeleteLogType.Transaction.index))
       ..limit(limit ?? DEFAULT_LIMIT)
       ..orderBy([(t) => OrderingTerm.desc(deleteLogs.dateTimeModified)]);
@@ -9868,7 +10003,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Stream<List<DeleteLog>> watchAllDeleteLogs() {
-    return (select(deleteLogs)).watch();
+    return _supportedDeleteLogs().watch();
   }
 
   Stream<List<TransactionWithCount>> getCommonTransactions() {

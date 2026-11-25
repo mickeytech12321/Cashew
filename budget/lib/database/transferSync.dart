@@ -87,7 +87,7 @@ extension TransferSync on FinanceDatabase {
 
   Future<Map<String, DateTime>> _readTransferTombstones(
       _TransferPair pair) async {
-    final logs = await (select(deleteLogs)
+    final logs = await (_supportedDeleteLogs()
           ..where((row) =>
               row.entryPk.isIn([pair.$1, pair.$2]) &
               row.type.equalsValue(DeleteLogType.Transaction)))

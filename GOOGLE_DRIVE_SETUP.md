@@ -1,4 +1,4 @@
-# Android Google sign-in and Drive backup
+# CashU Android Google sign-in and Drive backup
 
 This branch uses a Google Cloud OAuth project owned by the app publisher. Basic Drive backup and device sync use the Google Drive API app data folder. Firebase and Gmail are separate services.
 
@@ -6,14 +6,14 @@ This branch uses a Google Cloud OAuth project owned by the app publisher. Basic 
 
 The [Cashew Free Edition project](https://console.cloud.google.com/auth/overview?project=cashew-free-edition) has the Drive API enabled. The OAuth consent screen uses External / Testing, the project owner's account is on the test-user list, and Data Access declares `drive.appdata`. The Web OAuth client is registered and its client ID is configured in the GitHub Actions repository variable `CASHEW_GOOGLE_WEB_CLIENT_ID`.
 
-Android OAuth registration is pending the certificate SHA-1 for the intended test or release signer. Complete that registration before verifying Google sign-in and the Drive backup and restore flows on a device. Keep the app in Testing until those checks pass.
+Register a new Android OAuth client for the CashU package. The previous Android package registration does not cover this build. For the supplied ARM64 CashU test build, use package `com.cashu.mickey` and SHA-1 `09:B9:9A:4C:9E:4E:3A:95:3F:D8:8C:51:FE:FF:6D:EB:FC:DF:84:20`. Complete registration before verifying sign-in, backup and restore on a device.
 
 ## Configure Google Cloud
 
 1. Create or select a project in [Google Cloud Console](https://console.cloud.google.com/).
 2. Enable [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com) in that project.
 3. In [Google Auth Platform](https://console.cloud.google.com/auth/overview), configure Branding and Audience. For external testing, add the Google accounts that will test the app. Under Data Access, add `https://www.googleapis.com/auth/drive.appdata`.
-4. Under Clients, create **Android** OAuth credentials for the installed package. The standard package is `com.mickey.cashew` and the isolated preview package is `com.mickey.cashew.preview`. Register the SHA‑1 of the certificate that signs that APK.
+4. Under Clients, create **Android** OAuth credentials for the installed package. The standard package is `com.cashu.mickey` and the isolated preview package is `com.cashu.mickey.preview`. Register the SHA‑1 of the certificate that signs that APK.
 5. In the same project, create a **Web application** OAuth client. Copy only its client ID ending in `.apps.googleusercontent.com`. The Android plugin uses this ID as its server client ID. The native Android client ID and Web client secret are unused by the build.
 
 For a local debug signer on Windows PowerShell:
@@ -40,17 +40,17 @@ Set the GitHub Actions repository **variable** `CASHEW_GOOGLE_WEB_CLIENT_ID` to 
 
 Run this only as part of an Android build you intend to create. GitHub-hosted debug keys can differ from a local debug key. OAuth will work only for the SHA‑1 of the APK actually installed. For repeatable testing, consistently use a registered signer. Keep signing keys, passwords, OAuth client secrets, service account keys, and access tokens out of repository variables, commits and chat.
 
-GitHub Actions variables are available to the workflow. For a local build with Drive enabled, explicitly pass the public Web client ID with the flag above and register the APK's actual package and certificate in Google Cloud. A build without the Web client ID supports local file restore.
+GitHub Actions variables are available to the workflow. For a local build with Drive enabled, explicitly pass the public Web client ID with the flag above and register the APK's actual package and certificate in Google Cloud. When building without the variable, use **Settings → Google Drive → Google Drive setup** on the test device to paste the public **Web OAuth client ID** from the same Cloud project. This saves the ID on that installation and leaves the local backup workflow available. If changing an ID after a sign-in attempt, close and reopen CashU before retrying.
 
-## Build an isolated Android preview
+## Build an Android test APK
 
-Use Flutter 3.50.1 and Android SDK 36. This optimized test build uses the local Android test key and installs under `com.mickey.cashew.preview` with its own app data. It can be installed alongside the standard app.
+Use Flutter 3.50.1 and Android SDK 36. The optimized test build uses the local Android debug signer and installs as `com.cashu.mickey`. Set `CASHU_TEST_KEYSTORE` to reuse an existing Android debug-format keystore that has a registered OAuth certificate. For a separately installed preview alongside CashU, also set `CASHEW_ISOLATED_PREVIEW=true` and register the resulting `com.cashu.mickey.preview` package separately.
 
 ```bash
 cd budget
 flutter pub get
 python3 ../scripts/prepare_flutter_compat.py android
-CASHEW_TEST_RELEASE=true CASHEW_ISOLATED_PREVIEW=true \
+CASHEW_TEST_RELEASE=true \
   flutter build apk --release --no-pub --no-tree-shake-icons
 ```
 
@@ -61,7 +61,7 @@ The APK is at `budget/build/app/outputs/flutter-apk/app-release.apk` from the re
 - Sign in from **Accounts** with an authorized Google account and grant the Cashew Drive backup permission.
 - Create a backup, confirm it appears in **Manage backups**, then verify that it restores into a test installation on restart.
 - Try a canceled sign-in and a denied Drive grant. Local finance features should remain usable.
-- For device sync, confirm both installations use the same OAuth project and Google account. Drive's app data is app-scoped. Export and import a SQLite backup when migrating from old credentials if the old files do not appear.
+- For device sync, confirm both installations use the same OAuth project and Google account. Drive's app data is app-scoped. The new Android package starts with independent app data. Use **Export Cashew Data File** in the old app, then **Import Cashew Data File** in CashU and reopen it to restore on the new package if the existing Drive files are unavailable.
 
 ## Credentials for later services
 
@@ -75,7 +75,7 @@ The APK is at `budget/build/app/outputs/flutter-apk/app-release.apk` from the re
 
 ## Configure household sharing
 
-This optional service uses a dedicated Firebase project with a default Cloud Firestore database and Email/Password authentication. Register `com.mickey.cashew` as an Android app in the new Firebase project. Configure verification emails and apply the [household rules](budget/household/firestore.rules) to that project. The separate configuration in `budget/household/firebase.json` targets those rules. Specify the dedicated project explicitly if you deploy them with the Firebase CLI.
+This optional service uses a dedicated Firebase project with a default Cloud Firestore database and Email/Password authentication. Register `com.cashu.mickey` as an Android app in the new Firebase project. Configure verification emails and apply the [household rules](budget/household/firestore.rules) to that project. The separate configuration in `budget/household/firebase.json` targets those rules. Specify the dedicated project explicitly if you deploy them with the Firebase CLI.
 
 Supply the project’s public client configuration to the intended app build. The free-edition Android workflow can read the same keys from repository variables.
 

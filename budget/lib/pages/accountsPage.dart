@@ -128,7 +128,14 @@ class AccountsPageState extends State<AccountsPage> {
                         onTap: () async {
                           await signInAndSync(context, next: () {});
                         },
-                      )
+                      ),
+                      if (canConfigureGoogleAndroidClient)
+                        TextButton(
+                          onPressed: () => configureGoogleAndroidClient(context),
+                          child: Text(Localizations.localeOf(context).languageCode == 'ar'
+                              ? 'إعداد Google Drive'
+                              : 'Google Drive setup'),
+                        )
                     ],
                   )
                 : Column(
@@ -486,7 +493,7 @@ class _SignInWithGoogleFlyInState extends State<SignInWithGoogleFlyIn> {
                     ),
                     child: Tappable(
                       onTap: () async {
-                        await signInGoogle();
+                        await signInGoogle(context: context);
                         setState(() {
                           hide = true;
                         });
@@ -562,7 +569,7 @@ class _SignInWithGoogleFlyInState extends State<SignInWithGoogleFlyIn> {
                             child: Button(
                               label: "Continue with Google",
                               onTap: () async {
-                                await signInGoogle();
+                                await signInGoogle(context: context);
                                 setState(() {
                                   hide = true;
                                 });

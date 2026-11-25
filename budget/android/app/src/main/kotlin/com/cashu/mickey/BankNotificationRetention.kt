@@ -1,4 +1,4 @@
-package com.mickey.cashew
+package com.cashu.mickey
 
 import android.app.NotificationManager
 import android.content.ComponentName

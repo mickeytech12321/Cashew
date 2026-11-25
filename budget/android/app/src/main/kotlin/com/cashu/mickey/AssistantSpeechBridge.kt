@@ -1,4 +1,4 @@
-package com.mickey.cashew
+package com.cashu.mickey
 
 import android.Manifest
 import android.app.Activity

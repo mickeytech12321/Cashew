@@ -57,12 +57,12 @@ Future<T> readCashewSyncSnapshot<T>(
   validateCashewBackupHeader(bytes);
   final root = scratch ?? await getTemporaryDirectory();
   final folder = await root.createTemp('cashew-sync-');
-  FinanceDatabase? candidate;
+  CashewRestoreCandidate? candidate;
   try {
     final file = File(p.join(folder.path, 'snapshot.sqlite'));
     await file.writeAsBytes(bytes);
-    candidate = FinanceDatabase(NativeDatabase.createInBackground(file));
-    await validateCashewBackupDatabase(candidate);
+    candidate = CashewRestoreCandidate(NativeDatabase.createInBackground(file));
+    await candidate.validate();
     return await read(candidate);
   } finally {
     try {

@@ -1,4 +1,4 @@
-package com.mickey.cashew
+package com.cashu.mickey
 
 import android.content.Intent
 import android.provider.Settings

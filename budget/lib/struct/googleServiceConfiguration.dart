@@ -11,6 +11,14 @@ const googleMailScopes = <String>[gmail.GmailApi.gmailModifyScope];
 bool isGoogleOAuthClientId(String value) =>
     RegExp(r'^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$').hasMatch(value);
 
+String? resolveGoogleAndroidClientId(
+    {required String buildId, String? savedId}) {
+  final compiled = buildId.trim();
+  final saved = savedId?.trim();
+  if (isGoogleOAuthClientId(compiled)) return compiled;
+  return saved != null && isGoogleOAuthClientId(saved) ? saved : null;
+}
+
 List<String> requestedGoogleScopes({
   bool attachments = false,
   bool mail = false,

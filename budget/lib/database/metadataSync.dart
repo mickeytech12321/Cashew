@@ -277,7 +277,7 @@ extension MetadataSync on FinanceDatabase {
   }
 
   Future<DateTime?> _latestMetadataRemoval(_MetadataKey key) async {
-    final log = await (select(deleteLogs)
+    final log = await (_supportedDeleteLogs()
           ..where((row) =>
               row.entryPk.equals(key.$2) & row.type.equalsValue(key.$1))
           ..orderBy([(row) => OrderingTerm.desc(row.dateTimeModified)])
