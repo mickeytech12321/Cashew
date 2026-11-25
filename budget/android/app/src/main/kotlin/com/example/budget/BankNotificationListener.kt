@@ -62,7 +62,9 @@ class BankNotificationListener : NotificationListenerService() {
         val target = sink ?: return
         runCatching { retained.read() }.getOrNull().orEmpty()
             .filter { it.packageName in allowedPackages && it.postedAt >= since }
-            .forEach { target.success(it.event()) }
+            .forEach { event ->
+                target.success(runCatching { retained.identify(event) }.getOrDefault(event).event())
+            }
     }
 
     private fun replayActive() {
@@ -104,7 +106,8 @@ class BankNotificationListener : NotificationListenerService() {
         )
         val saved = if (retain) runCatching { retained.enqueue(event) }.getOrNull() else null
         if (posted.packageName in allowedPackages && posted.postTime >= since) {
-            sink?.success((saved ?: event).event())
+            val delivery = saved ?: runCatching { retained.identify(event) }.getOrDefault(event)
+            sink?.success(delivery.event())
         }
     }
 

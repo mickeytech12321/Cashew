@@ -13,7 +13,8 @@ class BankNotification {
       this.title,
       this.content,
       this.postedAt,
-      this.receipt});
+      this.receipt,
+      this.signature});
 
   final String? id;
   final String? packageName;
@@ -21,6 +22,7 @@ class BankNotification {
   final String? content;
   final DateTime? postedAt;
   final String? receipt;
+  final String? signature;
 }
 
 const _access = MethodChannel('cashew/bank_notifications/settings');
@@ -33,7 +35,6 @@ final bankNotificationInbox = BankNotificationInbox();
 
 class BankNotificationInbox {
   StreamSubscription<dynamic>? _subscription;
-  final _recent = <String, DateTime>{};
   final revision = ValueNotifier<int>(0);
   int _configuration = 0;
   Future<void> _deliveries = Future.value();
@@ -148,6 +149,7 @@ class BankNotificationInbox {
             title: data['title'] as String?,
             content: data['content'] as String?,
             receipt: data['receipt'] as String?,
+            signature: data['signature'] as String?,
             postedAt: timestamp is int && timestamp > 0
                 ? DateTime.fromMillisecondsSinceEpoch(timestamp)
                 : null,
@@ -206,37 +208,18 @@ class BankNotificationInbox {
       return false;
     }
 
-    // Android may update the same notification repeatedly. Keep only hashes
-    // in a bounded, short-lived cache so reused notification IDs work later.
-    final key = db.financialImportFingerprint(
-      sourceType: 'notification',
-      sender: '$package:${event.id ?? ''}',
-      rawText: message,
-      occurredAt: DateTime.fromMillisecondsSinceEpoch(0),
+    return db.stageBankNotificationEvent(
+      eventPk: uuid.v4(),
+      package: package,
+      notificationId: event.id ?? '',
+      deliverySignature: event.signature,
+      occurredAt: event.postedAt ?? receivedAt,
+      receivedAt: receivedAt,
+      amount: amount,
+      currency: currency,
+      direction: direction,
+      lastFour: parsed.lastFour,
+      confidence: parsed.confidence,
     );
-    _recent.removeWhere(
-        (_, time) => receivedAt.difference(time) > const Duration(minutes: 2));
-    if (_recent.containsKey(key)) return false;
-    if (_recent.length >= 100) _recent.remove(_recent.keys.first);
-    _recent[key] = receivedAt;
-    try {
-      return await db.stageImportedFinancialEvent(
-        eventPk: uuid.v4(),
-        sourceType: 'notification',
-        sourceSender: package,
-        // Keep the parsed direction, amount and card suffix separately. Do
-        // not retain the original notification body or merchant string.
-        rawText: package,
-        occurredAt: event.postedAt ?? receivedAt,
-        amount: amount,
-        currency: currency,
-        direction: direction,
-        identifierLast4: parsed.lastFour,
-        confidence: parsed.confidence,
-      );
-    } catch (_) {
-      if (_recent[key] == receivedAt) _recent.remove(key);
-      rethrow;
-    }
   }
 }

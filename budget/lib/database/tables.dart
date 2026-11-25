@@ -31,6 +31,7 @@ import 'package:budget/pages/activityPage.dart';
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 part 'transferSync.dart';
+part 'metadataSync.dart';
 
 int schemaVersionGlobal = 47;
 
@@ -870,6 +871,15 @@ class FinanceDatabase extends _$FinanceDatabase {
       UNIQUE(identifier_type, identifier_value)
     )''');
     await customStatement('CREATE INDEX IF NOT EXISTS account_identifiers_wallet_idx ON account_identifiers(wallet_fk)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS bank_notification_receipts (
+      identity TEXT NOT NULL,
+      posted_at INTEGER NOT NULL,
+      PRIMARY KEY(identity, posted_at)
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS bank_notification_receipts_time_idx '
+        'ON bank_notification_receipts(posted_at)');
+    await customStatement('DELETE FROM bank_notification_receipts WHERE posted_at < ?',
+      [DateTime.now().subtract(const Duration(days: 1, minutes: 2)).millisecondsSinceEpoch]);
     await customStatement('''CREATE TABLE IF NOT EXISTS imported_financial_events (
       event_pk TEXT PRIMARY KEY NOT NULL,
       source_type TEXT NOT NULL,
@@ -948,6 +958,10 @@ class FinanceDatabase extends _$FinanceDatabase {
       holding_fk TEXT PRIMARY KEY NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
       symbol TEXT NOT NULL,
       revision TEXT NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_market_listings (
+      holding_fk TEXT PRIMARY KEY NOT NULL REFERENCES investment_market_sources(holding_fk) ON DELETE CASCADE,
+      mic TEXT NOT NULL
     )''');
     await customStatement('''CREATE TABLE IF NOT EXISTS investment_quotes (
       holding_fk TEXT NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
@@ -4681,11 +4695,76 @@ class FinanceDatabase extends _$FinanceDatabase {
     return hash.toRadixString(16).padLeft(16, '0');
   }
 
+  Future<bool> stageBankNotificationEvent({
+    required String eventPk,
+    required String package,
+    required String notificationId,
+    required String? deliverySignature,
+    required DateTime occurredAt,
+    required DateTime receivedAt,
+    required double amount,
+    required String currency,
+    required String direction,
+    required String? lastFour,
+    required double confidence,
+  }) async {
+    const maxAge = Duration(days: 1);
+    const updateWindow = Duration(minutes: 2);
+    if (occurredAt.isBefore(receivedAt.subtract(maxAge)) ||
+        occurredAt.isAfter(receivedAt.add(updateWindow))) return false;
+    final time = occurredAt.millisecondsSinceEpoch;
+    final signed = deliverySignature != null &&
+        RegExp(r'^[a-f0-9]{64}$').hasMatch(deliverySignature);
+    final identity = financialImportFingerprint(
+      sourceType: 'notification-delivery', sender: '$package:$notificationId',
+      rawText: jsonEncode([if (signed) deliverySignature, amount, currency, direction, lastFour]),
+      occurredAt: DateTime.fromMillisecondsSinceEpoch(0),
+    );
+    // Older builds deduplicated solely by source and timestamp. Suppress
+    // replays of their matching parsed events without conflating new alerts.
+    final legacy = financialImportFingerprint(
+      sourceType: 'notification', sender: package, rawText: package, occurredAt: occurredAt,
+    );
+    return transaction(() async {
+      await customStatement(
+        'DELETE FROM bank_notification_receipts WHERE posted_at < ?',
+        [receivedAt.subtract(maxAge + updateWindow).millisecondsSinceEpoch],
+      );
+      final prior = await customSelect(
+        'SELECT 1 FROM bank_notification_receipts '
+        'WHERE identity = ? AND posted_at BETWEEN ? AND ? LIMIT 1',
+        variables: [
+          Variable<String>(identity),
+          Variable<int>(time - updateWindow.inMilliseconds),
+          Variable<int>(time + updateWindow.inMilliseconds),
+        ],
+      ).getSingleOrNull();
+      if (prior != null) return false;
+      final oldEvent = await customSelect(
+        'SELECT 1 FROM imported_financial_events WHERE fingerprint = ? '
+        'AND amount = ? AND currency = ? AND direction = ? AND identifier_last4 IS ?',
+        variables: [Variable<String>(legacy), Variable<double>(amount),
+          Variable<String>(currency), Variable<String>(direction), Variable<String>(lastFour)],
+      ).getSingleOrNull();
+      final added = oldEvent == null && await stageImportedFinancialEvent(
+        eventPk: eventPk, sourceType: 'notification', sourceSender: package,
+        rawText: package, fingerprintInput: identity, occurredAt: occurredAt, amount: amount,
+        currency: currency, direction: direction, identifierLast4: lastFour, confidence: confidence,
+      );
+      await customStatement(
+        'INSERT OR IGNORE INTO bank_notification_receipts(identity, posted_at) VALUES (?, ?)',
+        [identity, time],
+      );
+      return added;
+    });
+  }
+
   Future<bool> stageImportedFinancialEvent({
     required String eventPk,
     required String sourceType,
     String? sourceSender,
     required String rawText,
+    String? fingerprintInput,
     required DateTime occurredAt,
     double? amount,
     String? currency,
@@ -4703,7 +4782,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     }
     final fingerprint = financialImportFingerprint(
       sourceType: sourceType, sender: sourceSender,
-      rawText: rawText, occurredAt: occurredAt);
+      rawText: fingerprintInput ?? rawText, occurredAt: occurredAt);
     return transaction(() async {
       await customStatement(
         'INSERT INTO imported_financial_events '
@@ -4727,6 +4806,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   /// Call on an isolated backup connection so the local review inbox is preserved.
   Future<void> omitImportMessageBodiesFromBackup() async {
     await customStatement("UPDATE imported_financial_events SET raw_text = '' WHERE raw_text != ''");
+    await customStatement('DELETE FROM bank_notification_receipts');
     await customStatement('VACUUM');
   }
 
@@ -5029,7 +5109,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Future<List<Map<String, dynamic>>> calculatePlanningScenario(
-      String scenarioPk, {String? scheduledWalletPk, Set<String> scheduledWalletPks = const {}, bool projectRecurrences = false, String? goalPk,
+      String scenarioPk, {String? scheduledWalletPk, Set<String> scheduledWalletPks = const {}, bool projectRecurrences = false, bool includeOverdueBills = false, String? goalPk,
         Map<String, dynamic>? rateSettings}) async {
     final scenario = await customSelect(
       'SELECT p.*, c.currency FROM planning_scenarios p '
@@ -5097,7 +5177,9 @@ class FinanceDatabase extends _$FinanceDatabase {
                 row.walletFk.isIn(scheduledAccounts) &
                 row.paid.equals(false) &
                 row.skipPaid.equals(false) &
-                row.dateCreated.isBiggerOrEqualValue(base) &
+                (row.dateCreated.isBiggerOrEqualValue(base) |
+                    (includeOverdueBills ? row.amount.isSmallerThanValue(0)
+                      : const Constant(false))) &
                 row.dateCreated.isSmallerThanValue(horizon) &
                 row.type.isInValues([
                   TransactionSpecialType.upcoming,
@@ -5125,7 +5207,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         }
       }
       for (final entry in scheduled) {
-        void addOccurrence(DateTime date, {required bool projected}) {
+        void addOccurrence(DateTime date, {required bool projected, DateTime? overdueSince}) {
           points.add({
             'date': date,
             'item_pk': entry.transactionPk,
@@ -5133,11 +5215,14 @@ class FinanceDatabase extends _$FinanceDatabase {
             'amount': entry.amount * (ratios[entry.walletFk] ?? 1),
             'scheduled': true,
             'projected': projected,
+            if (overdueSince != null) 'overdue_since': overdueSince,
             'goal_pk': entry.objectiveFk,
           });
         }
 
-        addOccurrence(entry.dateCreated, projected: false);
+        final overdue = entry.dateCreated.isBefore(base);
+        addOccurrence(overdue ? base : entry.dateCreated,
+            projected: false, overdueSince: overdue ? entry.dateCreated : null);
         if (!projectRecurrences ||
             entry.createdAnotherFutureTransaction == true ||
             entry.objectiveFk != null ||
@@ -5152,7 +5237,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           final next = nextRecurringDate(date, entry.reoccurrence, entry.periodLength);
           if (next == null || !next.isAfter(date) || !next.isBefore(horizon) ||
               (entry.endDate?.isBefore(next) ?? false)) break;
-          addOccurrence(next, projected: true);
+          if (!next.isBefore(base)) addOccurrence(next, projected: true);
           date = next;
         }
       }
@@ -5223,6 +5308,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     });
     for (final point in points) {
       balance += point['amount'] as double;
+      if (!balance.isFinite) throw StateError('Invalid forecast balance');
       point['balance'] = balance;
     }
     points.insert(0, {'date': base, 'balance': startingBalance, 'item_pk': null});
@@ -5292,18 +5378,31 @@ class FinanceDatabase extends _$FinanceDatabase {
     }).toList();
   }
 
-  Future<({String symbol, String revision})?> getInvestmentMarketSource(String id) async {
+  Future<InvestmentMarketSource?> getInvestmentMarketSource(String id) async {
     final row = await customSelect(
-      'SELECT symbol, revision FROM investment_market_sources WHERE holding_fk = ?',
+      'SELECT s.symbol, s.revision, l.mic FROM investment_market_sources s '
+      'LEFT JOIN investment_market_listings l ON l.holding_fk = s.holding_fk '
+      'WHERE s.holding_fk = ?',
       variables: [Variable<String>(id)],
     ).getSingleOrNull();
-    return row == null ? null
-        : (symbol: row.read<String>('symbol'), revision: row.read<String>('revision'));
+    if (row == null) return null;
+    final stored = row.read<String>('symbol');
+    final mic = row.readNullable<String>('mic');
+    final stock = mic != null && stored.startsWith('$mic:');
+    return (
+      symbol: stock ? stored.substring(mic.length + 1) : stored,
+      revision: row.read<String>('revision'),
+      provider: stock ? InvestmentPriceProvider.twelveData : InvestmentPriceProvider.coinbase,
+      mic: stock ? mic : null,
+    );
   }
 
-  Future<void> setInvestmentMarketSource(String id, String? symbol) =>
+  Future<void> setInvestmentMarketSource(String id, String? symbol, {String? mic}) =>
       transaction(() async {
     if (symbol == null) {
+      await customStatement(
+        'DELETE FROM investment_market_listings WHERE holding_fk = ?', [id],
+      );
       await customStatement(
         'DELETE FROM investment_market_sources WHERE holding_fk = ?', [id],
       );
@@ -5314,13 +5413,29 @@ class FinanceDatabase extends _$FinanceDatabase {
       variables: [Variable<String>(id)],
     ).getSingleOrNull();
     if (holding == null) throw StateError('Holding not found');
-    final pair = CoinbaseMarketPair(symbol, holding.read<String>('currency'));
+    final currency = holding.read<String>('currency');
+    final listing = mic == null ? null : StockMarketListing(symbol, mic, currency);
+    // An older build rejects the venue-prefixed value instead of fetching a
+    // potentially unrelated Coinbase instrument with the same stock ticker.
+    final ticker = listing == null
+        ? CoinbaseMarketPair(symbol, currency).symbol : '${listing.mic}:${listing.symbol}';
     await customStatement(
       'INSERT INTO investment_market_sources (holding_fk, symbol, revision) '
       'VALUES (?, ?, ?) ON CONFLICT(holding_fk) DO UPDATE SET '
       'symbol = excluded.symbol, revision = excluded.revision',
-      [id, pair.symbol, uuid.v4()],
+      [id, ticker, uuid.v4()],
     );
+    if (listing == null) {
+      await customStatement(
+        'DELETE FROM investment_market_listings WHERE holding_fk = ?', [id],
+      );
+    } else {
+      await customStatement(
+        'INSERT INTO investment_market_listings (holding_fk, mic) VALUES (?, ?) '
+        'ON CONFLICT(holding_fk) DO UPDATE SET mic = excluded.mic',
+        [id, listing.mic],
+      );
+    }
   });
 
   Future<bool> saveFetchedInvestmentQuote(
@@ -5917,6 +6032,8 @@ class FinanceDatabase extends _$FinanceDatabase {
         }
       }
 
+      final metadata = await _readMetadataVersions(ordered);
+      final metadataDeletes = <_MetadataKey, DateTime>{};
       final transferPairs = await _getTransferSyncPairs(ordered, current);
       final transferIds = transferPairs.expand((pair) => [pair.$1, pair.$2]).toSet();
       await batch((batch) async {
@@ -5931,51 +6048,27 @@ class FinanceDatabase extends _$FinanceDatabase {
           final metadataType = _metadataSyncType(syncLog);
           if (metadataType != null) {
             final key = (metadataType, syncLog.pk);
-            if (!(metadataTombstones[key]?.isBefore(date) ?? true)) continue;
+            final removal = metadataTombstones[key];
+            if (!(removal?.isBefore(date) ?? true)) continue;
             if (syncLog.deleteLogType != null) {
-              metadataTombstones[key] = date;
-              batch.insert(deleteLogs, DeleteLogsCompanion.insert(
-                entryPk: syncLog.pk, type: metadataType, dateTimeModified: Value(date),
-              ));
+              metadataDeletes[key] = date;
+              continue;
             }
+            final remote = _metadataRow(syncLog.itemToUpdate as DataClass);
+            if (remote.key != key) throw ArgumentError('Metadata sync identifier mismatch');
+            final local = metadata[key];
+            if (local != null && local.revision != null && !date.isAfter(local.revision!)) {
+              if (!_matchesMetadataIgnoringRevision(local, remote)) {
+                await _recordMetadataConflict(local, remote.fields, date, removal);
+              }
+              continue;
+            }
+            if (metadataDeletes[key]?.isBefore(date) ?? false) {
+              metadataDeletes.remove(key);
+            }
+            metadata[key] = remote;
           }
-          if (syncLog.deleteLogType == DeleteLogType.TransactionWallet) {
-            batch.deleteWhere(
-              wallets,
-              (tbl) =>
-                  tbl.walletPk.equals(syncLog.pk) &
-                  tbl.dateTimeModified.isSmallerThanValue(
-                    date,
-                  ),
-            );
-          } else if (syncLog.deleteLogType == DeleteLogType.TransactionCategory) {
-            batch.deleteWhere(
-              categories,
-              (tbl) =>
-                  tbl.categoryPk.equals(syncLog.pk) &
-                  tbl.dateTimeModified.isSmallerThanValue(
-                    date,
-                  ),
-            );
-          } else if (syncLog.deleteLogType == DeleteLogType.Budget) {
-            batch.deleteWhere(
-              budgets,
-              (tbl) =>
-                  tbl.budgetPk.equals(syncLog.pk) &
-                  tbl.dateTimeModified.isSmallerThanValue(
-                    date,
-                  ),
-            );
-          } else if (syncLog.deleteLogType == DeleteLogType.CategoryBudgetLimit) {
-            batch.deleteWhere(
-              categoryBudgetLimits,
-              (tbl) =>
-                  tbl.categoryLimitPk.equals(syncLog.pk) &
-                  tbl.dateTimeModified.isSmallerThanValue(
-                    date,
-                  ),
-            );
-          } else if (syncLog.deleteLogType == DeleteLogType.Transaction) {
+          if (syncLog.deleteLogType == DeleteLogType.Transaction) {
             final local = current[syncLog.pk];
             final previous = tombstones[syncLog.pk];
             if (local != null && (local.dateTimeModified ?? DateTime(0)).isAfter(date)) {
@@ -6005,31 +6098,6 @@ class FinanceDatabase extends _$FinanceDatabase {
                 dateTimeModified: Value(date),
               ));
             }
-          } else if (syncLog.deleteLogType ==
-              DeleteLogType.TransactionAssociatedTitle) {
-            batch.deleteWhere(
-              associatedTitles,
-              (tbl) =>
-                  tbl.associatedTitlePk.equals(syncLog.pk) &
-                  tbl.dateTimeModified.isSmallerThanValue(
-                    date,
-                  ),
-            );
-          } else if (syncLog.deleteLogType == DeleteLogType.ScannerTemplate) {
-            batch.deleteWhere(
-              scannerTemplates,
-              (tbl) => tbl.scannerTemplatePk.equals(syncLog.pk) &
-                  (tbl.dateTimeModified.isNull() | tbl.dateTimeModified.isSmallerThanValue(date)),
-            );
-          } else if (syncLog.deleteLogType == DeleteLogType.Objective) {
-            batch.deleteWhere(
-              objectives,
-              (tbl) =>
-                  tbl.objectivePk.equals(syncLog.pk) &
-                  tbl.dateTimeModified.isSmallerThanValue(
-                    date,
-                  ),
-            );
           } else if (syncLog.updateLogType == UpdateLogType.TransactionWallet) {
             batch.update(
               wallets,
@@ -6150,6 +6218,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         }
       });
       await _processTransferSyncPairs(transferPairs, ordered);
+      await _finishMetadataDeletes(metadataDeletes, metadataTombstones);
       return true;
     });
   }

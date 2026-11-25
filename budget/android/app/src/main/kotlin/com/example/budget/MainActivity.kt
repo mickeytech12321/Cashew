@@ -4,11 +4,13 @@ import android.content.Intent
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterFragmentActivity() {
     private var householdStorageMethods: MethodChannel? = null
+    private var marketKeyMethods: MethodChannel? = null
     private var assistantKeyMethods: MethodChannel? = null
     private var assistantSpeech: AssistantSpeechBridge? = null
     private var notificationMethods: MethodChannel? = null
@@ -26,31 +28,8 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
         assistantSpeech = AssistantSpeechBridge(this, messenger)
-        val assistantKey = LocalEncryptedFile(this, "assistant-api-key")
-        assistantKeyMethods = MethodChannel(messenger, "cashew/assistant_key")
-        assistantKeyMethods?.setMethodCallHandler { call, result ->
-            try {
-                when (call.method) {
-                    "read" -> result.success(assistantKey.read())
-                    "save" -> {
-                        val value = call.arguments as? String
-                        if (value == null || value.isEmpty() || value.length > 300) {
-                            result.error("invalid", "Invalid API key", null)
-                        } else {
-                            assistantKey.write(value)
-                            result.success(null)
-                        }
-                    }
-                    "clear" -> {
-                        assistantKey.clear()
-                        result.success(null)
-                    }
-                    else -> result.notImplemented()
-                }
-            } catch (_: Exception) {
-                result.error("storage", "Could not access protected storage", null)
-            }
-        }
+        assistantKeyMethods = secretChannel(messenger, "assistant_key", "assistant-api-key")
+        marketKeyMethods = secretChannel(messenger, "market_key", "market-api-key")
         val retained = BankNotificationRetention(this)
         notificationMethods = MethodChannel(messenger, "cashew/bank_notifications/settings")
         notificationMethods?.setMethodCallHandler { call, result ->
@@ -110,12 +89,43 @@ class MainActivity : FlutterFragmentActivity() {
         })
     }
 
+    private fun secretChannel(messenger: BinaryMessenger, channel: String, storageName: String): MethodChannel {
+        val secret = LocalEncryptedFile(this, storageName)
+        return MethodChannel(messenger, "cashew/$channel").apply {
+            setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "read" -> result.success(secret.read())
+                        "save" -> {
+                            val value = call.arguments as? String
+                            if (value == null || value.isEmpty() || value.length > 300) {
+                                result.error("invalid", "Invalid API key", null)
+                            } else {
+                                secret.write(value)
+                                result.success(null)
+                            }
+                        }
+                        "clear" -> {
+                            secret.clear()
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (_: Exception) {
+                    result.error("storage", "Could not access protected storage", null)
+                }
+            }
+        }
+    }
+
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         clearBankNotificationStream()
         householdStorageMethods?.setMethodCallHandler(null)
         householdStorageMethods = null
         assistantSpeech?.dispose()
         assistantSpeech = null
+        marketKeyMethods?.setMethodCallHandler(null)
+        marketKeyMethods = null
         assistantKeyMethods?.setMethodCallHandler(null)
         assistantKeyMethods = null
         notificationMethods?.setMethodCallHandler(null)

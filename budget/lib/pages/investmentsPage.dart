@@ -5,6 +5,7 @@ import 'package:budget/struct/investmentLedger.dart';
 import 'package:budget/struct/investmentMarketPrices.dart';
 import 'package:budget/struct/investmentQuoteCsv.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -28,7 +29,14 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
   late var _holdings = database.getInvestmentHoldings();
   Future<List<InvestmentTrade>>? _trades;
   Future<List<InvestmentQuote>>? _prices;
-  Future<({String symbol, String revision})?>? _marketSource;
+  Future<InvestmentMarketSource?>? _marketSource;
+  static const _marketKeys = MethodChannel('cashew/market_key');
+  String? _sessionMarketKey;
+  bool get _canKeepMarketKey =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  Future<String?> _readMarketKey() async =>
+      _canKeepMarketKey ? await _marketKeys.invokeMethod<String>('read') : _sessionMarketKey;
   int _quoteOffset = 0;
   static const _quotePageSize = 25;
   String? _selected;
@@ -155,18 +163,18 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
     }
   }
 
-  Future<void> _configureMarketSource(_Holding holding, String? current) async {
-    final choice = await showDialog<String>(
+  Future<void> _configureMarketSource(_Holding holding, InvestmentMarketSource? current) async {
+    final choice = await showDialog<({String symbol, String? mic})>(
       context: context,
       builder: (_) => _MarketSourceDialog(
-        currency: holding.currency, initialSymbol: current, label: _label,
+        currency: holding.currency, current: current, label: _label,
       ),
     );
     if (choice == null || !mounted || _busy) return;
     setState(() => _busy = true);
     try {
       await database.setInvestmentMarketSource(
-        holding.id, choice.isEmpty ? null : choice,
+        holding.id, choice.symbol.isEmpty ? null : choice.symbol, mic: choice.mic,
       );
       if (mounted && _selected == holding.id) {
         setState(() => _marketSource = database.getInvestmentMarketSource(holding.id));
@@ -178,20 +186,76 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
     }
   }
 
-  Future<void> _refreshMarketPrice(
-    _Holding holding, ({String symbol, String revision}) source,
-  ) async {
+  Future<void> _editMarketKey() async {
+    final form = GlobalKey<FormState>();
+    var key = '';
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        scrollable: true,
+        title: Text(_label('Twelve Data API key', 'مفتاح Twelve Data API')),
+        content: Form(key: form, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(_canKeepMarketKey
+              ? _label('Android Keystore protects the key on this device.',
+                  'يحمي Android Keystore المفتاح على هذا الجهاز.')
+              : _label('The key stays in memory until you leave Investments.',
+                  'يبقى المفتاح في الذاكرة حتى تغادر الاستثمارات.')),
+          Text(_label('The public demo key can fetch AAPL on XNGS in USD.',
+              'يمكن استخدام المفتاح التجريبي العام لجلب AAPL في بورصة XNGS بالدولار.')),
+          TextFormField(
+            obscureText: true, autocorrect: false, enableSuggestions: false,
+            maxLength: 300, textDirection: TextDirection.ltr,
+            onChanged: (value) => key = value.trim(),
+            validator: (_) => isMarketApiKey(key) ? null
+                : _label('Enter a valid API key.', 'أدخل مفتاح API صالحًا.'),
+          ),
+        ])),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialog),
+            child: Text(_label('Cancel', 'إلغاء'))),
+          TextButton(onPressed: () => Navigator.pop(dialog, ''),
+            child: Text(_label('Remove key', 'حذف المفتاح'))),
+          FilledButton(onPressed: () {
+            if (form.currentState!.validate()) Navigator.pop(dialog, key);
+          }, child: Text(_label('Save', 'حفظ'))),
+        ],
+      ),
+    );
+    if (!mounted || choice == null || _busy) return;
+    try {
+      if (_canKeepMarketKey) {
+        await _marketKeys.invokeMethod<void>(choice.isEmpty ? 'clear' : 'save',
+          choice.isEmpty ? null : choice);
+      } else {
+        _sessionMarketKey = choice.isEmpty ? null : choice;
+      }
+      _marketMessage(choice.isEmpty ? 'Key removed.' : 'Key saved.',
+          choice.isEmpty ? 'تم حذف المفتاح.' : 'تم حفظ المفتاح.');
+    } catch (_) {
+      _marketMessage('Could not update the key.', 'تعذّر تحديث المفتاح.');
+    }
+  }
+
+  Future<void> _refreshMarketPrice(_Holding holding, InvestmentMarketSource source) async {
     if (_busy) return;
     setState(() => _busy = true);
     final client = http.Client();
     try {
-      final pair = CoinbaseMarketPair(source.symbol, holding.currency);
-      final quote = await CoinbaseMarketPrices(client).fetch(pair, DateTime.now())
+      final stock = source.provider == InvestmentPriceProvider.twelveData;
+      final key = stock ? await _readMarketKey() : null;
+      if (!mounted) return;
+      if (stock && key == null) {
+        _marketMessage('Set your Twelve Data API key first.', 'أضف مفتاح Twelve Data API أولًا.');
+        return;
+      }
+      final now = DateTime.now();
+      final quote = await (stock
+          ? TwelveDataMarketPrices(client).fetch(
+              StockMarketListing(source.symbol, source.mic!, holding.currency), key!, now)
+          : CoinbaseMarketPrices(client).fetch(CoinbaseMarketPair(source.symbol, holding.currency), now))
           .timeout(const Duration(seconds: 20));
       if (!mounted) return;
-      final added = await database.saveFetchedInvestmentQuote(
-        holding.id, source.revision, quote,
-      );
+      final added = await database.saveFetchedInvestmentQuote(holding.id, source.revision, quote);
       if (mounted && _selected == holding.id) {
         setState(() {
           _holdings = database.getInvestmentHoldings();
@@ -202,39 +266,45 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
         _marketMessage('No new quote was saved.', 'لم يُحفظ سعر جديد.');
       }
     } catch (_) {
-      _marketMessage('Coinbase price unavailable. Check the trading pair and try again.',
-          'سعر Coinbase غير متاح. راجع زوج التداول وحاول مرة أخرى.');
+      _marketMessage('Market price unavailable. Check the listing, currency and provider access.',
+          'سعر السوق غير متاح. راجع الرمز والعملة وصلاحية الوصول إلى المزود.');
     } finally {
       client.close();
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Widget _priceSource(_Holding holding) => FutureBuilder(
+  Widget _priceSource(_Holding holding) => FutureBuilder<InvestmentMarketSource?>(
     key: ValueKey(('market-source', holding.id)),
     future: _marketSource,
     builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) {
-        return const LinearProgressIndicator();
-      }
+      if (snapshot.connectionState != ConnectionState.done) return const LinearProgressIndicator();
       if (snapshot.hasError) {
         return Text(_label('Could not load the price source.', 'تعذّر تحميل مصدر السعر.'));
       }
       final source = snapshot.data;
-      return ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: TextButton(
-          onPressed: _busy ? null : () => _configureMarketSource(holding, source?.symbol),
-          child: Text(source == null
-              ? _label('Connect Coinbase price', 'ربط السعر من Coinbase')
-              : 'Coinbase · ${source.symbol}-${holding.currency.toUpperCase()}'),
+      final stock = source?.provider == InvestmentPriceProvider.twelveData;
+      return Column(children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: TextButton(
+            onPressed: _busy ? null : () => _configureMarketSource(holding, source),
+            child: Text(source == null
+                ? _label('Connect a price source', 'ربط مصدر للأسعار')
+                : stock
+                    ? 'Twelve Data · ${source.symbol} · ${source.mic} · ${holding.currency.toUpperCase()}'
+                    : 'Coinbase · ${source.symbol}-${holding.currency.toUpperCase()}'),
+          ),
+          trailing: source == null ? null : IconButton(
+            tooltip: _label('Fetch latest price', 'جلب أحدث سعر'),
+            onPressed: _busy ? null : () => _refreshMarketPrice(holding, source),
+            icon: const Icon(Icons.refresh),
+          ),
         ),
-        trailing: source == null ? null : IconButton(
-          tooltip: _label('Fetch latest price', 'جلب أحدث سعر'),
-          onPressed: _busy ? null : () => _refreshMarketPrice(holding, source),
-          icon: const Icon(Icons.refresh),
-        ),
-      );
+        if (stock)
+          TextButton(onPressed: _busy ? null : _editMarketKey,
+            child: Text(_label('Twelve Data API key', 'مفتاح Twelve Data API'))),
+      ]);
     },
   );
 
@@ -761,11 +831,11 @@ class _InvestmentEditorState extends State<_InvestmentEditor> {
 
 class _MarketSourceDialog extends StatefulWidget {
   const _MarketSourceDialog({
-    required this.currency, required this.initialSymbol, required this.label,
+    required this.currency, required this.current, required this.label,
   });
 
   final String currency;
-  final String? initialSymbol;
+  final InvestmentMarketSource? current;
   final String Function(String, String) label;
 
   @override
@@ -774,58 +844,79 @@ class _MarketSourceDialog extends StatefulWidget {
 
 class _MarketSourceDialogState extends State<_MarketSourceDialog> {
   final _form = GlobalKey<FormState>();
-  late String _symbol = widget.initialSymbol ?? '';
+  late String _symbol = widget.current?.symbol ?? '';
+  late String _mic = widget.current?.mic ?? '';
+  late var _provider = widget.current?.provider ?? InvestmentPriceProvider.coinbase;
 
   @override
   Widget build(BuildContext context) {
     final label = widget.label;
+    final stock = _provider == InvestmentPriceProvider.twelveData;
     return AlertDialog(
-      title: Text(label('Coinbase Exchange price', 'سعر Coinbase Exchange')),
+      title: Text(label('Market price source', 'مصدر سعر السوق')),
       scrollable: true,
       content: Form(
         key: _form,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(label(
-            'Refreshing sends the trading pair to Coinbase. The quote currency must match the holding currency.',
-            'عند التحديث يُرسل زوج التداول إلى Coinbase. يجب أن تطابق عملة التسعير عملة الأصل.',
-          )),
+          DropdownButtonFormField<InvestmentPriceProvider>(
+            initialValue: _provider,
+            items: const [
+              DropdownMenuItem(value: InvestmentPriceProvider.coinbase, child: Text('Coinbase Exchange')),
+              DropdownMenuItem(value: InvestmentPriceProvider.twelveData, child: Text('Twelve Data')),
+            ],
+            onChanged: (value) {
+              if (value != null) setState(() => _provider = value);
+            },
+          ),
+          Text(stock
+              ? label('Refreshing sends the symbol and exchange to Twelve Data using your API key. Quote availability depends on your plan.',
+                  'يرسل التحديث الرمز والبورصة إلى Twelve Data باستخدام مفتاحك. يعتمد توفر السعر على خطتك.')
+              : label('Refreshing sends the trading pair to Coinbase.',
+                  'يرسل التحديث زوج التداول إلى Coinbase.')),
+          Text(label('Quote currency', 'عملة التسعير') + ' · ' + widget.currency.toUpperCase()),
           TextFormField(
-            initialValue: _symbol,
-            textDirection: TextDirection.ltr,
+            initialValue: _symbol, textDirection: TextDirection.ltr,
             textCapitalization: TextCapitalization.characters,
             decoration: InputDecoration(
-              labelText: label('Asset symbol', 'رمز الأصل'),
-              hintText: 'BTC',
-              suffixText: '-${widget.currency.toUpperCase()}',
+              labelText: label('Asset symbol', 'رمز الأصل'), hintText: stock ? 'AAPL' : 'BTC',
             ),
             onChanged: (value) => _symbol = value,
             validator: (value) {
               try {
-                CoinbaseMarketPair(value ?? '', widget.currency);
+                if (stock) {
+                  StockMarketListing(value ?? '', 'XNAS', widget.currency);
+                } else {
+                  CoinbaseMarketPair(value ?? '', widget.currency);
+                }
                 return null;
               } on FormatException {
                 return label('Enter a valid asset symbol.', 'أدخل رمز أصل صالحًا.');
               }
             },
           ),
+          if (stock)
+            TextFormField(
+              initialValue: _mic, textDirection: TextDirection.ltr,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(labelText: label('Exchange MIC code', 'رمز البورصة MIC'), hintText: 'XNGS'),
+              onChanged: (value) => _mic = value,
+              validator: (value) => RegExp(r'^[A-Za-z0-9]{4}$').hasMatch(value?.trim() ?? '')
+                  ? null : label('Use a four-character exchange code.', 'استخدم رمز بورصة من ٤ خانات.'),
+            ),
         ]),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text(label('Cancel', 'إلغاء')),
-        ),
-        if (widget.initialSymbol != null)
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(label('Cancel', 'إلغاء'))),
+        if (widget.current != null)
           TextButton(
-            onPressed: () => Navigator.pop(context, ''),
+            onPressed: () => Navigator.pop<({String symbol, String? mic})>(context, (symbol: '', mic: null)),
             child: Text(label('Disconnect', 'إلغاء الربط')),
           ),
-        FilledButton(
-          onPressed: () {
-            if (_form.currentState!.validate()) Navigator.pop(context, _symbol.trim());
-          },
-          child: Text(label('Save', 'حفظ')),
-        ),
+        FilledButton(onPressed: () {
+          if (_form.currentState!.validate()) {
+            Navigator.pop(context, (symbol: _symbol.trim(), mic: stock ? _mic.trim() : null));
+          }
+        }, child: Text(label('Save', 'حفظ'))),
       ],
     );
   }

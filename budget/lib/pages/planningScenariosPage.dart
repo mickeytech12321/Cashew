@@ -28,11 +28,27 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
   late var _goals = database.getAllObjectives(
       objectiveType: ObjectiveType.goal, isArchived: false);
   bool _projectRecurrences = false;
+  bool _includeOverdue = false;
   int _forecastPage = 0;
   static const _forecastPageSize = 100;
 
   String _forecastPreferenceKey(String scenarioPk) =>
       'planningForecastOptions.$scenarioPk';
+
+  String _overduePreferenceKey(String scenarioPk) => 'planningForecastOverdue.$scenarioPk';
+
+  Future<void> _saveOverdueOption(bool include) async {
+    final scenario = _selected!;
+    await _write(() async {
+      if (!await sharedPreferences.setBool(
+          _overduePreferenceKey(scenario['scenario_pk'] as String), include)) {
+        throw StateError('Could not save overdue forecast option');
+      }
+      if (!mounted) return;
+      _includeOverdue = include;
+      _select(scenario);
+    });
+  }
 
   Future<void> _saveForecastOptions(
     Set<String> accounts,
@@ -196,6 +212,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
         );
         _scheduledAccounts = options?.skip(1).toSet() ?? {};
         _projectRecurrences = options?.firstOrNull == '1';
+        _includeOverdue = sharedPreferences.getBool(_overduePreferenceKey(id)) ?? false;
       }
       _forecastPage = 0;
       if (scenario['currency'] == null && _scheduledAccounts.length > 1) {
@@ -204,7 +221,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
       _selected = scenario;
       _forecast = database.calculatePlanningScenario(id,
           scheduledWalletPks: _scheduledAccounts,
-          projectRecurrences: _projectRecurrences);
+          projectRecurrences: _projectRecurrences, includeOverdueBills: _includeOverdue);
       _items = database.getPlanningScenarioItems(id);
     });
   }
@@ -317,6 +334,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
       }
       await database.deletePlanningScenario(scenarioPk);
       await sharedPreferences.remove(_forecastPreferenceKey(scenarioPk));
+      await sharedPreferences.remove(_overduePreferenceKey(scenarioPk));
       if (mounted)
         setState(() {
           _scenarios = database.getPlanningScenarios();
@@ -339,6 +357,7 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
           currency ?? '',
           point['item_pk'] == null ? 'opening'
               : point['goal'] == true ? 'goal'
+              : point['overdue_since'] != null ? 'overdue'
               : point['projected'] == true ? 'recurrence'
               : point['scheduled'] == true ? 'scheduled' : 'manual',
           point['amount'],
@@ -478,20 +497,12 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                       return const LinearProgressIndicator();
                     final base = _asDate(_selected!['base_date']);
                     final days = _selected!['horizon_days'] as int;
-                    final end = DateTime(
-                        base.year,
-                        base.month,
-                        base.day + days,
-                        base.hour,
-                        base.minute,
-                        base.second,
-                        base.millisecond,
-                        base.microsecond);
+                    final end = DateTime(base.year, base.month, base.day + days + 1);
                     final goals = snapshot.data!
                         .where((goal) =>
                             goal.endDate != null &&
                             !goal.endDate!.isBefore(base) &&
-                            !goal.endDate!.isAfter(end))
+                            goal.endDate!.isBefore(end))
                         .toList();
                     if (goals.isEmpty) return const SizedBox.shrink();
                     return OutlinedButton(
@@ -510,6 +521,15 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                       ? null
                       : (value) =>
                           _saveForecastOptions(_scheduledAccounts, value),
+                ),
+              if (_selected != null && _scheduledAccounts.isNotEmpty)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_label('Include overdue bills', 'تضمين الفواتير المتأخرة')),
+                  subtitle: Text(_label('Counts unpaid expenses at the start of the forecast.',
+                      'تُحتسب المصروفات غير المدفوعة في بداية التوقع.')),
+                  value: _includeOverdue,
+                  onChanged: _busy ? null : _saveOverdueOption,
                 ),
               if (_selected != null)
                 Wrap(children: [
@@ -649,6 +669,9 @@ class _PlanningScenariosPageState extends State<PlanningScenariosPage> {
                         if (point['goal'] == true)
                           _label(
                               'Remaining goal amount', 'المبلغ المتبقي للهدف')
+                        else if (point['overdue_since'] case final DateTime due)
+                          _label('Overdue since ${dates.formatMediumDate(due)}',
+                              'متأخر من ${dates.formatMediumDate(due)}')
                         else if (point['projected'] == true)
                           _label('Projected recurrence', 'تكرار متوقع')
                         else if (point['scheduled'] == true)

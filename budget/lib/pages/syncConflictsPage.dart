@@ -39,9 +39,184 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
     );
   }
 
+  String _metadataTitle(String type) => switch (type) {
+        'TransactionWallet' => _label('Account', 'حساب'),
+        'TransactionCategory' => _label('Category', 'تصنيف'),
+        'Budget' => _label('Budget', 'ميزانية'),
+        'CategoryBudgetLimit' =>
+          _label('Category budget limit', 'حد ميزانية التصنيف'),
+        'TransactionAssociatedTitle' => _label('Saved title', 'عنوان محفوظ'),
+        'ScannerTemplate' => _label('Scanner template', 'قالب المسح'),
+        'Objective' => _label('Goal or loan', 'هدف أو قرض'),
+        _ => _label('Record', 'سجل'),
+      };
+
+  Future<void> _reviewMetadata(Map<String, dynamic> conflict) async {
+    final before =
+        jsonDecode(conflict['local_json'] as String) as Map<String, dynamic>;
+    final after =
+        jsonDecode(conflict['remote_json'] as String) as Map<String, dynamic>;
+    final local = before['fields'] as Map<String, dynamic>;
+    final remote = after['fields'] as Map<String, dynamic>?;
+    final labels = {
+      'name': _label('Name', 'الاسم'),
+      'title': _label('Title', 'العنوان'),
+      'templateName': _label('Template name', 'اسم القالب'),
+      'amount': _label('Amount', 'المبلغ'),
+      'currency': _label('Currency', 'العملة'),
+      'currencyFormat': _label('Currency format', 'تنسيق العملة'),
+      'decimals': _label('Decimal places', 'الخانات العشرية'),
+      'income': _label('Income', 'دخل'),
+      'archived': _label('Archived', 'مؤرشف'),
+      'pinned': _label('Pinned', 'مثبت'),
+      'ignore': _label('Ignore matches', 'تجاهل المطابقات'),
+      'isExactMatch': _label('Exact match', 'مطابقة تامة'),
+      'contains': _label('Matches text', 'النص المطابق'),
+      'dateCreated': _label('Created', 'تاريخ الإنشاء'),
+      'startDate': _label('Start date', 'تاريخ البداية'),
+      'endDate': _label('End date', 'تاريخ النهاية'),
+      'walletFk': _label('Account', 'الحساب'),
+      'walletFks': _label('Accounts', 'الحسابات'),
+      'categoryFk': _label('Category', 'التصنيف'),
+      'mainCategoryPk': _label('Parent category', 'التصنيف الرئيسي'),
+      'defaultCategoryFk': _label('Default category', 'التصنيف الافتراضي'),
+      'categoryFks': _label('Included categories', 'التصنيفات المضمّنة'),
+      'categoryFksExclude':
+          _label('Excluded categories', 'التصنيفات المستبعدة'),
+      'budgetFk': _label('Budget', 'الميزانية'),
+      'periodLength': _label('Repeat interval', 'مدة التكرار'),
+      'reoccurrence': _label('Repeat frequency', 'وتيرة التكرار'),
+      'order': _label('Display order', 'ترتيب العرض'),
+      'colour': _label('Color', 'اللون'),
+      'iconName': _label('Icon', 'الأيقونة'),
+      'emojiIconName': _label('Emoji', 'الرمز التعبيري'),
+      'titleTransactionBefore': _label('Text before title', 'النص قبل العنوان'),
+      'titleTransactionAfter': _label('Text after title', 'النص بعد العنوان'),
+      'amountTransactionBefore':
+          _label('Text before amount', 'النص قبل المبلغ'),
+      'amountTransactionAfter': _label('Text after amount', 'النص بعد المبلغ'),
+      'addedTransactionsOnly':
+          _label('Only assigned transactions', 'المعاملات المعيّنة فقط'),
+      'isAbsoluteSpendingLimit':
+          _label('Absolute spending limit', 'حد الإنفاق المطلق'),
+      'type': _label('Record type', 'نوع السجل'),
+    };
+    final changes = <String>[
+      if (remote != null)
+        for (final key in local.keys.toSet().union(remote.keys.toSet()))
+          if (key != 'dateTimeModified' &&
+              jsonEncode(local[key]) != jsonEncode(remote[key]))
+            key,
+    ];
+    final accounts =
+        changes.any((key) => key == 'walletFk' || key == 'walletFks')
+            ? {
+                for (final row in await database.getAllWallets())
+                  row.walletPk: row.name
+              }
+            : const <String, String>{};
+    const categoryFields = {
+      'categoryFk',
+      'mainCategoryPk',
+      'defaultCategoryFk',
+      'categoryFks',
+      'categoryFksExclude'
+    };
+    final categories = changes.any(categoryFields.contains)
+        ? {
+            for (final row
+                in await database.getAllCategories(includeSubCategories: true))
+              row.categoryPk: row.name
+          }
+        : const <String, String>{};
+    if (!mounted) return;
+    final dates = MaterialLocalizations.of(context);
+    String value(String key, Object? data) {
+      if (const {'dateCreated', 'startDate', 'endDate', 'sharedDateUpdated'}
+          .contains(key)) {
+        final date = switch (data) {
+          int time => DateTime.fromMillisecondsSinceEpoch(time),
+          String time => DateTime.tryParse(time),
+          _ => null,
+        };
+        if (date != null) return dates.formatMediumDate(date);
+      }
+      final names = key == 'walletFk' || key == 'walletFks'
+          ? accounts
+          : categoryFields.contains(key)
+              ? categories
+              : const <String, String>{};
+      return switch (data) {
+        true => _label('Yes', 'نعم'),
+        false => _label('No', 'لا'),
+        null => '—',
+        String id => names[id] ?? id,
+        List values =>
+          values.map((id) => names[id] ?? id.toString()).join(', '),
+        _ => data.toString(),
+      };
+    }
+
+    final name = local['name'] ?? local['title'] ?? local['templateName'];
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        scrollable: true,
+        title: Text(_metadataTitle(before['type'] as String)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (name != null) Text(name.toString()),
+            if (remote == null)
+              Text(_label(
+                'The incoming change removes this record. Cashew checks for linked entries before applying it.',
+                'التغيير الوارد يحذف السجل. يتحقق Cashew من القيود المرتبطة قبل تطبيقه.',
+              ))
+            else ...[
+              for (final key in changes)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(labels[key] ?? key),
+                  subtitle: Text([
+                    _label('On this device · ${value(key, local[key])}',
+                        'على هذا الجهاز · ${value(key, local[key])}'),
+                    _label('Incoming · ${value(key, remote[key])}',
+                        'الوارد · ${value(key, remote[key])}'),
+                  ].join('\n')),
+                ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialog),
+              child: Text(_label('Cancel', 'إلغاء'))),
+          TextButton(
+              onPressed: () => Navigator.pop(dialog, false),
+              child: Text(_label('Keep current', 'الاحتفاظ بالحالي'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialog, true),
+              child: Text(remote == null
+                  ? _label('Delete record', 'حذف السجل')
+                  : _label('Use incoming', 'استخدام الوارد'))),
+        ],
+      ),
+    );
+    if (result == null || !mounted) return;
+    await database.resolveMetadataSyncConflict(
+        conflict['conflict_pk'] as String,
+        useRemote: result);
+    if (mounted) setState(() => _conflicts = database.getOpenSyncConflicts());
+  }
+
   Future<void> _review(Map<String, dynamic> conflict) async {
     setState(() => _busy = true);
     try {
+      if (conflict['entity_type'] == 'metadata') {
+        await _reviewMetadata(conflict);
+        return;
+      }
       final transfer = conflict['entity_type'] == 'transfer';
       final before =
           jsonDecode(conflict['local_json'] as String) as Map<String, dynamic>;
@@ -161,20 +336,22 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
                   .where((row) => const {
                         'transaction',
                         'transaction_delete',
-                        'transfer'
+                        'transfer',
+                        'metadata',
                       }.contains(row['entity_type']))
                   .toList();
               if (conflicts.isEmpty)
                 return ListTile(
                     title: Text(
-                  _label('No transaction conflicts to review.',
-                      'لا توجد تعارضات معاملات للمراجعة.'),
+                  _label('No sync conflicts to review.',
+                      'لا توجد تعارضات مزامنة للمراجعة.'),
                 ));
               return Column(children: [
                 for (final conflict in conflicts)
                   ListTile(
                     title: Text(switch (conflict['entity_type']) {
                       'transfer' => _label('Transfer conflict', 'تعارض تحويل'),
+                      'metadata' => _label('Record conflict', 'تعارض سجل'),
                       'transaction_delete' =>
                         _label('Deletion conflict', 'تعارض حذف'),
                       _ => _label('Transaction conflict', 'تعارض معاملة'),

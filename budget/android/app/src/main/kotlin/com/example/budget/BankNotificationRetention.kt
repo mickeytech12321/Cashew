@@ -5,11 +5,17 @@ import android.content.ComponentName
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONException
 import javax.crypto.AEADBadTagException
 import java.security.MessageDigest
+import java.security.KeyStore
+import javax.crypto.KeyGenerator
+import javax.crypto.Mac
+import javax.crypto.SecretKey
 
 internal data class BankNotificationRecord(
     val id: String,
@@ -18,6 +24,7 @@ internal data class BankNotificationRecord(
     val title: String?,
     val content: String?,
     val receipt: String? = null,
+    val signature: String? = null,
 ) {
     fun event() = mapOf(
         "id" to id,
@@ -26,6 +33,7 @@ internal data class BankNotificationRecord(
         "title" to title,
         "content" to content,
         "receipt" to receipt,
+        "signature" to signature,
     )
 
     fun retained(): BankNotificationRecord? {
@@ -61,6 +69,7 @@ internal data class BankNotificationRecord(
             title = if (json.isNull("title")) null else json.getString("title"),
             content = if (json.isNull("content")) null else json.getString("content"),
             receipt = json.getString("receipt"),
+            signature = if (json.isNull("signature")) null else json.getString("signature"),
         )
     }
 }
@@ -89,12 +98,30 @@ internal class BankNotificationRetention(private val context: Context) {
         storage.clear()
     }
 
+    fun identify(event: BankNotificationRecord): BankNotificationRecord {
+        if (event.signature != null ||
+            (event.title?.length ?: 0) + (event.content?.length ?: 0) > 2000) return event
+        val alias = "cashew.bank-notification-identities"
+        val vault = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val key = vault.getKey(alias, null) as? SecretKey
+            ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, "AndroidKeyStore").apply {
+                init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
+                    .setDigests(KeyProperties.DIGEST_SHA256)
+                    .build())
+            }.generateKey()
+        val signature = Mac.getInstance("HmacSHA256").apply { init(key) }
+            .doFinal(JSONArray(listOf(event.packageName, event.id, event.title, event.content))
+                .toString().toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        return event.copy(signature = signature)
+    }
+
     fun enqueue(event: BankNotificationRecord): BankNotificationRecord? {
         val packages = settings.getStringSet("packages", emptySet()).orEmpty()
         if (event.packageName !in packages) return null
         val now = System.currentTimeMillis()
         if (event.postedAt < cutoff(now) || event.postedAt > now) return null
-        val retained = event.retained() ?: return null
+        val retained = event.retained()?.let(::identify) ?: return null
         val rows = read()
         if (rows.any { it.receipt == retained.receipt }) return retained
         save((rows + retained).sortedBy { it.postedAt }.takeLast(MAX_RECORDS))
