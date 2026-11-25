@@ -1,3 +1,4 @@
+import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/pages/syncConflictsPage.dart';
 import 'package:budget/pages/householdPage.dart';
 import 'package:budget/pages/investmentsPage.dart';
@@ -18,7 +19,6 @@ import 'package:budget/pages/editHomePage.dart';
 import 'package:budget/pages/editObjectivesPage.dart';
 import 'package:budget/pages/homePage/homePageNetWorth.dart';
 import 'package:budget/pages/objectivesListPage.dart';
-import 'package:budget/pages/premiumPage.dart';
 import 'package:budget/pages/transactionsListPage.dart';
 import 'package:budget/pages/upcomingOverdueTransactionsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
@@ -68,11 +68,6 @@ import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/framework/popupFramework.dart';
 import 'package:app_settings/app_settings.dart';
 import 'package:budget/widgets/outlinedButtonStacked.dart';
-
-//To get SHA1 Key run
-// ./gradlew signingReport
-//in budget\Android
-//Generate new OAuth and put JSON in budget\android\app folder
 
 class MoreActionsPage extends StatefulWidget {
   const MoreActionsPage({
@@ -135,227 +130,72 @@ class MorePages extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    bool hasSideNavigation = getIsFullScreen(context);
-
+    String label(String en, String ar) => _settingsLabel(context, en, ar);
+    final hasSidebar = getIsFullScreen(context);
+    final budgetShortcut = [
+      'customNavBarShortcut0',
+      'customNavBarShortcut1',
+      'customNavBarShortcut2'
+    ].any((key) => appStateSettings[key] == 'budgets');
     return Padding(
-      padding: const EdgeInsetsDirectional.symmetric(horizontal: 4),
+      padding: const EdgeInsetsDirectional.symmetric(horizontal: 16),
       child: Column(
         children: [
-          if (hasSideNavigation == false)
-            Row(
-              children: [
-                Expanded(
-                  flex: 1,
-                  child: SettingsContainerOpenPage(
-                    openPage: SettingsPageFramework(
-                      key: settingsPageFrameworkStateKey,
-                    ),
-                    title: navBarIconsData["settings"]!.labelLong.tr(),
-                    icon: navBarIconsData["settings"]!.iconData,
-                    description: appStateSettings["showExtraInfoText"] == false
-                        ? null
-                        : "settings-and-customization-description".tr(),
-                    isOutlined: true,
-                    // description: "Theme, Language, CSV Import",
-                    isWideOutlined: true,
-                  ),
-                ),
-              ],
+          _SettingsGroup([
+            _SettingsLink(
+              Icons.settings_outlined,
+              'settings'.tr(),
+              subtitle:
+                  label('Appearance, privacy and backup', 'المظهر والخصوصية والنسخ الاحتياطي'),
+              page: SettingsPageFramework(key: settingsPageFrameworkStateKey),
             ),
-          if (hasSideNavigation == false)
-            Row(
-              children: [
-                Expanded(
-                  child: SettingsContainerOpenPage(
-                    openPage: WalletDetailsPage(wallet: null),
-                    title: navBarIconsData["allSpending"]!.labelLong.tr(),
-                    icon: navBarIconsData["allSpending"]!.iconData,
-                    description: appStateSettings["showExtraInfoText"] == false
-                        ? null
-                        : "all-spending-description".tr(),
-                    isOutlined: true,
-                    isWideOutlined: true,
-                  ),
-                ),
-              ],
+            _SettingsLink(Icons.compare_arrows, 'transfer-balance'.tr(),
+                page: const TransferBalancePage(allowEditWallet: true)),
+            _SettingsLink(
+              Icons.grid_view_rounded,
+              label('Financial tools', 'الأدوات المالية'),
+              subtitle:
+                  label('Bank messages, insights and planning', 'رسائل البنوك والتحليلات والتخطيط'),
+              page: const _FinancialToolsPage(),
             ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Expanded(
-              //   child: Padding(
-              //     padding: EdgeInsetsDirectional.symmetric(vertical: 5, horizontal: 4),
-              //     child: SettingsContainer(
-              //       onTap: () {
-              //         openUrl("https://github.com/jameskokoska/Cashew");
-              //       },
-              //       title: "open-source".tr(),
-              //       icon: MoreIcons.github,
-              //       isOutlined: true,
-              //     ),
-              //   ),
-              // ),
-              Expanded(
-                child: SettingsContainerOpenPage(
-                  openPage: AboutPage(),
-                  title: "about-app".tr(namedArgs: {"app": globalAppName}),
-                  icon: navBarIconsData["about"]!.iconData,
-                  isOutlined: true,
-                ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsetsDirectional.symmetric(
-                      vertical: 5, horizontal: 4),
-                  child: SettingsContainer(
-                    onTap: () {
-                      openBottomSheet(context, RatingPopup(), fullSnap: true);
-                    },
-                    title: "feedback".tr(),
-                    icon: appStateSettings["outlinedIcons"]
-                        ? Icons.rate_review_outlined
-                        : Icons.rate_review_rounded,
-                    isOutlined: true,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              appStateSettings["showBillSplitterShortcut"] == true &&
-                      hasSideNavigation == false
-                  ? Expanded(
-                      child: SettingsContainerOpenPage(
-                        openPage: BillSplitter(),
-                        title: "bill-splitter".tr(),
-                        icon: appStateSettings["outlinedIcons"]
-                            ? Icons.summarize_outlined
-                            : Icons.summarize_rounded,
-                        isOutlined: true,
-                      ),
-                    )
-                  : notificationsGlobalEnabled
-                      ? Expanded(
-                          child: SettingsContainerOpenPage(
-                            openPage: NotificationsPage(),
-                            title: navBarIconsData["notifications"]!.label.tr(),
-                            icon: navBarIconsData["notifications"]!.iconData,
-                            isOutlined: true,
-                          ),
-                        )
-                      : SizedBox.shrink(),
-              if (hasSideNavigation == false)
-                Expanded(
-                    child: GoogleAccountLoginButton(
-                  key: settingsGoogleAccountLoginButtonKey,
-                )),
-            ],
-          ),
-          if (hasSideNavigation == false)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Expanded(
-                  child: SettingsContainerOpenPage(
-                    openPage: SubscriptionsPage(),
-                    title: navBarIconsData["subscriptions"]!.label.tr(),
-                    icon: navBarIconsData["subscriptions"]!.iconData,
-                    isOutlined: true,
-                  ),
-                ),
-                Expanded(
-                  child: SettingsContainerOpenPage(
-                    openPage:
-                        UpcomingOverdueTransactions(overdueTransactions: null),
-                    title: navBarIconsData["scheduled"]!.label.tr(),
-                    icon: navBarIconsData["scheduled"]!.iconData,
-                    isOutlined: true,
-                  ),
-                ),
-              ],
-            ),
-          if (hasSideNavigation == false)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Expanded(
-                  child: SettingsContainerOpenPage(
-                    openPage: ObjectivesListPage(
-                      backButton: true,
-                    ),
-                    title: navBarIconsData["goals"]!.label.tr(),
-                    icon: navBarIconsData["goals"]!.iconData,
-                    isOutlined: true,
-                  ),
-                ),
-                Expanded(
-                  child: SettingsContainerOpenPage(
-                    openPage: CreditDebtTransactions(isCredit: null),
-                    title: navBarIconsData["loans"]!.label.tr(),
-                    icon: navBarIconsData["loans"]!.iconData,
-                    isOutlined: true,
-                  ),
-                ),
-              ],
-            ),
-          if (hasSideNavigation == false)
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(
-                  flex: 1,
-                  child: SettingsContainerOpenPage(
-                    isOutlinedColumn: true,
-                    openPage: EditWalletsPage(),
-                    title: navBarIconsData["accountDetails"]!.label.tr(),
-                    icon: navBarIconsData["accountDetails"]!.iconData,
-                    isOutlined: true,
-                  ),
-                ),
-                Expanded(
-                  flex: 1,
-                  child: SettingsContainerOpenPage(
-                    isOutlinedColumn: true,
-                    // If budget page not pinned to home, open budget list page
-                    openPage: appStateSettings["customNavBarShortcut0"] !=
-                                "budgets" &&
-                            appStateSettings["customNavBarShortcut1"] !=
-                                "budgets" &&
-                            appStateSettings["customNavBarShortcut2"] !=
-                                "budgets"
-                        ? BudgetsListPage(enableBackButton: true)
-                        : EditBudgetPage(),
-                    title: navBarIconsData["budgetDetails"]!.label.tr(),
-                    icon: navBarIconsData["budgetDetails"]!.iconData,
-                    iconScale: navBarIconsData["budgetDetails"]!.iconScale,
-                    isOutlined: true,
-                  ),
-                ),
-                Expanded(
-                  flex: 1,
-                  child: SettingsContainerOpenPage(
-                    isOutlinedColumn: true,
-                    openPage: EditCategoriesPage(),
-                    title: navBarIconsData["categoriesDetails"]!.label.tr(),
-                    icon: navBarIconsData["categoriesDetails"]!.iconData,
-                    isOutlined: true,
-                  ),
-                ),
-                Expanded(
-                  flex: 1,
-                  child: SettingsContainerOpenPage(
-                    isOutlinedColumn: true,
-                    openPage: EditAssociatedTitlesPage(),
-                    title: navBarIconsData["titlesDetails"]!.label.tr(),
-                    icon: navBarIconsData["titlesDetails"]!.iconData,
-                    isOutlined: true,
-                  ),
-                )
-              ],
-            ),
-          if (hasSideNavigation) SettingsPageContent(),
+            if (!hasSidebar && appStateSettings['showBillSplitterShortcut'] == true)
+              _SettingsLink(Icons.receipt_long_outlined, 'bill-splitter'.tr(), page: BillSplitter()),
+          ]),
+          if (!hasSidebar)
+            _SettingsGroup([
+              _SettingsLink(Icons.account_balance_wallet_outlined, 'accounts'.tr(),
+                  page: EditWalletsPage()),
+              _SettingsLink(Icons.donut_large, 'budgets'.tr(),
+                  page:
+                      budgetShortcut ? EditBudgetPage() : BudgetsListPage(enableBackButton: true)),
+              _SettingsLink(Icons.category_outlined, 'categories'.tr(), page: EditCategoriesPage()),
+              _SettingsLink(Icons.title, 'titles'.tr(), page: EditAssociatedTitlesPage()),
+              _SettingsLink(
+                  Icons.bar_chart_outlined, navBarIconsData['allSpending']!.labelLong.tr(),
+                  page: WalletDetailsPage(wallet: null)),
+            ], title: label('Manage', 'الإدارة')),
+          if (!hasSidebar)
+            _SettingsGroup([
+              _SettingsLink(Icons.repeat, 'subscriptions'.tr(), page: SubscriptionsPage()),
+              _SettingsLink(Icons.event_outlined, 'scheduled'.tr(),
+                  page: UpcomingOverdueTransactions(overdueTransactions: null)),
+              _SettingsLink(Icons.flag_outlined, 'goals'.tr(),
+                  page: ObjectivesListPage(backButton: true)),
+              _SettingsLink(Icons.request_quote_outlined, 'loans'.tr(),
+                  page: CreditDebtTransactions(isCredit: null)),
+            ], title: label('Upcoming and recurring', 'القادمة والمتكررة')),
+          _SettingsGroup([
+            if (notificationsGlobalEnabled)
+              _SettingsLink(Icons.notifications_outlined, 'notifications'.tr(),
+                  page: NotificationsPage()),
+            if (!hasSidebar)
+              GoogleAccountLoginButton(
+                  key: settingsGoogleAccountLoginButtonKey, isOutlinedButton: false),
+            _SettingsLink(Icons.info_outline, 'about-app'.tr(namedArgs: {'app': globalAppName}),
+                page: AboutPage()),
+            _SettingsLink(Icons.rate_review_outlined, 'feedback'.tr(),
+                onTap: () => openBottomSheet(context, RatingPopup(), fullSnap: true)),
+          ]),
         ],
       ),
     );
@@ -428,373 +268,474 @@ class SettingsPageFrameworkState extends State<SettingsPageFramework> {
   }
 }
 
-class SettingsPageContent extends StatelessWidget {
+String _settingsLabel(BuildContext context, String en, String ar) =>
+    Localizations.localeOf(context).languageCode == 'ar' ? ar : en;
+
+class _SettingsLink extends StatelessWidget {
+  const _SettingsLink(this.icon, this.title, {this.subtitle, this.page, this.onTap});
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Widget? page;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ListTile(
+      contentPadding: const EdgeInsetsDirectional.fromSTEB(14, 3, 12, 3),
+      leading: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: colors.secondaryContainer,
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: Icon(icon, size: 22, color: colors.onSecondaryContainer),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: subtitle == null ? null : Text(subtitle!),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap ?? () => pushRoute(context, page!),
+    );
+  }
+}
+
+class _SettingsGroup extends StatelessWidget {
+  const _SettingsGroup(this.children, {this.title});
+
+  final String? title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title != null)
+            Padding(
+              padding: const EdgeInsetsDirectional.only(start: 4, bottom: 8),
+              child: Text(title!,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  )),
+            ),
+          Card(
+            margin: EdgeInsets.zero,
+            elevation: 0,
+            clipBehavior: Clip.antiAlias,
+            color: theme.colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Column(
+              children: [
+                for (var index = 0; index < children.length; index++) ...[
+                  if (index > 0)
+                    const Padding(
+                      padding: EdgeInsetsDirectional.only(start: 66, end: 14),
+                      child: Divider(height: 1),
+                    ),
+                  children[index],
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsSection extends StatelessWidget {
+  const _SettingsSection(this.title, this.groups);
+
+  final String title;
+  final List<Widget> groups;
+
+  @override
+  Widget build(BuildContext context) => PageFramework(
+        title: title,
+        dragDownToDismiss: true,
+        horizontalPaddingConstrained: true,
+        listWidgets: [
+          Padding(
+            padding: const EdgeInsetsDirectional.symmetric(horizontal: 16),
+            child: Column(children: groups),
+          ),
+        ],
+      );
+}
+
+class SettingsPageContent extends StatefulWidget {
   const SettingsPageContent({super.key});
 
   @override
+  State<SettingsPageContent> createState() => _SettingsPageContentState();
+}
+
+class _SettingsPageContentState extends State<SettingsPageContent> {
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SettingsHeader(title: "theme".tr()),
-        Builder(
-          builder: (context) {
-            late Color? selectedColor =
-                HexColor(appStateSettings["accentColor"]);
+    String label(String en, String ar) => _settingsLabel(context, en, ar);
+    final appearance = label('Appearance', 'المظهر');
+    final formats = label('Language and formats', 'اللغة والتنسيق');
+    final finance = label('Finance preferences', 'تفضيلات الحسابات والمعاملات');
+    final privacy = label('Privacy and notifications', 'الخصوصية والإشعارات');
+    final backups = label('Backup and data', 'النسخ ونقل البيانات');
+    final widgets = label('Home screen widgets', 'ودجت الشاشة الرئيسية');
 
-            return SettingsContainer(
-              onTap: () {
-                openBottomSheet(
-                  context,
-                  useParentContextForTheme: false,
-                  PopupFramework(
-                    title: "select-color".tr(),
-                    child: Column(
-                      children: [
-                        getPlatform() == PlatformOS.isIOS
-                            ? Padding(
-                                padding: const EdgeInsetsDirectional.only(
-                                    bottom: 8.0),
-                                child: SettingsContainerSwitch(
-                                  title: "colorful-interface".tr(),
-                                  onSwitched: (value) {
-                                    updateSettings("materialYou", value,
-                                        updateGlobalState: true);
-                                  },
-                                  initialValue: appStateSettings["materialYou"],
-                                  icon: appStateSettings["outlinedIcons"]
-                                      ? Icons.brush_outlined
-                                      : Icons.brush_rounded,
-                                  enableBorderRadius: true,
-                                ),
-                              )
-                            : SizedBox.shrink(),
-                        SelectColor(
-                          selectableColorsList: selectableAccentColors(context),
-                          includeThemeColor: false,
-                          selectedColor: selectedColor,
-                          setSelectedColor: (color) {
-                            selectedColor = color;
-                            updateSettings("accentColor", toHexString(color),
-                                updateGlobalState: true);
-                            updateSettings("accentSystemColor", false,
-                                updateGlobalState: true);
-                            updateWidgetColorsAndText(context);
-                          },
-                          useSystemColorPrompt: true,
-                        ),
-                      ],
+    final sections = <(String, _SettingsLink)>[
+      (
+        'theme style black amoled palette animations color dark icons ثيم ستايل داكن أسود لون أيقونات',
+        _SettingsLink(
+          Icons.palette_outlined,
+          appearance,
+          subtitle: label(
+              'Themes, colors, fonts and home screen', 'الثيمات والألوان والخطوط والشاشة الرئيسية'),
+          page: const CashUAppearancePage(),
+        ),
+      ),
+      (
+        'locale clock calendar keypad arabic english عربي انجليزي ساعة أرقام',
+        _SettingsLink(
+          Icons.language,
+          formats,
+          subtitle: label('Language, dates, currency and number format',
+              'اللغة والتواريخ والعملة وتنسيق الأرقام'),
+          page: _SettingsSection(formats, [
+            _SettingsGroup([
+              Builder(
+                  builder: (pageContext) => _SettingsLink(
+                        Icons.language,
+                        'language'.tr(),
+                        subtitle: languageDisplayFilter(appStateSettings['locale'].toString()),
+                        onTap: () => openLanguagePicker(pageContext),
+                      )),
+              PrimaryCurrencySetting(),
+              NumberFormattingSetting(),
+              PercentagePrecisionSetting(),
+              Time24HourFormatSetting(),
+              FirstDayOfWeekSetting(updateHomePage: true),
+              NumberPadFormatSetting(),
+            ]),
+          ]),
+        ),
+      ),
+      (
+        'spending default account transaction budget goals categories حساب معاملات مصروف',
+        _SettingsLink(
+          Icons.tune,
+          finance,
+          subtitle: label('Accounts, transactions, budgets, goals and titles',
+              'الحسابات والمعاملات والميزانيات والأهداف والعناوين'),
+          page: _SettingsSection(finance, [
+            _SettingsGroup([TransactionsSettings()], title: 'transactions'.tr()),
+            _SettingsGroup([WalletsSettings()], title: 'accounts'.tr()),
+            _SettingsGroup([BudgetSettings()], title: 'budgets'.tr()),
+            _SettingsGroup([ObjectiveSettings()], title: 'goals'.tr()),
+            _SettingsGroup([TitlesSettings()], title: 'titles'.tr()),
+          ]),
+        ),
+      ),
+      (
+        'security fingerprint reminder تذكير بصمة أمان',
+        _SettingsLink(
+          Icons.shield_outlined,
+          privacy,
+          subtitle: label('Biometric lock and alerts', 'القفل بالبصمة والتنبيهات'),
+          page: _SettingsSection(privacy, [
+            _SettingsGroup([
+              BiometricsSettingToggle(),
+              if (notificationsGlobalEnabled)
+                _SettingsLink(Icons.notifications_outlined, 'notifications'.tr(),
+                    page: NotificationsPage()),
+            ]),
+          ]),
+        ),
+      ),
+      (
+        'backup restore export import sheets sqlite sync oauth conflicts استيراد تصدير استعادة مزامنة نسخ',
+        _SettingsLink(
+          Icons.cloud_outlined,
+          backups,
+          subtitle:
+              label('Local backups, Google Drive and CSV', 'النسخ المحلي وGoogle Drive وملفات CSV'),
+          page: _SettingsSection(backups, [
+            _SettingsGroup([
+              ExportDB(),
+              ImportDB(),
+              GoogleAccountLoginButton(
+                  isOutlinedButton: false, forceButtonName: 'google-drive'.tr()),
+              _SettingsLink(
+                  Icons.sync_problem_outlined, label('Sync conflicts', 'تعارضات المزامنة'),
+                  page: const SyncConflictsPage()),
+            ], title: 'backups'.tr()),
+            _SettingsGroup([ExportCSV(), ImportCSV()], title: 'import-and-export'.tr()),
+          ]),
+        ),
+      ),
+      (
+        'widget launcher android home shortcut اختصار ويدجت الشاشة',
+        _SettingsLink(
+          Icons.widgets_outlined,
+          widgets,
+          subtitle: label('Balances, colors and widget opacity', 'الأرصدة والألوان وشفافية الودجت'),
+          page: _SettingsSection(widgets, [
+            _SettingsGroup([WidgetSettings()])
+          ]),
+        ),
+      ),
+    ];
+    String searchable(String text) => text.trim().toLowerCase().replaceAll(RegExp(r'[أإآ]'), 'ا');
+    final query = searchable(_search.text);
+    final matches = [
+      for (final (terms, link) in sections)
+        if (searchable('${link.title} ${link.subtitle} $terms').contains(query)) link,
+    ];
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsetsDirectional.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _search,
+            textInputAction: TextInputAction.search,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              hintText: label('Search settings', 'ابحث في الإعدادات'),
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: label('Clear search', 'امسح البحث'),
+                      icon: const Icon(Icons.close),
+                      onPressed: () => setState(_search.clear),
                     ),
-                  ),
-                );
-              },
-              title: "accent-color".tr(),
-              description: "accent-color-description".tr(),
-              icon: appStateSettings["outlinedIcons"]
-                  ? Icons.color_lens_outlined
-                  : Icons.color_lens_rounded,
-            );
-          },
-        ),
-        getPlatform() == PlatformOS.isIOS
-            ? SizedBox.shrink()
-            : SettingsContainerSwitch(
-                title: "material-you".tr(),
-                description: "material-you-description".tr(),
-                onSwitched: (value) {
-                  updateSettings("materialYou", value, updateGlobalState: true);
-                },
-                initialValue: appStateSettings["materialYou"],
-                icon: appStateSettings["outlinedIcons"]
-                    ? Icons.brush_outlined
-                    : Icons.brush_rounded,
-              ),
-        ThemeSettingsDropdown(),
-
-        // EnterName(),
-        SettingsHeader(title: "preferences".tr()),
-
-        SettingsContainerOpenPage(
-          openPage: const FinancialImportPage(),
-          title: FinancialImportPage.label(
-              context, 'Bank message import', 'استيراد الرسائل البنكية'),
-          icon: Icons.sms_outlined,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: const FinancialAssistantPage(),
-          title: Localizations.localeOf(context).languageCode == 'ar'
-              ? 'المساعد دون اتصال'
-              : 'Offline assistant',
-          icon: Icons.edit_note_outlined,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: const TransferHistoryPage(),
-          title: Localizations.localeOf(context).languageCode == 'ar'
-              ? 'سجل التحويلات'
-              : 'Transfer history',
-          icon: Icons.history,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: const FinancialInsightsPage(),
-          title: Localizations.localeOf(context).languageCode == 'ar'
-              ? 'التحليلات المالية'
-              : 'Financial insights',
-          icon: Icons.bar_chart_outlined,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: const WealthAssetsPage(),
-          title: Localizations.localeOf(context).languageCode == 'ar'
-              ? 'الأصول والالتزامات'
-              : 'Assets and liabilities',
-          icon: Icons.account_balance_outlined,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: const InvestmentsPage(),
-          title: Localizations.localeOf(context).languageCode == 'ar'
-              ? 'الاستثمارات'
-              : 'Investments',
-          icon: Icons.show_chart_outlined,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: const PlanningScenariosPage(),
-          title: Localizations.localeOf(context).languageCode == 'ar'
-              ? 'سيناريوهات التدفق النقدي'
-              : 'Cash-flow scenarios',
-          icon: Icons.timeline_outlined,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: const SyncConflictsPage(),
-          title: Localizations.localeOf(context).languageCode == 'ar'
-              ? 'تعارضات المزامنة'
-              : 'Sync conflicts',
-          icon: Icons.sync_problem_outlined,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: const HouseholdPage(),
-          title: Localizations.localeOf(context).languageCode == 'ar'
-              ? 'ملفات أفراد الأسرة'
-              : 'Household profiles',
-          icon: Icons.groups_outlined,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: EditHomePage(),
-          title: "edit-home-page".tr(),
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.home_outlined
-              : Icons.home_rounded,
-        ),
-
-        notificationsGlobalEnabled && getIsFullScreen(context) == false
-            ? SettingsContainerOpenPage(
-                openPage: NotificationsPage(),
-                title: "notifications".tr(),
-                icon: appStateSettings["outlinedIcons"]
-                    ? Icons.notifications_outlined
-                    : Icons.notifications_rounded,
-              )
-            : SizedBox.shrink(),
-
-        BiometricsSettingToggle(),
-
-        SettingsContainer(
-          title: "language".tr(),
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.language_outlined
-              : Icons.language_rounded,
-          afterWidget: Tappable(
-            color: Theme.of(context).colorScheme.secondaryContainer,
-            borderRadius: 10,
-            child: Padding(
-              padding: const EdgeInsetsDirectional.symmetric(
-                  horizontal: 16, vertical: 10),
-              child: TextFont(
-                text: languageDisplayFilter(
-                    appStateSettings["locale"].toString()),
-                fontSize: 14,
+              filled: true,
+              fillColor: colors.surfaceContainerHigh,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide.none,
               ),
             ),
           ),
-          onTap: () {
-            openLanguagePicker(context);
+          const SizedBox(height: 16),
+          if (matches.isEmpty)
+            Padding(
+              padding: const EdgeInsetsDirectional.symmetric(vertical: 28),
+              child: Text(label('No matching settings', 'مفيش إعدادات مطابقة'),
+                  textAlign: TextAlign.center),
+            )
+          else
+            _SettingsGroup(matches),
+        ],
+      ),
+    );
+  }
+}
+
+class CashUAppearancePage extends StatefulWidget {
+  const CashUAppearancePage({super.key});
+
+  @override
+  State<CashUAppearancePage> createState() => _CashUAppearancePageState();
+}
+
+class _CashUAppearancePageState extends State<CashUAppearancePage> {
+  Future<void> _setTheme(String mode) async {
+    if (mode == 'dark' || mode == 'black') {
+      await updateSettings('forceFullDarkBackground', mode == 'black', updateGlobalState: false);
+    }
+    await updateSettings('theme', mode, updateGlobalState: true, forceGlobalStateUpdate: true);
+    if (mounted) {
+      setState(() {});
+      updateWidgetColorsAndText(context);
+    }
+  }
+
+  void _openAccentColors() {
+    openBottomSheet(
+      context,
+      useParentContextForTheme: false,
+      PopupFramework(
+        title: 'select-color'.tr(),
+        child: SelectColor(
+          selectableColorsList: selectableAccentColors(context),
+          includeThemeColor: false,
+          selectedColor: HexColor(appStateSettings['accentColor']),
+          setSelectedColor: (color) async {
+            await updateSettings('accentColor', toHexString(color), updateGlobalState: false);
+            await updateSettings('accentSystemColor', false,
+                updateGlobalState: true, forceGlobalStateUpdate: true);
+            if (mounted) {
+              setState(() {});
+              updateWidgetColorsAndText(context);
+            }
           },
+          useSystemColorPrompt: true,
         ),
-
-        SettingsContainerOpenPage(
-          openPage: MoreOptionsPagePreferences(),
-          title: "more-options".tr(),
-          description: "more-options-description".tr(),
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.app_registration_outlined
-              : Icons.app_registration_rounded,
-        ),
-
-        SettingsHeader(title: "tools-and-extras".tr()),
-        // SettingsContainerOpenPage(
-        //   openPage: AutoTransactionsPage(),
-        //   title: "Auto Transactions",
-        //   icon: appStateSettings["outlinedIcons"] ? Icons.auto_fix_high_outlined : Icons.auto_fix_high_rounded,
-        // ),
-
-        appStateSettings["emailScanning"]
-            ? SettingsContainerOpenPage(
-                openPage: AutoTransactionsPageEmail(),
-                title: "auto-email-transactions".tr(),
-                icon: appStateSettings["outlinedIcons"]
-                    ? Icons.mark_email_unread_outlined
-                    : Icons.mark_email_unread_rounded,
-              )
-            : SizedBox.shrink(),
-
-        appStateSettings["notificationScanningDebug"] &&
-                getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid
-            ? SettingsContainerOpenPage(
-                title: "Notification Transactions",
-                openPage: AutoTransactionsPageNotifications(),
-                icon: appStateSettings["outlinedIcons"]
-                    ? Icons.edit_notifications_outlined
-                    : Icons.edit_notifications_rounded,
-              )
-            : SizedBox.shrink(),
-
-        SettingsContainerOpenPage(
-          openPage: BillSplitter(),
-          title: "bill-splitter".tr(),
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.summarize_outlined
-              : Icons.summarize_rounded,
-        ),
-
-        SettingsContainerOpenPage(
-          openPage: ActivityPage(),
-          title: "transaction-activity-log".tr(),
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.ballot_outlined
-              : Icons.ballot_rounded,
-        ),
-
-        SettingsHeader(title: "import-and-export".tr()),
-
-        ExportCSV(),
-
-        ImportCSV(),
-
-        SettingsHeader(title: "backups".tr()),
-
-        ExportDB(),
-
-        ImportDB(),
-
-        GoogleAccountLoginButton(
-          isOutlinedButton: false,
-          forceButtonName: "google-drive".tr(),
-        ),
-      ],
+      ),
     );
   }
-}
-
-class ThemeSettingsDropdown extends StatefulWidget {
-  const ThemeSettingsDropdown({super.key});
-
-  @override
-  State<ThemeSettingsDropdown> createState() => _ThemeSettingsDropdownState();
-}
-
-class _ThemeSettingsDropdownState extends State<ThemeSettingsDropdown> {
-  @override
-  Widget build(BuildContext context) {
-    return SettingsContainerDropdown(
-      key: ValueKey(appStateSettings["materialYou"].toString()),
-      title: "theme-mode".tr(),
-      icon: Theme.of(context).brightness == Brightness.light
-          ? appStateSettings["outlinedIcons"]
-              ? Icons.lightbulb_outlined
-              : Icons.lightbulb_rounded
-          : appStateSettings["outlinedIcons"]
-              ? Icons.dark_mode_outlined
-              : Icons.dark_mode_rounded,
-      initial: appStateSettings["theme"].toString() == "black" &&
-              appStateSettings["materialYou"] == false
-          ? "dark"
-          : appStateSettings["theme"].toString(),
-      items: [
-        "system",
-        "light",
-        "dark",
-        if (appStateSettings["materialYou"] == true) "black"
-      ],
-      faintValues: [
-        if (appStateSettings["materialYou"] == true &&
-            appStateSettings["theme"].toString() == "system")
-          appStateSettings["forceFullDarkBackground"] == true ? "dark" : "black"
-      ],
-      onChanged: (value) async {
-        if (value == "black") {
-          await updateSettings("forceFullDarkBackground", true,
-              updateGlobalState: false);
-        } else if (value == "dark") {
-          await updateSettings("forceFullDarkBackground", false,
-              updateGlobalState: false);
-        }
-        setState(() {});
-        await updateSettings("theme", value, updateGlobalState: true);
-        updateWidgetColorsAndText(context);
-      },
-      getLabel: (item) {
-        return item.tr();
-      },
-    );
-  }
-}
-
-class MoreOptionsPagePreferences extends StatelessWidget {
-  const MoreOptionsPagePreferences({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return PageFramework(
-      title: "more".tr(),
-      dragDownToDismiss: true,
-      horizontalPaddingConstrained: true,
-      listWidgets: [
-        SettingsHeader(title: "style".tr()),
-        HeaderHeightSetting(),
-        OutlinedIconsSetting(),
+    String label(String en, String ar) => _settingsLabel(context, en, ar);
+    final colors = Theme.of(context).colorScheme;
+    final mode = appStateSettings['theme'];
+    final modes = [
+      (
+        'system',
+        'system'.tr(),
+        Icons.brightness_auto_outlined,
+        colors.surfaceContainerHighest,
+        colors.onSurface
+      ),
+      (
+        'light',
+        'light'.tr(),
+        Icons.light_mode_outlined,
+        const Color(0xfff5f5fb),
+        const Color(0xff25263a)
+      ),
+      ('dark', 'dark'.tr(), Icons.dark_mode_outlined, const Color(0xff27283c), Colors.white),
+      ('black', label('Pure black', 'أسود خالص'), Icons.contrast, Colors.black, Colors.white),
+    ];
+
+    return _SettingsSection(label('Appearance', 'المظهر'), [
+      _SettingsGroup([
+        Padding(
+          padding: const EdgeInsetsDirectional.all(12),
+          child: LayoutBuilder(builder: (context, constraints) {
+            final columns = constraints.maxWidth >= 520 ? 4 : 2;
+            final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final (id, name, icon, background, foreground) in modes)
+                  SizedBox(
+                    width: width,
+                    child: Semantics(
+                      selected: mode == id,
+                      child: Material(
+                        color: background,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          side: BorderSide(
+                            color: mode == id ? foreground : foreground.withValues(alpha: .3),
+                            width: mode == id ? 2 : 1,
+                          ),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: () => _setTheme(id),
+                          child: Padding(
+                            padding: const EdgeInsetsDirectional.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(mode == id ? Icons.check_circle_outline : icon,
+                                    color: foreground),
+                                const SizedBox(height: 8),
+                                Text(name,
+                                    style:
+                                        TextStyle(color: foreground, fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          }),
+        ),
+        _SettingsLink(
+          Icons.color_lens_outlined,
+          'accent-color'.tr(),
+          subtitle:
+              label('Palettes, custom color and system color', 'ألوان جاهزة ولون مخصص ولون النظام'),
+          onTap: _openAccentColors,
+        ),
+        SettingsContainerSwitch(
+          title: (getPlatform() == PlatformOS.isIOS ? 'colorful-interface' : 'material-you').tr(),
+          initialValue: appStateSettings['materialYou'],
+          icon: Icons.brush_outlined,
+          onSwitched: (value) => updateSettings('materialYou', value, updateGlobalState: true),
+        ),
+      ], title: 'theme'.tr()),
+      _SettingsGroup([
         FontPickerSetting(),
+        OutlinedIconsSetting(),
+        HeaderHeightSetting(),
+        IncreaseTextContrastSetting(),
         AppAnimationSetting(),
         CountingNumberAnimationSetting(),
-        IncreaseTextContrastSetting(),
-        SettingsHeader(title: "transactions".tr()),
-        TransactionsSettings(),
-        SettingsHeader(title: "accounts".tr()),
-        WalletsSettings(),
-        PrimaryCurrencySetting(),
-        SettingsHeader(title: "budgets".tr()),
-        BudgetSettings(),
-        SettingsHeader(title: "goals".tr()),
-        ObjectiveSettings(),
-        SettingsHeader(title: "titles".tr()),
-        TitlesSettings(),
-        SettingsHeader(title: "widgets".tr()),
-        WidgetSettings(),
-        SettingsHeader(title: "formatting".tr()),
-        NumberFormattingSetting(),
-        PercentagePrecisionSetting(),
-        Time24HourFormatSetting(),
-        FirstDayOfWeekSetting(updateHomePage: true),
-        NumberPadFormatSetting(),
-      ],
-    );
+      ], title: 'style'.tr()),
+      _SettingsGroup([
+        _SettingsLink(Icons.home_outlined, 'edit-home-page'.tr(), page: EditHomePage()),
+      ]),
+    ]);
+  }
+}
+
+class _FinancialToolsPage extends StatelessWidget {
+  const _FinancialToolsPage();
+
+  @override
+  Widget build(BuildContext context) {
+    String label(String en, String ar) => _settingsLabel(context, en, ar);
+    return _SettingsSection(label('Financial tools', 'الأدوات المالية'), [
+      _SettingsGroup([
+        _SettingsLink(Icons.compare_arrows, 'transfer-balance'.tr(),
+            page: const TransferBalancePage(allowEditWallet: true)),
+        _SettingsLink(Icons.history, label('Transfer history', 'سجل التحويلات'),
+            page: const TransferHistoryPage()),
+        _SettingsLink(Icons.sms_outlined, label('Bank messages', 'الرسائل البنكية'),
+            page: const FinancialImportPage()),
+        _SettingsLink(Icons.edit_note_outlined, label('Financial assistant', 'المساعد المالي'),
+            page: const FinancialAssistantPage()),
+        _SettingsLink(Icons.receipt_long_outlined, 'bill-splitter'.tr(), page: BillSplitter()),
+        _SettingsLink(Icons.ballot_outlined, 'transaction-activity-log'.tr(), page: ActivityPage()),
+        if (appStateSettings['emailScanning'] == true)
+          _SettingsLink(Icons.mark_email_unread_outlined, 'auto-email-transactions'.tr(),
+              page: AutoTransactionsPageEmail()),
+        if (appStateSettings['notificationScanningDebug'] == true &&
+            getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid)
+          _SettingsLink(Icons.edit_notifications_outlined,
+              label('Notification transactions', 'معاملات الإشعارات'),
+              page: AutoTransactionsPageNotifications()),
+      ], title: 'transactions'.tr()),
+      _SettingsGroup([
+        _SettingsLink(Icons.bar_chart_outlined, label('Financial insights', 'التحليلات المالية'),
+            page: const FinancialInsightsPage()),
+        _SettingsLink(
+            Icons.timeline_outlined, label('Cash-flow scenarios', 'سيناريوهات التدفق النقدي'),
+            page: const PlanningScenariosPage()),
+        _SettingsLink(
+            Icons.account_balance_outlined, label('Assets and liabilities', 'الأصول والالتزامات'),
+            page: const WealthAssetsPage()),
+        _SettingsLink(Icons.show_chart_outlined, label('Investments', 'الاستثمارات'),
+            page: const InvestmentsPage()),
+        _SettingsLink(Icons.groups_outlined, label('Household profiles', 'ملفات أفراد الأسرة'),
+            page: const HouseholdPage()),
+      ], title: label('Planning and wealth', 'التخطيط والثروة')),
+    ]);
   }
 }
 

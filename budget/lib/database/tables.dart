@@ -4053,10 +4053,9 @@ class FinanceDatabase extends _$FinanceDatabase {
               incoming.objectiveLoanFk != null)) {
         throw ArgumentError('InstaPay requires a valid EGP transfer');
       }
-      if (instaPay &&
-          ((await getAccountDetails(source.walletPk))?['archived'] == 1 ||
-              (await getAccountDetails(target.walletPk))?['archived'] == 1)) {
-        throw StateError('An InstaPay account is archived');
+      if ((await getAccountDetails(source.walletPk))?['archived'] == 1 ||
+          (await getAccountDetails(target.walletPk))?['archived'] == 1) {
+        throw StateError('A transfer account is archived');
       }
       final existing = await (select(transactions)
         ..where((t) => t.transactionPk.isIn(

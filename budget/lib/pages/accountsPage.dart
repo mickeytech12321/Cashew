@@ -129,13 +129,6 @@ class AccountsPageState extends State<AccountsPage> {
                           await signInAndSync(context, next: () {});
                         },
                       ),
-                      if (canConfigureGoogleAndroidClient)
-                        TextButton(
-                          onPressed: () => configureGoogleAndroidClient(context),
-                          child: Text(Localizations.localeOf(context).languageCode == 'ar'
-                              ? 'إعداد Google Drive'
-                              : 'Google Drive setup'),
-                        )
                     ],
                   )
                 : Column(

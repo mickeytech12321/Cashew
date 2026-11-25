@@ -6,7 +6,6 @@ import 'package:budget/struct/financialAssistant.dart';
 import 'package:budget/struct/openAiFinancialAssistant.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/openPopup.dart';
-import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -459,9 +458,9 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
                   : () {
                       final wallet = _wallet!;
                       if (transfer) {
-                        openBottomSheet(
+                        openBalanceTransfer(
                             context,
-                            TransferBalancePopup(
+                            TransferBalancePage(
                               wallet: wallet,
                               allowEditWallet: false,
                               initialAmount: amount,

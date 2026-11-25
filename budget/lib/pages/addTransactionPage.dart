@@ -1033,13 +1033,12 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     if (selectedObjectiveLoanPk != null) {
       initialIsNegative = selectedIncome;
     }
-    dynamic result = await openBottomSheet(
+    final saved = await openBalanceTransfer(
       context,
-      fullSnap: true,
-      TransferBalancePopup(
+      TransferBalancePage(
         allowEditWallet: true,
         wallet: Provider.of<AllWallets>(context, listen: false)
-            .indexedByPk[appStateSettings["selectedWalletPk"]]!,
+            .indexedByPk[appStateSettings["selectedWalletPk"]],
         showAllEditDetails: true,
         initialAmount: selectedAmount,
         initialDate: selectedDate,
@@ -1048,7 +1047,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         initialIsNegative: initialIsNegative,
       ),
     );
-    if (result == true) {
+    if (saved && mounted) {
       popRoute(context);
     }
   }

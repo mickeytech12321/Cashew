@@ -1,6 +1,5 @@
 import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:budget/colors.dart';
 import 'package:budget/database/generatePreviewData.dart';
@@ -77,73 +76,6 @@ class GoogleAuthClient extends http.BaseClient {
 signIn.GoogleSignIn? googleSignIn;
 signIn.GoogleSignInAccount? googleUser;
 Future<void>? _googleInitialization;
-String? _initializedAndroidClientId;
-const _googleWebClientIdPreference = 'cashuGoogleWebClientId';
-
-bool get canConfigureGoogleAndroidClient =>
-    getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid &&
-    !isGoogleOAuthClientId(googleAndroidServerClientId.trim());
-
-String? get _androidClientId => resolveGoogleAndroidClientId(
-      buildId: googleAndroidServerClientId,
-      savedId: sharedPreferences.getString(_googleWebClientIdPreference),
-    );
-
-Future<String?> configureGoogleAndroidClient(BuildContext context) async {
-  final arabic = Localizations.localeOf(context).languageCode == 'ar';
-  var input = _androidClientId ?? '';
-  final clientId = await showDialog<String>(
-    context: context,
-    builder: (context) {
-      final form = GlobalKey<FormState>();
-      return AlertDialog(
-        title: Text(arabic ? 'إعداد Google Drive' : 'Google Drive setup'),
-        content: Form(
-          key: form,
-          child: TextFormField(
-            initialValue: input,
-            onChanged: (value) => input = value.trim(),
-            autocorrect: false,
-            enableSuggestions: false,
-            textDirection: ui.TextDirection.ltr,
-            decoration: InputDecoration(
-              labelText: 'Web OAuth Client ID',
-              helperText: arabic
-                  ? 'من نفس مشروع Google Cloud الذي سجّلت فيه حزمة أندرويد'
-                  : 'Use the Google Cloud project that registered this Android app',
-              helperMaxLines: 3,
-            ),
-            validator: (value) => isGoogleOAuthClientId(value?.trim() ?? '')
-                ? null
-                : (arabic ? 'أدخل معرّف Web OAuth صحيحًا' : 'Enter a valid Web OAuth client ID'),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text('cancel'.tr()),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (form.currentState!.validate()) Navigator.of(context).pop(input);
-            },
-            child: Text('save'.tr()),
-          ),
-        ],
-      );
-    },
-  );
-  if (clientId == null) return null;
-  if (!await sharedPreferences.setString(_googleWebClientIdPreference, clientId)) {
-    openSnackbar(SnackbarMessage(
-      title: arabic ? 'تعذّر حفظ إعداد Google' : 'Could not save Google setup',
-      icon: Icons.warning_outlined,
-    ));
-    return null;
-  }
-  return clientId;
-}
-
 Future<GoogleAuthClient> getGoogleAuthorizedClient(List<String> scopes) async {
   final account = googleUser;
   if (account == null) throw StateError('Sign in to Google to continue.');
@@ -158,11 +90,11 @@ Future<signIn.GoogleSignIn> _initializeGoogleSignIn(String? androidClientId) asy
   final ready = _googleInitialization ??= instance.initialize(
     serverClientId: androidClientId,
     clientId: platform == PlatformOS.isIOS && enableCashewCloudServices
-        ? DefaultFirebaseOptions.currentPlatform.iosClientId : null,
+        ? DefaultFirebaseOptions.currentPlatform.iosClientId
+        : null,
   );
   try {
     await ready;
-    _initializedAndroidClientId = androidClientId;
     googleSignIn = instance;
     return instance;
   } catch (_) {
@@ -181,26 +113,23 @@ Future<bool> signInGoogle(
   if (await checkLockedFeatureIfInDemoMode(context) == false) return false;
   final silent = silentSignIn == true;
   final platform = getPlatform(ignoreEmulation: true);
-  String? androidClientId;
-  if (platform == PlatformOS.isAndroid) {
-    androidClientId = _androidClientId;
-    if (androidClientId == null) {
-      if (silent || context == null || !context.mounted) return false;
-      androidClientId = await configureGoogleAndroidClient(context);
-      if (androidClientId == null || !context.mounted) return false;
+  final androidClientId = platform == PlatformOS.isAndroid
+      ? resolveGoogleAndroidClientId(googleAndroidServerClientId)
+      : null;
+  if (platform == PlatformOS.isAndroid && androidClientId == null) {
+    if (!silent) {
+      final arabic = context != null &&
+          context.mounted &&
+          Localizations.localeOf(context).languageCode == 'ar';
+      openSnackbar(SnackbarMessage(
+        title: 'sign-in-error'.tr(),
+        description: arabic
+            ? 'هذه النسخة من CashU غير مهيّأة لتسجيل الدخول إلى Google.'
+            : 'This CashU build is missing its Google sign-in configuration.',
+        icon: Icons.warning_outlined,
+      ));
     }
-    if (_initializedAndroidClientId != null &&
-        _initializedAndroidClientId != androidClientId) {
-      if (!silent) {
-        final arabic = context != null && context.mounted &&
-            Localizations.localeOf(context).languageCode == 'ar';
-        openSnackbar(SnackbarMessage(
-          title: arabic ? 'أعد تشغيل CashU لتطبيق الإعداد' : 'Restart CashU to apply the Google setup',
-          icon: Icons.info_outline,
-        ));
-      }
-      return false;
-    }
+    return false;
   }
   final scopes = requestedGoogleScopes(
     mail: gMailPermissions == true && appStateSettings["emailScanning"] != false,
@@ -213,12 +142,16 @@ Future<bool> signInGoogle(
   try {
     final instance = await _initializeGoogleSignIn(androidClientId);
     final previous = googleUser;
-    final account = previous ?? (silent
-        ? await instance.attemptLightweightAuthentication()
-        : instance.supportsAuthenticate() ? await instance.authenticate(scopeHint: scopes) : null);
+    final account = previous ??
+        (silent
+            ? await instance.attemptLightweightAuthentication()
+            : instance.supportsAuthenticate()
+                ? await instance.authenticate(scopeHint: scopes)
+                : null);
     if (account == null) return false;
     final headers = await account.authorizationClient.authorizationHeaders(
-      scopes, promptIfNecessary: !silent,
+      scopes,
+      promptIfNecessary: !silent,
     );
     if (headers == null) return false;
     googleUser = account;
@@ -229,12 +162,12 @@ Future<bool> signInGoogle(
     success = true;
   } catch (_) {
     if (silent && runningCloudFunctions) errorSigningInDuringCloud = true;
-    if (!silent) openSnackbar(SnackbarMessage(
-      title: "sign-in-error".tr(),
-      description: "sign-in-error-description".tr(),
-      icon: appStateSettings["outlinedIcons"]
-          ? Icons.error_outlined : Icons.error_rounded,
-    ));
+    if (!silent)
+      openSnackbar(SnackbarMessage(
+        title: "sign-in-error".tr(),
+        description: "sign-in-error-description".tr(),
+        icon: appStateSettings["outlinedIcons"] ? Icons.error_outlined : Icons.error_rounded,
+      ));
   } finally {
     if (showLoading && context.mounted) popRoute(context);
   }

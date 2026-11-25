@@ -23,8 +23,7 @@ void main() {
   });
 
   test('Android OAuth configuration requires a Google client ID format', () {
-    expect(
-        isGoogleOAuthClientId('1234-demo.apps.googleusercontent.com'), isTrue);
+    expect(isGoogleOAuthClientId('1234-demo.apps.googleusercontent.com'), isTrue);
     for (final invalid in [
       '',
       'AIzaExample',
@@ -36,15 +35,10 @@ void main() {
     }
   });
 
-  test('Android OAuth uses a valid build ID or a locally configured public ID',
-      () {
-    const built = '1234-built.apps.googleusercontent.com';
-    const saved = '1234-preview.apps.googleusercontent.com';
-    expect(resolveGoogleAndroidClientId(buildId: built, savedId: saved), built);
-    expect(
-        resolveGoogleAndroidClientId(buildId: '', savedId: ' $saved '), saved);
-    expect(resolveGoogleAndroidClientId(buildId: '', savedId: 'GOCSPX-example'),
-        isNull);
-    expect(resolveGoogleAndroidClientId(buildId: ''), isNull);
+  test('the Android OAuth ID comes from the build configuration', () {
+    const id = '1234-cashu.apps.googleusercontent.com';
+    expect(resolveGoogleAndroidClientId(' $id '), id);
+    expect(resolveGoogleAndroidClientId(''), isNull);
+    expect(resolveGoogleAndroidClientId('GOCSPX-example'), isNull);
   });
 }

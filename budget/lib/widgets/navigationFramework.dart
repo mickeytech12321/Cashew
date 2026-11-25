@@ -584,15 +584,13 @@ class AddMoreThingsPopup extends StatelessWidget {
             },
             onSelected: (String selection) async {
               if (selection == "transfer-balance") {
+                final navigator = Navigator.of(context);
+                final wallet = context.read<AllWallets>()
+                    .indexedByPk[appStateSettings["selectedWalletPk"]];
                 popRoute(context);
-                openBottomSheet(
-                  context,
-                  fullSnap: true,
-                  TransferBalancePopup(
-                    allowEditWallet: true,
-                    wallet: Provider.of<AllWallets>(context, listen: false)
-                        .indexedByPk[appStateSettings["selectedWalletPk"]]!,
-                  ),
+                openBalanceTransfer(
+                  navigator.context,
+                  TransferBalancePage(allowEditWallet: true, wallet: wallet),
                 );
               } else if (selection == "correct-total-balance") {
                 TransactionWallet? wallet =

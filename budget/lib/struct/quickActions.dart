@@ -36,10 +36,9 @@ void runQuickActionsPayLoads(context) async {
           );
         });
       } else if (quickAction == "transferTransaction") {
-        openBottomSheet(
+        openBalanceTransfer(
           context,
-          fullSnap: true,
-          TransferBalancePopup(
+          TransferBalancePage(
             allowEditWallet: true,
             wallet: Provider.of<AllWallets>(context, listen: false)
                 .indexedByPk[appStateSettings["selectedWalletPk"]],

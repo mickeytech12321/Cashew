@@ -40,7 +40,7 @@ Set the GitHub Actions repository **variable** `CASHEW_GOOGLE_WEB_CLIENT_ID` to 
 
 Run this only as part of an Android build you intend to create. GitHub-hosted debug keys can differ from a local debug key. OAuth will work only for the SHA‑1 of the APK actually installed. For repeatable testing, consistently use a registered signer. Keep signing keys, passwords, OAuth client secrets, service account keys, and access tokens out of repository variables, commits and chat.
 
-GitHub Actions variables are available to the workflow. For a local build with Drive enabled, explicitly pass the public Web client ID with the flag above and register the APK's actual package and certificate in Google Cloud. When building without the variable, use **Settings → Google Drive → Google Drive setup** on the test device to paste the public **Web OAuth client ID** from the same Cloud project. This saves the ID on that installation and leaves the local backup workflow available. If changing an ID after a sign-in attempt, close and reopen CashU before retrying.
+GitHub Actions variables are available to the workflow. For a local build with Drive enabled, explicitly pass the public Web client ID with the flag above and register the APK's actual package and certificate in Google Cloud. The Android app reads the public Web client ID from the APK's compiled build configuration. Use the repository variable for GitHub Actions or pass the Dart define for local builds. Manual workflow runs validate this variable before building. APKs installed on the test devices must use the registered signing certificate.
 
 ## Build an Android test APK
 
@@ -58,7 +58,7 @@ The APK is at `budget/build/app/outputs/flutter-apk/app-release.apk` from the re
 
 ## Verify a configured build
 
-- Sign in from **Accounts** with an authorized Google account and grant the Cashew Drive backup permission.
+- Sign in from **Settings → Backup and data → Google Drive** with an authorized Google account and grant the Cashew Drive backup permission.
 - Create a backup, confirm it appears in **Manage backups**, then verify that it restores into a test installation on restart.
 - Try a canceled sign-in and a denied Drive grant. Local finance features should remain usable.
 - For device sync, confirm both installations use the same OAuth project and Google account. Drive's app data is app-scoped. The new Android package starts with independent app data. Use **Export Cashew Data File** in the old app, then **Import Cashew Data File** in CashU and reopen it to restore on the new package if the existing Drive files are unavailable.
@@ -88,7 +88,7 @@ Supply the project’s public client configuration to the intended app build. Th
 
 Local builds can supply these values as Dart defines or with `--dart-define-from-file`. Missing values leave the local Household profiles available. Firebase service-account credentials belong outside the app and repository. Household email sign-in uses its own Firebase session independently of Google Drive sign-in.
 
-In **Settings → Household profiles → Household sharing**, the owner verifies an email, creates a household and copies an invitation code for the recipient’s verified email. The recipient accepts the code before the owner assigns access to individual accounts. Starting with a personal balance shows the name, currency and opening balance for confirmation. Shared transactions use their own ledger. Offline changes remain saved under the current login and sync when the app can reach the server. An edit superseded on another device goes into conflict status for review before editing again. After revocation the server rejects further access and writes. A disconnected device can still display data that it previously downloaded until it checks access again.
+In **More → Financial tools → Household profiles → Household sharing**, the owner verifies an email, creates a household and copies an invitation code for the recipient’s verified email. The recipient accepts the code before the owner assigns access to individual accounts. Starting with a personal balance shows the name, currency and opening balance for confirmation. Shared transactions use their own ledger. Offline changes remain saved under the current login and sync when the app can reach the server. An edit superseded on another device goes into conflict status for review before editing again. After revocation the server rejects further access and writes. A disconnected device can still display data that it previously downloaded until it checks access again.
 
 The Firestore rules tests run against the demo emulator with Java 21 and Node. From `budget/household`, install the development dependencies and run `npm test`. Verify the verified-email flow, invites, conflicting edits and access revocation on two configured devices before releasing. The rules and build integration are checked in. Production Firebase deployment and device verification are pending.
 

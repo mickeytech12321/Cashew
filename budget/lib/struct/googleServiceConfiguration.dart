@@ -1,8 +1,7 @@
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:googleapis/gmail/v1.dart' as gmail;
 
-const googleAndroidServerClientId =
-    String.fromEnvironment('CASHEW_GOOGLE_WEB_CLIENT_ID');
+const googleAndroidServerClientId = String.fromEnvironment('CASHEW_GOOGLE_WEB_CLIENT_ID');
 
 const googleBackupScopes = <String>[drive.DriveApi.driveAppdataScope];
 const googleAttachmentScopes = <String>[drive.DriveApi.driveFileScope];
@@ -11,12 +10,9 @@ const googleMailScopes = <String>[gmail.GmailApi.gmailModifyScope];
 bool isGoogleOAuthClientId(String value) =>
     RegExp(r'^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$').hasMatch(value);
 
-String? resolveGoogleAndroidClientId(
-    {required String buildId, String? savedId}) {
+String? resolveGoogleAndroidClientId(String buildId) {
   final compiled = buildId.trim();
-  final saved = savedId?.trim();
-  if (isGoogleOAuthClientId(compiled)) return compiled;
-  return saved != null && isGoogleOAuthClientId(saved) ? saved : null;
+  return isGoogleOAuthClientId(compiled) ? compiled : null;
 }
 
 List<String> requestedGoogleScopes({

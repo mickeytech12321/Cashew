@@ -53,40 +53,22 @@ class _SelectColorState extends State<SelectColor> {
   bool useSystemColor = appStateSettings["accentSystemColor"];
   List<Color> selectableColorsList = [];
 
-  @override
-  void initState() {
-    super.initState();
-    Future.delayed(Duration.zero, () {
-      selectableColorsList =
-          widget.selectableColorsList ?? selectableColors(context);
-      if (widget.supportCustomColors) {
-        selectableColorsList.add(Colors.transparent);
-      }
-      if (widget.includeThemeColor) {
-        selectableColorsList.insert(0, Colors.transparent);
-      }
+  bool _paletteLoaded = false;
 
-      if (widget.selectedColor != null) {
-        int index = 0;
-        for (Color color in selectableColorsList) {
-          if (color.toString() == widget.selectedColor.toString()) {
-            setState(() {
-              selectedIndex = index;
-              selectedColor = widget.selectedColor;
-            });
-            return;
-          }
-          index++;
-        }
-        print("color not found - must be custom color");
-        selectedIndex = -1;
-        selectedColor = widget.selectedColor;
-      } else {
-        selectedIndex = 0;
-        selectedColor = null;
-      }
-      setState(() {});
-    });
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_paletteLoaded) return;
+    _paletteLoaded = true;
+    selectableColorsList = [
+      if (widget.includeThemeColor) Colors.transparent,
+      ...(widget.selectableColorsList ?? selectableColors(context)),
+      if (widget.supportCustomColors) Colors.transparent,
+    ];
+    selectedColor = widget.selectedColor;
+    selectedIndex = selectedColor == null
+        ? 0
+        : selectableColorsList.indexWhere((color) => color.toString() == selectedColor.toString());
   }
 
   //find the selected category using selectedCategory

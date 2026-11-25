@@ -1,7 +1,6 @@
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/struct/cardStatementRepayment.dart';
-import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'dart:convert';
 
@@ -265,9 +264,9 @@ class _CardStatementsPageState extends State<CardStatementsPage> {
         ),
       );
       if (amount == null || !mounted) return;
-      await openBottomSheet(
+      await openBalanceTransfer(
         context,
-        TransferBalancePopup(
+        TransferBalancePage(
           wallet: repayment.source,
           initialTarget: repayment.card,
           initialAmount: amount,

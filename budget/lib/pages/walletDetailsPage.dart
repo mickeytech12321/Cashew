@@ -1299,10 +1299,9 @@ class WalletDetailsPageState extends State<WalletDetailsPage>
                             ? Icons.compare_arrows_outlined
                             : Icons.compare_arrows_rounded,
                         action: () {
-                          openBottomSheet(
+                          openBalanceTransfer(
                             context,
-                            fullSnap: true,
-                            TransferBalancePopup(
+                            TransferBalancePage(
                                 wallet: widget.wallet!, allowEditWallet: false),
                           );
                         },

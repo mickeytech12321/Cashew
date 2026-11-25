@@ -69,6 +69,15 @@ jobs:
           PY
       - name: Apply Flutter dependency compatibility fixes
         run: python3 scripts/prepare_flutter_compat.py android
+      - name: Verify Google configuration for manual Android builds
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CASHEW_GOOGLE_WEB_CLIENT_ID: ${{ vars.CASHEW_GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          if [[ ! "$CASHEW_GOOGLE_WEB_CLIENT_ID" =~ ^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$ ]]; then
+            echo "::error::Set the CASHEW_GOOGLE_WEB_CLIENT_ID repository variable to the public Web OAuth ID."
+            exit 1
+          fi
       - name: Build Android debug APK
         working-directory: budget
         env:

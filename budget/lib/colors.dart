@@ -656,6 +656,9 @@ ThemeData getDarkTheme() {
     fontFamily: appStateSettings["font"],
     fontFamilyFallback: ['Inter'],
     colorScheme: getColorScheme(brightness),
+    scaffoldBackgroundColor: appStateSettings['forceFullDarkBackground'] == true
+        ? Colors.black
+        : null,
     useMaterial3: true,
     typography: Typography.material2014(),
     splashColor: getPlatform() == PlatformOS.isIOS

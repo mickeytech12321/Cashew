@@ -9,7 +9,6 @@ import 'package:budget/pages/homePage/homePageNetWorth.dart';
 import 'package:budget/pages/walletDetailsPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
-import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
@@ -72,17 +71,9 @@ class _CheckWidgetLaunchState extends State<CheckWidgetLaunch> {
         );
       });
     } else if (widgetPayload == "transferTransactionWidget") {
-      // This fixes an issue on older versions of Android where the route would popup twice
-      // We can detect when this is going to happen if the Provider is not yet loaded, so just pop
-      // the route when this is called so the first time routing does not persist (i.e. we end with one route)
-      if (Provider.of<AllWallets>(context, listen: false)
-              .indexedByPk[appStateSettings["selectedWalletPk"]] ==
-          null) popAllRoutes(context);
-
-      openBottomSheet(
+      openBalanceTransfer(
         context,
-        fullSnap: true,
-        TransferBalancePopup(
+        TransferBalancePage(
           allowEditWallet: true,
           wallet: Provider.of<AllWallets>(context, listen: false)
               .indexedByPk[appStateSettings["selectedWalletPk"]],
