@@ -1,4 +1,5 @@
 import 'package:budget/pages/addWalletPage.dart';
+import 'package:budget/pages/bankCertificatesPage.dart';
 import 'package:budget/pages/syncConflictsPage.dart';
 import 'package:budget/pages/householdPage.dart';
 import 'package:budget/pages/investmentsPage.dart';
@@ -22,6 +23,8 @@ import 'package:budget/pages/objectivesListPage.dart';
 import 'package:budget/pages/transactionsListPage.dart';
 import 'package:budget/pages/upcomingOverdueTransactionsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
+import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/instaPayTransfer.dart';
 import 'package:budget/struct/defaultPreferences.dart';
 import 'package:budget/struct/languageMap.dart';
 import 'package:budget/struct/navBarIconsData.dart';
@@ -155,7 +158,7 @@ class MorePages extends StatelessWidget {
               Icons.grid_view_rounded,
               label('Financial tools', 'الأدوات المالية'),
               subtitle:
-                  label('Bank messages, insights and planning', 'رسائل البنوك والتحليلات والتخطيط'),
+                  label('InstaPay, bank certificates and cards', 'إنستاباي والشهادات البنكية والبطاقات'),
               page: const _FinancialToolsPage(),
             ),
             if (!hasSidebar && appStateSettings['showBillSplitterShortcut'] == true)
@@ -697,10 +700,64 @@ class _CashUAppearancePageState extends State<CashUAppearancePage> {
 class _FinancialToolsPage extends StatelessWidget {
   const _FinancialToolsPage();
 
+  Future<void> _openInstaPayPayment(BuildContext context) async {
+    String label(String en, String ar) => _settingsLabel(context, en, ar);
+    try {
+      final accounts = (await database.getFinancialInsightsAccounts())
+          .where((account) => isInstaPayCurrency(account.currency))
+          .toList();
+      if (!context.mounted) return;
+      if (accounts.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(label('Add an active EGP account first.', 'أضف حسابًا نشطًا بالجنيه الأول.')),
+        ));
+        return;
+      }
+      final selected = accounts.firstWhere(
+        (account) => account.id == appStateSettings['selectedWalletPk'],
+        orElse: () => accounts.first,
+      );
+      final wallet = await database.getWalletInstance(selected.id);
+      if (!context.mounted) return;
+      pushRoute(context, AddTransactionPage(
+        selectedIncome: false,
+        selectedWallet: wallet,
+        initialInstaPay: true,
+        startInitialAddTransactionSequence: false,
+        routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+      ));
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(label('Could not load the payment account.', 'تعذّر فتح حساب الدفع.')),
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     String label(String en, String ar) => _settingsLabel(context, en, ar);
     return _SettingsSection(label('Financial tools', 'الأدوات المالية'), [
+      _SettingsGroup([
+        _SettingsLink(
+          Icons.send_outlined,
+          label('InstaPay payment', 'دفع بإنستاباي'),
+          onTap: () => _openInstaPayPayment(context),
+        ),
+        _SettingsLink(Icons.account_balance_outlined,
+            label('Bank certificates', 'الشهادات البنكية'),
+            page: const BankCertificatesPage()),
+        _SettingsLink(
+          Icons.credit_card_outlined,
+          label('Add credit card', 'إضافة بطاقة ائتمان'),
+          page: AddWalletPage(
+            initialAccountType: 'credit',
+            routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+          ),
+        ),
+        _SettingsLink(Icons.link_outlined, label('Link card messages', 'ربط رسائل البطاقات'),
+            onTap: () => showDialog<void>(context: context, builder: (_) => const ImportCardLinks())),
+      ], title: label('Payments and banking', 'الدفع والبنوك')),
       _SettingsGroup([
         _SettingsLink(Icons.compare_arrows, 'transfer-balance'.tr(),
             page: const TransferBalancePage(allowEditWallet: true)),

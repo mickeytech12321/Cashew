@@ -446,6 +446,7 @@ class PageNavigationFrameworkState extends State<PageNavigationFramework> {
       // Maybe another device already marked them as paid
       await markSubscriptionsAsPaid(context);
       await markUpcomingAsPaid();
+      if (mounted) await postDueBankCertificatePayouts(context);
 
       // Should do this after syncing and after the subscriptions/upcoming transactions auto paid for
       // The upcoming transactions may have been modified after a sync

@@ -5,6 +5,7 @@ import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/editWalletsPage.dart';
+import 'package:budget/pages/financialImportPage.dart';
 import 'package:budget/pages/settingsPage.dart';
 import 'package:budget/struct/cardStatementRepayment.dart';
 import 'package:budget/struct/currencyFunctions.dart';
@@ -45,12 +46,14 @@ class AddWalletPage extends StatefulWidget {
     this.wallet,
     required this.routesToPopAfterDelete,
     this.runWhenOpen,
+    this.initialAccountType = 'unspecified',
   }) : super(key: key);
 
   //When a wallet is passed in, we are editing that wallet
   final TransactionWallet? wallet;
   final RoutesToPopAfterDelete routesToPopAfterDelete;
   final VoidCallback? runWhenOpen;
+  final String initialAccountType;
 
   @override
   _AddWalletPageState createState() => _AddWalletPageState();
@@ -391,6 +394,9 @@ class _AddWalletPageState extends State<AddWalletPage> {
       selectedCurrency = wallet.currency ?? 'usd';
       selectedDecimals = wallet.decimals;
     }
+    if (FinanceDatabase.supportedAccountTypes.contains(widget.initialAccountType)) {
+      selectedAccountType = widget.initialAccountType;
+    }
     currencies = currenciesJSON;
     _initialDetails = _currentDetails;
     _loadAccount();
@@ -618,7 +624,11 @@ class _AddWalletPageState extends State<AddWalletPage> {
         resizeToAvoidBottomInset: true,
         dragDownToDismiss: true,
         horizontalPaddingConstrained: true,
-        title: widget.wallet == null ? "add-account".tr() : "edit-account".tr(),
+        title: widget.wallet != null
+            ? "edit-account".tr()
+            : widget.initialAccountType == 'credit'
+                ? _accountLabel('Add credit card', 'إضافة بطاقة ائتمان')
+                : "add-account".tr(),
         onBackButton: _requestClose,
         onDragDownToDismiss: _requestClose,
         actions: [
@@ -828,6 +838,15 @@ class _AddWalletPageState extends State<AddWalletPage> {
                     onChanged: (value) =>
                         setState(() => accountArchived = value),
                   ),
+                  if (widget.wallet != null && !accountArchived)
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.link),
+                      label: Text(_accountLabel('Link card messages', 'ربط رسائل البطاقات')),
+                      onPressed: () => showDialog<void>(
+                        context: context,
+                        builder: (_) => ImportCardLinks(initialWalletPk: widget.wallet!.walletPk),
+                      ),
+                    ),
                   ],
                 ),
               ),

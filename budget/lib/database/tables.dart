@@ -33,6 +33,7 @@ import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 part 'transferSync.dart';
 part 'metadataSync.dart';
+part 'cashuPayments.dart';
 
 const int schemaVersionGlobal = 48;
 
@@ -1015,6 +1016,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   // Keep the upstream v48 fields on disk, including tags this UI cannot edit.
   Future<void> _createFinancialSchema48() async {
     await createLocalFinancialSchema47();
+    await _createCashuPaymentSchema(this);
     await customStatement('''CREATE TABLE IF NOT EXISTS tags (
       date_created INTEGER NOT NULL,
       date_time_modified INTEGER,
@@ -4700,8 +4702,10 @@ class FinanceDatabase extends _$FinanceDatabase {
       throw ArgumentError.value(digits, 'digits');
     }
     return transaction(() async {
-      if (await getWalletInstanceOrNull(walletPk) == null) {
-        throw StateError('Account no longer exists');
+      final wallet = await getWalletInstanceOrNull(walletPk);
+      if (wallet == null || wallet.currency?.trim().isNotEmpty != true ||
+          (await getAccountDetails(walletPk))?['archived'] == 1) {
+        throw StateError('Select an active account with a currency');
       }
       await customStatement(
         'INSERT INTO account_identifiers '
@@ -5055,15 +5059,27 @@ class FinanceDatabase extends _$FinanceDatabase {
           DateTime.fromMillisecondsSinceEpoch(event['occurred_at'] as int);
       final signedAmount = direction == 'credit' ? amount : -amount;
       final duplicate = await customSelect(
-        'SELECT * FROM transactions WHERE wallet_fk = ? AND paid = 1 AND skip_paid = 0 '
-        'AND amount BETWEEN ? AND ? AND date_created BETWEEN ? AND ? '
-        'ORDER BY date_created DESC, transaction_pk LIMIT 1',
+        'SELECT t.* FROM transactions t WHERE t.wallet_fk = ? AND t.paid = 1 AND t.skip_paid = 0 '
+        'AND (t.amount BETWEEN ? AND ? OR EXISTS ('
+        "SELECT 1 FROM cashu_instapay_expenses p WHERE ? = 'egp' "
+        'AND p.transaction_fk = t.transaction_pk '
+        'AND p.wallet_fk = t.wallet_fk AND t.type IS NULL AND t.income = 0 '
+        'AND ROUND(-t.amount * 100) = p.principal_minor + p.fee_minor '
+        'AND (-p.principal_minor / 100.0) BETWEEN ? AND ?)) '
+        'AND t.date_created BETWEEN ? AND ? '
+        'ORDER BY CASE WHEN t.amount BETWEEN ? AND ? THEN 0 ELSE 1 END, '
+        't.date_created DESC, t.transaction_pk LIMIT 1',
         variables: [
           Variable<String>(resolvedWallet),
           Variable<double>(signedAmount - 0.00000001),
           Variable<double>(signedAmount + 0.00000001),
+          Variable<String>(event['currency'] as String?),
+          Variable<double>(signedAmount - 0.00000001),
+          Variable<double>(signedAmount + 0.00000001),
           Variable<DateTime>(occurredAt.subtract(const Duration(minutes: 2))),
           Variable<DateTime>(occurredAt.add(const Duration(minutes: 2))),
+          Variable<double>(signedAmount - 0.00000001),
+          Variable<double>(signedAmount + 0.00000001),
         ],
       ).getSingleOrNull();
       if (expectedExistingPk != null &&

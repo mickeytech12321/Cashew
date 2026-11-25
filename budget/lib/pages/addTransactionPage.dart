@@ -1,3 +1,4 @@
+import 'package:budget/struct/instaPayTransfer.dart';
 import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'package:budget/database/generatePreviewData.dart';
 import 'package:budget/database/tables.dart';
@@ -106,6 +107,7 @@ class AddTransactionPage extends StatefulWidget {
     this.selectedNotes,
     this.startInitialAddTransactionSequence = true,
     this.transferBalancePopup = false,
+    this.initialInstaPay = false,
     required this.routesToPopAfterDelete,
   }) : super(key: key);
 
@@ -126,6 +128,7 @@ class AddTransactionPage extends StatefulWidget {
   final String? selectedNotes;
   final bool startInitialAddTransactionSequence;
   final bool transferBalancePopup;
+  final bool initialInstaPay;
 
   @override
   _AddTransactionPageState createState() => _AddTransactionPageState();
@@ -389,6 +392,80 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     );
   }
 
+  late bool _instaPaySelected = widget.initialInstaPay;
+  bool _hadInstaPay = false;
+  late bool _paymentLoaded = widget.transaction == null;
+  bool _paymentLoadFailed = false;
+  late final _paymentDraftPk = uuid.v4();
+
+  bool _canPayWithInstaPay(TransactionWallet? wallet) =>
+      isInstaPayCurrency(wallet?.currency) &&
+      !selectedIncome &&
+      selectedPaid &&
+      selectedType == null &&
+      !selectedBudgetIsShared &&
+      selectedObjectiveLoanPk == null &&
+      selectedCategory?.categoryPk != '0' &&
+      widget.transaction?.pairedTransactionFk == null &&
+      widget.transaction?.sharedKey == null;
+
+  String _paymentLabel(String english, String arabic) =>
+      Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
+
+  Future<void> _loadPaymentMethod() async {
+    try {
+      final payment = await database.getInstaPayExpense(widget.transaction!.transactionPk);
+      if (!mounted) return;
+      setState(() {
+        _paymentLoaded = true;
+        _paymentLoadFailed = false;
+        if (payment != null) {
+          _hadInstaPay = true;
+          _instaPaySelected = true;
+          selectedAmount = payment.principal;
+          selectedAmountCalculation = null;
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() => _paymentLoadFailed = true);
+    }
+  }
+
+  Widget _paymentMethodTile() {
+    if (!_paymentLoaded) {
+      if (_paymentLoadFailed) {
+        return TextButton(
+          onPressed: _loadPaymentMethod,
+          child: Text(_paymentLabel('Retry loading payment method', 'أعد تحميل طريقة الدفع')),
+        );
+      }
+      return const LinearProgressIndicator();
+    }
+    final accounts = context.watch<AllWallets>();
+    final available = _canPayWithInstaPay(accounts.indexedByPk[selectedWalletPk]);
+    if (!available && !_instaPaySelected) return const SizedBox.shrink();
+    final amount = (selectedAmount ?? 0).abs();
+    final fee = _instaPaySelected && available ? instaPayTransferFee(amount) : null;
+    String format(double value) => convertToMoney(
+      accounts, value, currencyKey: 'egp', addCurrencyName: true,
+    );
+    final details = fee != null
+        ? _paymentLabel('Fee ${format(fee)} · Total debit ${format(amount + fee)}',
+            'الرسوم ${format(fee)} · إجمالي الخصم ${format(amount + fee)}')
+        : available
+            ? _paymentLabel('Adds a fee to this expense', 'بيضيف الرسوم للمصروف')
+            : _paymentLabel('Choose a paid expense in EGP', 'اختار مصروفًا مدفوعًا بالجنيه المصري');
+    return SwitchListTile(
+      secondary: const Icon(Icons.send_to_mobile_outlined),
+      title: Text(_paymentLabel('InstaPay payment', 'دفع بإنستاباي')),
+      subtitle: Text(details),
+      value: _instaPaySelected,
+      onChanged: available || _instaPaySelected
+          ? (value) => setState(() => _instaPaySelected = value)
+          : null,
+    );
+  }
+
   bool lockAddTransaction = false;
   Future<bool> addTransaction() async {
     if (lockAddTransaction) return false;
@@ -484,9 +561,23 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       );
     }
     try {
+      if (!_paymentLoaded) return false;
       final createdTransaction = createTransaction();
-      if (widget.transaction == null &&
-          !await _confirmPossibleDuplicate(createdTransaction)) return false;
+      final fee = _instaPaySelected ? instaPayTransferFee(-createdTransaction.amount) : null;
+      if (_instaPaySelected &&
+          (!_canPayWithInstaPay(context.read<AllWallets>().indexedByPk[selectedWalletPk]) ||
+              fee == null)) {
+        openSnackbar(SnackbarMessage(
+          title: _paymentLabel('Choose a paid EGP expense with up to two decimal places',
+              'اختار مصروفًا مدفوعًا بالجنيه وبحد أقصى منزلتين عشريتين'),
+          icon: Icons.warning_amber,
+        ));
+        return false;
+      }
+      if (widget.transaction == null && !await _confirmPossibleDuplicate(
+          fee == null ? createdTransaction : createdTransaction.copyWith(
+            amount: createdTransaction.amount - fee,
+          ))) return false;
       if (selectedTitle != null &&
           selectedCategory != null &&
           selectedTitle != "") {
@@ -579,18 +670,29 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         }
       }
 
-      final int? rowId = await database.createOrUpdateTransaction(
-        insert: widget.transaction == null,
-        createdTransaction,
-        originalTransaction: widget.transaction,
-      );
+      final Transaction? transactionJustAdded;
+      if (_instaPaySelected || _hadInstaPay) {
+        transactionJustAdded = await database.saveInstaPayExpense(
+          createdTransaction.copyWith(
+            transactionPk: widget.transaction?.transactionPk ?? _paymentDraftPk,
+          ),
+          enabled: _instaPaySelected,
+          original: widget.transaction,
+        );
+      } else {
+        final rowId = await database.createOrUpdateTransaction(
+          insert: widget.transaction == null,
+          createdTransaction,
+          originalTransaction: widget.transaction,
+        );
+        transactionJustAdded = rowId == null
+            ? null
+            : widget.transaction != null
+                ? await database.getTransactionFromPk(widget.transaction!.transactionPk)
+                : await database.getTransactionFromRowId(rowId);
+      }
 
-      if (rowId != null) {
-        final Transaction transactionJustAdded =
-            await database.getTransactionFromRowId(rowId);
-        print("Transaction just added:");
-        print(transactionJustAdded);
-
+      if (transactionJustAdded != null) {
         // Do the flash animation only if the date was changed
         if (transactionJustAdded.dateCreated !=
             widget.transaction?.dateCreated) {
@@ -641,7 +743,12 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       } else {
         openSnackbar(SnackbarMessage(
           title: "cannot-create-transaction".tr(),
-          description: e.toString(),
+          description: (_instaPaySelected || _hadInstaPay)
+              ? _paymentLabel(
+                  'Check the account and amount. If the entry changed, reopen it.',
+                  'راجع الحساب والمبلغ. لو المعاملة اتغيّرت، افتحها من جديد.',
+                )
+              : e.toString(),
           icon: appStateSettings["outlinedIcons"]
               ? Icons.warning_amber_outlined
               : Icons.warning_amber_rounded,
@@ -741,7 +848,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
   // When creating a new entry only
   void showDiscardChangesPopupIfNotEditing() {
     Transaction transactionCreated = createTransaction();
-    if (transactionCreated != transactionInitial &&
+    if ((transactionCreated != transactionInitial || _instaPaySelected != widget.initialInstaPay) &&
         widget.transaction == null) {
       discardChangesPopup(context, forceShow: true);
     } else {
@@ -792,6 +899,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       //   selectedAmountCalculation = amountString;
       // }
       textAddTransaction = "save-changes".tr();
+      _loadPaymentMethod();
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         updateInitial();
@@ -1131,6 +1239,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
           child: Column(
             children: [
               Container(height: 10),
+              _paymentMethodTile(),
               Padding(
                 padding: const EdgeInsetsDirectional.symmetric(horizontal: 10),
                 child: AnimatedSwitcher(

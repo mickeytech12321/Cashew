@@ -155,6 +155,9 @@ class App extends StatelessWidget {
           updateGlobalAppLifecycleState: true,
           onAppResume: () async {
             await setHighRefreshRate();
+            if (entireAppLoaded && context.mounted) {
+              await postDueBankCertificatePayouts(context);
+            }
           },
           child: InitializeBiometrics(
             child: InitializeNotificationService(

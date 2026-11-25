@@ -285,8 +285,11 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                     event['occurred_at'] as int,
                   ))),
                   if (suggestedWallet != null && walletPk == suggestedWallet)
-                    Text(label('Account suggested from card digits.',
-                        'تم اقتراح الحساب بناءً على آخر أربعة أرقام من البطاقة.')),
+                    Text(lastFour != null
+                        ? label('Account suggested from card digits.',
+                            'تم اقتراح الحساب بناءً على آخر أربعة أرقام من البطاقة.')
+                        : label('Account suggested from the notification app.',
+                            'تم اقتراح الحساب بناءً على تطبيق الإشعار.')),
                   TextFormField(
                     initialValue: initialTitle,
                     maxLength: NAME_LIMIT,
@@ -308,6 +311,18 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                         .toList(),
                     onChanged: (value) => update(() => walletPk = value),
                   ),
+                  if (lastFour != null && walletPk != null && suggestedWallet == null)
+                    TextButton.icon(
+                      icon: const Icon(Icons.link),
+                      label: Text(label('Link card to this account', 'ربط البطاقة بهذا الحساب')),
+                      onPressed: () => showDialog<void>(
+                        context: dialogContext,
+                        builder: (_) => ImportCardLinks(
+                          initialWalletPk: walletPk,
+                          initialDigits: lastFour,
+                        ),
+                      ),
+                    ),
                   DropdownButton<String>(
                     isExpanded: true,
                     hint: Text(label('Category', 'التصنيف')),
@@ -452,7 +467,7 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                     ? null
                     : () => showDialog<void>(
                           context: context,
-                          builder: (_) => const _ImportCardLinks(),
+                          builder: (_) => const ImportCardLinks(),
                         ),
                 child: Text(label('Manage card links', 'إدارة ربط البطاقات')),
               ),
@@ -702,18 +717,23 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
   }
 }
 
-class _ImportCardLinks extends StatefulWidget {
-  const _ImportCardLinks();
+class ImportCardLinks extends StatefulWidget {
+  const ImportCardLinks({super.key, this.initialWalletPk, this.initialDigits});
+
+  final String? initialWalletPk;
+  final String? initialDigits;
 
   @override
-  State<_ImportCardLinks> createState() => _ImportCardLinksState();
+  State<ImportCardLinks> createState() => _ImportCardLinksState();
 }
 
-class _ImportCardLinksState extends State<_ImportCardLinks> {
-  final _digits = TextEditingController();
-  late final _wallets = database.getAllWallets();
+class _ImportCardLinksState extends State<ImportCardLinks> {
+  late final _digits = TextEditingController(text: widget.initialDigits);
+  late final _wallets = database.getFinancialInsightsAccounts().then(
+    (accounts) => accounts.where((account) => account.currency.isNotEmpty).toList(),
+  );
   late var _links = database.getImportCardLinks();
-  String? _wallet;
+  late String? _wallet = widget.initialWalletPk;
   String? _error;
   bool _busy = false;
 
@@ -771,7 +791,11 @@ class _ImportCardLinksState extends State<_ImportCardLinks> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            FutureBuilder<List<TransactionWallet>>(
+            Text(_label(
+              'CashU uses the last four digits and currency to suggest an account in Bank Messages.',
+              'يقترح CashU الحساب في الرسائل البنكية باستخدام آخر أربعة أرقام والعملة.',
+            )),
+            FutureBuilder(
               future: _wallets,
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
@@ -782,12 +806,14 @@ class _ImportCardLinksState extends State<_ImportCardLinks> {
                 return DropdownButton<String>(
                   isExpanded: true,
                   hint: Text(_label('Account', 'الحساب')),
-                  value: _wallet,
+                  value: snapshot.data!.any((account) => account.id == _wallet)
+                      ? _wallet
+                      : null,
                   items: [
-                    for (final wallet in snapshot.data!)
+                    for (final account in snapshot.data!)
                       DropdownMenuItem(
-                          value: wallet.walletPk,
-                          child: Text(wallet.name,
+                          value: account.id,
+                          child: Text('${account.name} · ${account.currency.toUpperCase()}',
                               overflow: TextOverflow.ellipsis)),
                   ],
                   onChanged:

@@ -1,6 +1,7 @@
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/pages/addWalletPage.dart';
+import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/widgets/openPopup.dart' show RoutesToPopAfterDelete;
 import 'package:budget/pages/settingsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
@@ -123,6 +124,86 @@ void main() {
     final entries = await database.select(database.transactions).get();
     expect(entries.map((row) => (row.walletFk, row.amount)),
         unorderedEquals([('checking', -100.0), ('other', 100.0), ('checking', -.50)]));
+    await disposeFixture(tester);
+  });
+
+  testWidgets('a paid expense previews and saves the total including the InstaPay fee', (tester) async {
+    final checking = await wallet('checking', 'Checking', 0);
+    await database.into(database.categories).insert(CategoriesCompanion.insert(
+      categoryPk: const Value('shopping'), name: 'Shopping', order: 0,
+    ));
+    await mount(tester, AddTransactionPage(
+      initialInstaPay: true,
+      selectedWallet: checking,
+      selectedAmount: 1000,
+      selectedTitle: 'Payment',
+      selectedCategory: await database.getCategoryInstance('shopping'),
+      selectedIncome: false,
+      routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+      startInitialAddTransactionSequence: false,
+    ), [checking]);
+
+    expect(find.textContaining('Total debit'), findsOneWidget);
+    await tester.tap(find.text('add-transaction').last);
+    await tester.pumpAndSettle();
+    final payments = await database.getAllTransactionsFromWallet(checking.walletPk);
+    expect(payments.single.amount, -1001);
+    expect((await database.getInstaPayExpense(payments.single.transactionPk))?.principal, 1000);
+    await disposeFixture(tester);
+  });
+
+  testWidgets('banking tools link card messages to an account at mobile width', (tester) async {
+    final checking = await wallet('checking', 'Checking', 0);
+    await mount(tester,
+        const Scaffold(body: SingleChildScrollView(child: MorePages())),
+        [checking]);
+    await tester.tap(find.text('Financial tools'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Link card messages'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Checking · EGP').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '١٢٣٤');
+    await tester.tap(find.text('Link card'));
+    await tester.pumpAndSettle();
+    expect(await database.suggestImportedCardWallet('1234', 'egp'), 'checking');
+    await disposeFixture(tester);
+  });
+
+  testWidgets('the Arabic certificate list opens the creation form in RTL', (tester) async {
+    final checking = await wallet('checking', 'Checking', 0);
+    await mount(tester,
+        const Scaffold(body: SingleChildScrollView(child: MorePages())),
+        [checking], locale: const Locale('ar'));
+    await tester.tap(find.text('الأدوات المالية'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('الشهادات البنكية'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('إضافة شهادة'));
+    await tester.pumpAndSettle();
+
+    final title = find.text('اسم الشهادة');
+    expect(title, findsOneWidget);
+    expect(Directionality.of(tester.element(title)), ui.TextDirection.rtl);
+    expect(find.text('العائد ينزل على حساب'), findsOneWidget);
+    await disposeFixture(tester);
+  });
+
+  testWidgets('the Add credit card shortcut opens the credit fields', (tester) async {
+    final checking = await wallet('checking', 'Checking', 0);
+    await mount(tester,
+        const Scaffold(body: SingleChildScrollView(child: MorePages())),
+        [checking]);
+    await tester.tap(find.text('Financial tools'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add credit card'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Credit card'), findsOneWidget);
+    expect(find.text('Credit limit'), findsOneWidget);
     await disposeFixture(tester);
   });
 
