@@ -87,7 +87,6 @@ android {
             signingConfig (testRelease ? signingConfigs.debug : signingConfigs.release)
             if (isolatedPreview) {
                 applicationIdSuffix ".preview"
-                manifestPlaceholders.cashewLabel = "CashU Preview"
             }
         }
     }

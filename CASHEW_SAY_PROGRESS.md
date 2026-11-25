@@ -4,6 +4,10 @@
 > Rule: no APK build and no merge to `main` until explicitly requested.
 > DONE records a completed milestone. TESTED records an implemented path with automated verification. CODED indicates implementation with additional verification pending. PARTIAL and TODO indicate incomplete work.
 
+## CashU Android launcher label
+
+- **Phase 09 · CODED.** Build 5.4.7+420 displays **CashU** for both Android package variants. An in-place update from 5.4.6+419 needs `com.cashu.mickey.preview` and its existing signing key. The installed preview's package and data location have not changed. No database migration is needed. Packaging an in-place update is blocked pending access to the original signer.
+
 ## CashU review, bank inbox and Gemini
 
 - **Phase 08 · TESTED.** The Material theme, original Cashew surface roles, and CashU cards now use the same canvas, surface and text colors. Light, dark, pure black and custom accent selection remain available.
