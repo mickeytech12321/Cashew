@@ -2,6 +2,10 @@ import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:googleapis/gmail/v1.dart' as gmail;
 
 const googleAndroidServerClientId = String.fromEnvironment('CASHEW_GOOGLE_WEB_CLIENT_ID');
+const googleBrowserClientId = String.fromEnvironment(
+  'CASHEW_GOOGLE_WEB_CLIENT_ID',
+  defaultValue: '849549168028-qa71qphgon3u7fdh9ij78kqsvnk4i3j9.apps.googleusercontent.com',
+);
 
 const googleBackupScopes = <String>[drive.DriveApi.driveAppdataScope];
 const googleAttachmentScopes = <String>[drive.DriveApi.driveFileScope];

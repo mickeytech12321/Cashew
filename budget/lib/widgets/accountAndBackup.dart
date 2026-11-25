@@ -89,9 +89,11 @@ Future<signIn.GoogleSignIn> _initializeGoogleSignIn(String? androidClientId) asy
   final instance = signIn.GoogleSignIn.instance;
   final ready = _googleInitialization ??= instance.initialize(
     serverClientId: androidClientId,
-    clientId: platform == PlatformOS.isIOS && enableCashewCloudServices
-        ? DefaultFirebaseOptions.currentPlatform.iosClientId
-        : null,
+    clientId: kIsWeb
+        ? googleBrowserClientId
+        : platform == PlatformOS.isIOS && enableCashewCloudServices
+            ? DefaultFirebaseOptions.currentPlatform.iosClientId
+            : null,
   );
   try {
     await ready;
@@ -103,6 +105,18 @@ Future<signIn.GoogleSignIn> _initializeGoogleSignIn(String? androidClientId) asy
   }
 }
 
+Future<signIn.GoogleSignIn> initializeGoogleBrowserLogin() =>
+    _initializeGoogleSignIn(null);
+
+Future<void> rememberGoogleBrowserAccount(
+    signIn.GoogleSignInAccount account) async {
+  googleUser = account;
+  errorSigningInDuringCloud = false;
+  await updateSettings("currentUserEmail", account.email, updateGlobalState: false);
+  await updateSettings("hasSignedIn", true, updateGlobalState: false);
+  refreshUIAfterLoginChange();
+}
+
 Future<bool> signInGoogle(
     {BuildContext? context,
     bool? waitForCompletion,
@@ -112,6 +126,7 @@ Future<bool> signInGoogle(
     Function()? next}) async {
   if (await checkLockedFeatureIfInDemoMode(context) == false) return false;
   final silent = silentSignIn == true;
+  if (kIsWeb && googleUser == null) return false;
   final platform = getPlatform(ignoreEmulation: true);
   final androidClientId = platform == PlatformOS.isAndroid
       ? resolveGoogleAndroidClientId(googleAndroidServerClientId)
@@ -207,6 +222,7 @@ Future<bool> signOutGoogle() async {
 }
 
 Future<bool> refreshGoogleSignIn() async {
+  if (kIsWeb) return false;
   await signOutGoogle();
   return signInGoogle(silentSignIn: true);
 }
@@ -604,7 +620,7 @@ class GoogleAccountLoginButton extends StatefulWidget {
 
 class GoogleAccountLoginButtonState extends State<GoogleAccountLoginButton> {
   void refreshState() {
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   void openPage({VoidCallback? onNext}) {
@@ -618,6 +634,10 @@ class GoogleAccountLoginButtonState extends State<GoogleAccountLoginButton> {
   }
 
   void loginWithSync({VoidCallback? onNext}) {
+    if (kIsWeb) {
+      openPage(onNext: onNext);
+      return;
+    }
     signInAndSync(
       widget.navigationSidebarButton
           ? navigatorKey.currentContext ?? context

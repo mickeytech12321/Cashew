@@ -4,6 +4,12 @@
 > Rule: no APK build and no merge to `main` until explicitly requested.
 > DONE records a completed milestone. TESTED records an implemented path with automated verification. CODED indicates implementation with additional verification pending. PARTIAL and TODO indicate incomplete work.
 
+## CashU browser preview
+
+- **Phase 08 · TESTED.** The CashU release web bundle builds with Flutter 3.50.1 and includes the existing financial workflows. The build serves CanvasKit assets locally, keeps SQLite in browser storage, and has its own startup and error screens. Added a repeatable web build and Vercel configuration.
+- **Phase 07 / 09 · CODED.** The browser account screen uses Google's supported sign-in button and the project's public Web OAuth client ID. Granting Drive access is a separate action. New web profiles start with automatic backup and sync disabled. The Vercel project, OAuth JavaScript origin and interactive Drive verification are pending.
+- The full Flutter suite passed 128 tests. This batch targets web and did not build an Android APK.
+
 ## CashU banking workflows
 
 - **Phase 01 · TESTED.** A paid EGP expense can use InstaPay from the normal transaction editor or from More → Financial tools. CashU previews the 0.1% fee (EGP 0.50–20) and logs the total as one expense. Edits retain the original principal, retries cannot add another copy, and bank-message review checks both the principal and total before saving a new debit.

@@ -18,16 +18,15 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="google-signin-client_id" content="267621253497-1na8q1lt56qg9177dskkrkdds5jjiqrn.apps.googleusercontent.com">
 
   <!-- iOS meta tags & icons -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="budget">
+  <meta name="apple-mobile-web-app-title" content="CashU">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/pg" href="favicon/png"/>
+  <link rel="icon" type="image/png" href="favicon.png"/>
   <link rel="icon" type="image/x-icon" href="favicon.ico"/>
 
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FFFFFF">
@@ -40,23 +39,13 @@
   <meta name="description" content="A budget and financial tracking application designed for you" />
 
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://cashewapp.web.app/assets/preview.png" />
   <meta property="og:title" content="CashU" />
   <meta property="og:description" content="A budget and financial tracking application designed for you" />
-  <meta property="og:image" content="https://cashewapp.web.app/assets/preview.png" />
 
   <meta property="twitter:card" content="summary_large_image" />
-  <meta property="twitter:url" content="https://cashewapp.web.app/assets/preview.png" />
   <meta property="twitter:title" content="CashU" />
   <meta property="twitter:description" content="A budget and financial tracking application designed for you" />
-  <meta property="twitter:image" content="https://cashewapp.web.app/assets/preview.png" />
 
-  <script>
-    // The value below is injected by flutter build, do not touch.
-    var serviceWorkerVersion = null;
-  </script>
-  <!-- This script adds the flutter initialization JS code -->
-  <script src="flutter.js" defer></script>
 </head>
 <body oncontextmenu="return false;">
   <style>
@@ -66,29 +55,7 @@
       }
     }
   </style>
-  <script type="module">
-    // Import the functions you need from the SDKs you need
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
-    import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
-    import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
-
-    // TODO: Add SDKs for Firebase products that you want to use
-    // https://firebase.google.com/docs/web/setup#available-libraries
-  
-    // Your web app's Firebase configuration
-    const firebaseConfig = {
-      apiKey: "AIzaSyBGiaRl72d4k3Ki0dh8ra-gU4v2z04CgIw",
-      authDomain: "budget-app-flutter.firebaseapp.com",
-      projectId: "budget-app-flutter",
-      storageBucket: "budget-app-flutter.appspot.com",
-      messagingSenderId: "267621253497",
-      appId: "1:267621253497:web:12558fe9abebf7fa842fa8"
-    };
-  
-    // Initialize Firebase
-    const app = initializeApp(firebaseConfig);
-  </script>
-  <script defer src="sql-wasm.js"></script>
+  <script src="sql-wasm.js" defer></script>
   <div id="loading">
     <style>
       body {
@@ -158,40 +125,6 @@
       <div class="loading-spinner"></div>
     </div>
   </div>
-  <script>
-    window.addEventListener('load', function(ev) {
-      var loading = document.querySelector('#loading');
-      // Download main.dart.js
-      _flutter.loader.loadEntrypoint({
-        serviceWorker: {
-          serviceWorkerVersion: serviceWorkerVersion,
-        }
-      }).then(function(engineInitializer) {
-        loading.classList.add('main_done');
-        return engineInitializer.initializeEngine({
-          useColorEmoji: true,
-        });
-      }).then(function(appRunner) {
-        loading.classList.add('init_done');
-        return appRunner.runApp();
-      }).then(function (_) {
-        // Wait a few milliseconds so users can see the "zoom" animation
-        // before getting rid of the "loading" div.
-        window.setTimeout(function () {
-          loading.remove();
-        }, 200);
-
-        // https://github.com/flutter/flutter/issues/55913#issuecomment-1248816491
-        
-        const flutterRoot = document.getElementsByTagName('flt-glass-pane').item(0);
-        flutterRoot.addEventListener('touchstart', (e) => {
-          // is not near edge of view, exit
-          if (e.pageX > 24 && e.pageX < window.innerWidth - 24) return;
-          // prevent swipe to navigate gesture
-          e.preventDefault();
-        });
-      });
-    });
-  </script>
+  <script src="flutter_bootstrap.js" defer></script>
 </body>
 </html>

@@ -4,6 +4,8 @@ import 'package:budget/main.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
+import 'package:budget/widgets/googleBrowserLogin.dart';
+import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/dropdownSelect.dart';
@@ -33,6 +35,39 @@ class AccountsPage extends StatefulWidget {
 
 class AccountsPageState extends State<AccountsPage> {
   bool currentlyExporting = false;
+  bool requestingDriveAccess = false;
+  String? driveAccessFeedback;
+
+  String _browserLabel(String en, String ar) =>
+      Localizations.localeOf(context).languageCode == 'ar' ? ar : en;
+
+  Future<bool> _grantBrowserDriveAccess() async {
+    if (!kIsWeb) return true;
+    final account = googleUser;
+    if (account == null || requestingDriveAccess) return false;
+    setState(() {
+      requestingDriveAccess = true;
+      driveAccessFeedback = null;
+    });
+    try {
+      await account.authorizationClient.authorizeScopes(googleBackupScopes);
+      if (mounted) {
+        setState(() => driveAccessFeedback =
+            _browserLabel('Drive access granted.', 'تم السماح بالوصول إلى Google Drive.'));
+      }
+      return googleUser == account;
+    } catch (_) {
+      if (mounted) {
+        setState(() => driveAccessFeedback = _browserLabel(
+          'Drive access was not granted. You can try again.',
+          'لم يُمنح الوصول إلى Google Drive. تقدر تحاول تاني.',
+        ));
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => requestingDriveAccess = false);
+    }
+  }
 
   void refreshState() {
     setState(() {});
@@ -40,6 +75,8 @@ class AccountsPageState extends State<AccountsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final account = googleUser;
+    final name = account?.displayName ?? account?.email ?? '';
     Widget profileWidget = Container(
       width: 100,
       height: 100,
@@ -50,7 +87,7 @@ class AccountsPageState extends State<AccountsPage> {
       ),
       child: Center(
         child: TextFont(
-            text: googleUser?.displayName![0] ?? "",
+            text: name.characters.firstOrNull ?? '',
             fontSize: 60,
             textAlign: TextAlign.center,
             fontWeight: FontWeight.bold,
@@ -117,18 +154,21 @@ class AccountsPageState extends State<AccountsPage> {
                 ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      SettingsContainerOutlined(
-                        title: getPlatform() == PlatformOS.isIOS
-                            ? "google-drive-backup".tr()
-                            : "sign-in-with-google".tr(),
-                        icon: getPlatform() == PlatformOS.isIOS
-                            ? MoreIcons.google_drive
-                            : MoreIcons.google,
-                        isExpanded: false,
-                        onTap: () async {
-                          await signInAndSync(context, next: () {});
-                        },
-                      ),
+                      if (kIsWeb)
+                        GoogleBrowserLogin(onSignedIn: refreshState)
+                      else
+                        SettingsContainerOutlined(
+                          title: getPlatform() == PlatformOS.isIOS
+                              ? "google-drive-backup".tr()
+                              : "sign-in-with-google".tr(),
+                          icon: getPlatform() == PlatformOS.isIOS
+                              ? MoreIcons.google_drive
+                              : MoreIcons.google,
+                          isExpanded: false,
+                          onTap: () async {
+                            await signInAndSync(context, next: () {});
+                          },
+                        ),
                     ],
                   )
                 : Column(
@@ -206,6 +246,26 @@ class AccountsPageState extends State<AccountsPage> {
                           fontSize: 15,
                         ),
                       ),
+                      if (kIsWeb)
+                        Padding(
+                          padding: const EdgeInsetsDirectional.fromSTEB(18, 14, 18, 0),
+                          child: Column(
+                            children: [
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.add_to_drive),
+                                onPressed: requestingDriveAccess
+                                    ? null
+                                    : _grantBrowserDriveAccess,
+                                label: Text(_browserLabel(
+                                  'Allow Google Drive backups',
+                                  'السماح بالنسخ إلى Google Drive',
+                                )),
+                              ),
+                              if (driveAccessFeedback != null)
+                                Text(driveAccessFeedback!, textAlign: TextAlign.center),
+                            ],
+                          ),
+                        ),
                       SizedBox(height: 25),
                       Padding(
                         padding: const EdgeInsetsDirectional.symmetric(
@@ -456,7 +516,7 @@ class _SignInWithGoogleFlyInState extends State<SignInWithGoogleFlyIn> {
     });
   }
 
-  bool get shouldExpand => !hide && googleUser == null;
+  bool get shouldExpand => !kIsWeb && !hide && googleUser == null;
 
   @override
   Widget build(BuildContext context) {

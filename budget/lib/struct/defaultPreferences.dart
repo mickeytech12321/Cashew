@@ -17,8 +17,8 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
   return {
     "databaseJustImported": false,
     "backupLimit": 20,
-    "backupSync": true,
-    "syncEveryChange": kIsWeb,
+    "backupSync": !kIsWeb,
+    "syncEveryChange": false,
     "devicesHaveBeenSynced": 1,
     "numBackups": 1,
     "theme": "system", //system, light, dark
@@ -130,7 +130,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "accountColorfulAmountsWithArrows": false,
     "netTotalsColorful": false,
     "EmailAutoTransactions-amountOfEmails": 10,
-    "autoBackups": true,
+    "autoBackups": !kIsWeb,
     "autoBackupsFrequency": 3, //in days
     "hasSignedIn": false,
     "lastBackup": DateTime.now().subtract(Duration(days: 1)).toString(),

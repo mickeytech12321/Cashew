@@ -1,4 +1,4 @@
-# CashU Android Google sign-in and Drive backup
+# CashU Google sign-in and Drive backup
 
 This branch uses a Google Cloud OAuth project owned by the app publisher. Basic Drive backup and device sync use the Google Drive API app data folder. Firebase and Gmail are separate services.
 
@@ -56,6 +56,14 @@ CASHEW_TEST_RELEASE=true \
 
 The APK is at `budget/build/app/outputs/flutter-apk/app-release.apk` from the repository root. For Web compilation, apply `python3 ../scripts/prepare_flutter_compat.py web` after package resolution to use the pinned Drift and sqlite3 versions with the newer Dart toolchain.
 
+## CashU on the web
+
+Run `bash scripts/build_cashu_web.sh` from the repository root. The web build uses Flutter 3.50.1 and the SQLite compatibility setup. Serve `budget/build/web` over HTTP for local testing or deploy it through the supplied Vercel configuration. The budget and transaction database is stored in the browser for that site origin.
+
+The browser uses the public Web client ID for the CashU OAuth project. A `CASHEW_GOOGLE_WEB_CLIENT_ID` build environment variable can select another publisher-owned Web OAuth client. In Google Auth Platform → Clients, register the exact hosted HTTPS origin under **Authorized JavaScript origins** for the selected client. Use a stable Vercel domain for repeated testing. For a local OAuth test, register the exact localhost URL and port. Browser builds do not need an Android signing fingerprint.
+
+From **Settings → Backup and data → Google Drive**, sign in with Google's button, then choose **Allow Google Drive backups** to grant `drive.appdata`. After the grant, use Backup or Restore. New browser profiles start with automatic Drive backups and sync disabled. Google access is optional, and browser storage remains available when signed out. Test with an account on the OAuth project's Audience test-user list while the project is in Testing.
+
 ## Verify a configured build
 
 - Sign in from **Settings → Backup and data → Google Drive** with an authorized Google account and grant the Cashew Drive backup permission.
@@ -70,7 +78,7 @@ The APK is at `budget/build/app/outputs/flutter-apk/app-release.apk` from the re
 | Drive attachments | Same Android OAuth project and clients, plus the optional `drive.file` scope. |
 | Gmail scanning | Gmail API enabled in the same project, plus the Gmail scope and any applicable verification. Keep it separate from backup consent. |
 | Firebase Auth and household sharing | A separate publisher-owned project, registered app, verified email/password sign-in and the isolated [household rules](budget/household/firestore.rules). See the setup below. |
-| Browser builds | A Web OAuth client restricted to the real JavaScript origins, plus integration of the provider-rendered Google sign-in button. The Android build variable does not enable browser sign-in. |
+| Browser builds | Register the hosted JavaScript origin on the Web OAuth client and verify sign-in and Drive access with a test account. |
 | iOS | A separately registered iOS OAuth client and the matching native bundle and URL scheme configuration. |
 
 ## Configure household sharing
