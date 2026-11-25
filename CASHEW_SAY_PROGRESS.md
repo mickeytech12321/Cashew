@@ -8,6 +8,7 @@
 
 - **Phase 07 / 09 · CODED.** The CashU Web OAuth client ID is compiled into Android by default. The Android Preview application ID and signing certificate are registered in the existing Google Cloud project, and the consent screen declares only `drive.appdata` for backups. Google sign-in and the Drive grant are separate actions on Android. New installations start with automatic backup and device sync off. Existing settings are retained.
 - **Phase 00 / 09 · TESTED.** Flutter 3.50.1 passed 135 tests, including the Google configuration and account-only scope checks. No database schema migration. Interactive account selection, Drive backup and restore on an Android device still need verification.
+- **Phase 09 · TESTED.** Built the ARM64 `CashU Preview` APK 5.4.6+419 from `1612736f` with Flutter 3.50.1, JDK 17 and Android SDK 36. Verified its package, APK signature, ZIP alignment, SQLite and embedded Google configuration. The signer SHA-1 matches the Android OAuth client for `com.cashu.mickey.preview`. APK SHA-256 is `8e1ce0c30cc6a5324a5d036b4e6d29a45db29c180f81d4be3dd827edfbc31f73`.
 
 ## CashU forms and settings
 
