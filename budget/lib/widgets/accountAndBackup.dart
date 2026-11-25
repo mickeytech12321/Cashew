@@ -122,6 +122,7 @@ Future<bool> signInGoogle(
     bool? waitForCompletion,
     bool? gMailPermissions,
     bool? drivePermissionsAttachments,
+    bool backupAccess = false,
     bool? silentSignIn,
     Function()? next}) async {
   if (await checkLockedFeatureIfInDemoMode(context) == false) return false;
@@ -147,6 +148,7 @@ Future<bool> signInGoogle(
     return false;
   }
   final scopes = requestedGoogleScopes(
+    backup: backupAccess,
     mail: gMailPermissions == true && appStateSettings["emailScanning"] != false,
     attachments: drivePermissionsAttachments == true,
   );
@@ -164,11 +166,13 @@ Future<bool> signInGoogle(
                 ? await instance.authenticate(scopeHint: scopes)
                 : null);
     if (account == null) return false;
-    final headers = await account.authorizationClient.authorizationHeaders(
-      scopes,
-      promptIfNecessary: !silent,
-    );
-    if (headers == null) return false;
+    if (scopes.isNotEmpty) {
+      final headers = await account.authorizationClient.authorizationHeaders(
+        scopes,
+        promptIfNecessary: !silent,
+      );
+      if (headers == null) return false;
+    }
     googleUser = account;
     errorSigningInDuringCloud = false;
     await updateSettings("currentUserEmail", account.email, updateGlobalState: false);
@@ -256,17 +260,19 @@ Future<bool> signInAndSync(BuildContext context,
     final signedIn = await signInGoogle(
       context: context,
       waitForCompletion: false,
+      backupAccess: getPlatform() == PlatformOS.isIOS,
       next: next,
     );
-    if (!signedIn) {
-      loadingIndeterminateKey.currentState?.setVisibility(false);
-      return false;
-    }
+    if (!signedIn) return false;
     if (appStateSettings["username"] == "" && googleUser != null) {
       await updateSettings("username", googleUser?.displayName ?? "",
           pagesNeedingRefresh: [0], updateGlobalState: false);
     }
-    if (googleUser != null) {
+    final account = googleUser;
+    if (account != null) {
+      final backupAuthorization = await account.authorizationClient
+          .authorizationForScopes(googleBackupScopes);
+      if (backupAuthorization == null) return true;
       loadingIndeterminateKey.currentState?.setVisibility(true);
       await syncData(context);
       if (enableCashewCloudServices) {
@@ -280,13 +286,13 @@ Future<bool> signInAndSync(BuildContext context,
     } else {
       throw ("cannot sync data - user not logged in");
     }
-    loadingIndeterminateKey.currentState?.setVisibility(false);
     return true;
   } catch (e) {
     print("Error syncing data after login!");
     print(e.toString());
-    loadingIndeterminateKey.currentState?.setVisibility(false);
     return false;
+  } finally {
+    loadingIndeterminateKey.currentState?.setVisibility(false);
   }
 }
 

@@ -4,9 +4,9 @@ This branch uses a Google Cloud OAuth project owned by the app publisher. Basic 
 
 ## Current project setup
 
-The [Cashew Free Edition project](https://console.cloud.google.com/auth/overview?project=cashew-free-edition) has the Drive API enabled. The OAuth consent screen uses External / Testing, the project owner's account is on the test-user list, and Data Access declares `drive.appdata`. The Web OAuth client is registered and its client ID is configured in the GitHub Actions repository variable `CASHEW_GOOGLE_WEB_CLIENT_ID`.
+The [Cashew Free Edition project](https://console.cloud.google.com/auth/overview?project=cashew-free-edition) has the Drive API enabled. The OAuth consent screen uses External / Testing, the project owner's account is on the test-user list, and Data Access declares `drive.appdata`. The app includes the project's public Web OAuth client ID. A publisher building against a different project can override it with `CASHEW_GOOGLE_WEB_CLIENT_ID`.
 
-Register a new Android OAuth client for the CashU package. The previous Android package registration does not cover this build. For the supplied ARM64 CashU test build, use package `com.cashu.mickey` and SHA-1 `09:B9:9A:4C:9E:4E:3A:95:3F:D8:8C:51:FE:FF:6D:EB:FC:DF:84:20`. Complete registration before verifying sign-in, backup and restore on a device.
+The **CashU Android Preview** client is registered with package `com.cashu.mickey.preview` and certificate SHA-1 `79:1E:3A:C5:68:49:EA:AB:27:6B:B7:67:EC:35:35:89:F3:A7:B3:68`. The preview can install alongside `com.cashu.mickey` and has its own local database. An APK with a different signing key or Android package needs its own matching OAuth registration. For an in-place update of the earlier test app, use its original signing key and register `com.cashu.mickey` with that certificate (`09:B9:9A:4C:9E:4E:3A:95:3F:D8:8C:51:FE:FF:6D:EB:FC:DF:84:20` for the former ARM64 test build).
 
 ## Configure Google Cloud
 
@@ -32,15 +32,15 @@ apksigner verify --print-certs path/to/cashew.apk
 
 ## Give the ID to the build
 
-Set the GitHub Actions repository **variable** `CASHEW_GOOGLE_WEB_CLIENT_ID` to the Web client ID. The configured workflow forwards it to Dart for Android builds. A local build can pass the same setting as:
+To use another project's public Web client ID, set the GitHub Actions repository **variable** `CASHEW_GOOGLE_WEB_CLIENT_ID`. The workflow forwards it to Dart. A local build can pass the same override as:
 
 ```text
 --dart-define=CASHEW_GOOGLE_WEB_CLIENT_ID=YOUR_WEB_CLIENT_ID.apps.googleusercontent.com
 ```
 
-Run this only as part of an Android build you intend to create. GitHub-hosted debug keys can differ from a local debug key. OAuth will work only for the SHA‑1 of the APK actually installed. For repeatable testing, consistently use a registered signer. Keep signing keys, passwords, OAuth client secrets, service account keys, and access tokens out of repository variables, commits and chat.
+GitHub-hosted debug keys can differ from a local debug key. OAuth will work only for the SHA‑1 of the APK actually installed. For repeatable testing, consistently use a registered signer. Keep signing keys, passwords, OAuth client secrets, service account keys, and access tokens out of repository variables, commits and chat.
 
-GitHub Actions variables are available to the workflow. For a local build with Drive enabled, explicitly pass the public Web client ID with the flag above and register the APK's actual package and certificate in Google Cloud. The Android app reads the public Web client ID from the APK's compiled build configuration. Use the repository variable for GitHub Actions or pass the Dart define for local builds. Manual workflow runs validate this variable before building. APKs installed on the test devices must use the registered signing certificate.
+The Android app reads the public Web client ID from its compiled configuration. APKs installed on test devices must use the registered signing certificate. Manual workflow runs validate an override when one is supplied.
 
 ## Build an Android test APK
 
@@ -68,7 +68,7 @@ From **Settings → Backup and data → Google Drive**, sign in with Google's bu
 
 ## Verify a configured build
 
-- Sign in from **Settings → Backup and data → Google Drive** with an authorized Google account and grant the Cashew Drive backup permission.
+- Sign in from **Settings → Backup and data → Google Drive** with an authorized Google account. On Android and the web, choose **Allow Google Drive backups** to grant Drive app-data permission separately. New installations start with automatic backups and sync off. Existing settings retain their saved choices.
 - Create a backup, confirm it appears in **Manage backups**, then verify that it restores into a test installation on restart.
 - Try a canceled sign-in and a denied Drive grant. Local finance features should remain usable.
 - For device sync, confirm both installations use the same OAuth project and Google account. Drive's app data is app-scoped. The new Android package starts with independent app data. Use **Export Cashew Data File** in the old app, then **Import Cashew Data File** in CashU and reopen it to restore on the new package if the existing Drive files are unavailable.

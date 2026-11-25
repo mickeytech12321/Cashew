@@ -4,6 +4,11 @@
 > Rule: no APK build and no merge to `main` until explicitly requested.
 > DONE records a completed milestone. TESTED records an implemented path with automated verification. CODED indicates implementation with additional verification pending. PARTIAL and TODO indicate incomplete work.
 
+## CashU Android Google Drive preview
+
+- **Phase 07 / 09 · CODED.** The CashU Web OAuth client ID is compiled into Android by default. The Android Preview application ID and signing certificate are registered in the existing Google Cloud project, and the consent screen declares only `drive.appdata` for backups. Google sign-in and the Drive grant are separate actions on Android. New installations start with automatic backup and device sync off. Existing settings are retained.
+- **Phase 00 / 09 · TESTED.** Flutter 3.50.1 passed 135 tests, including the Google configuration and account-only scope checks. No database schema migration. Interactive account selection, Drive backup and restore on an Android device still need verification.
+
 ## CashU forms and settings
 
 - **Phase 02 / 08 · TESTED.** The account form shows account name and type, a currency picker, and the existing opening balance action. Institution selection has Egyptian bank and wallet suggestions, a searchable custom option, and fills a blank account name. Credit-card dates use a day picker and optional terms are grouped under repayment and fees. Existing account management, appearances, adjustments and transfers remain available.

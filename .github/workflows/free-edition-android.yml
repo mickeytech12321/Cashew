@@ -74,8 +74,8 @@ jobs:
         env:
           CASHEW_GOOGLE_WEB_CLIENT_ID: ${{ vars.CASHEW_GOOGLE_WEB_CLIENT_ID }}
         run: |
-          if [[ ! "$CASHEW_GOOGLE_WEB_CLIENT_ID" =~ ^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$ ]]; then
-            echo "::error::Set the CASHEW_GOOGLE_WEB_CLIENT_ID repository variable to the public Web OAuth ID."
+          if [[ -n "$CASHEW_GOOGLE_WEB_CLIENT_ID" && ! "$CASHEW_GOOGLE_WEB_CLIENT_ID" =~ ^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$ ]]; then
+            echo "::error::Set CASHEW_GOOGLE_WEB_CLIENT_ID to a valid public Web OAuth ID or leave it unset to use CashU's client."
             exit 1
           fi
       - name: Build Android debug APK

@@ -8,6 +8,12 @@ void main() {
     ]);
   });
 
+  test('account-only sign-in does not request any Drive permission', () {
+    expect(requestedGoogleScopes(backup: false), isEmpty);
+    expect(requestedGoogleScopes(backup: false, attachments: true),
+        ['https://www.googleapis.com/auth/drive.file']);
+  });
+
   test('adding attachments does not grant Gmail or full Drive access', () {
     expect(requestedGoogleScopes(attachments: true), [
       'https://www.googleapis.com/auth/drive.appdata',
@@ -23,7 +29,8 @@ void main() {
   });
 
   test('Android OAuth configuration requires a Google client ID format', () {
-    expect(isGoogleOAuthClientId('1234-demo.apps.googleusercontent.com'), isTrue);
+    expect(
+        isGoogleOAuthClientId('1234-demo.apps.googleusercontent.com'), isTrue);
     for (final invalid in [
       '',
       'AIzaExample',
@@ -40,5 +47,7 @@ void main() {
     expect(resolveGoogleAndroidClientId(' $id '), id);
     expect(resolveGoogleAndroidClientId(''), isNull);
     expect(resolveGoogleAndroidClientId('GOCSPX-example'), isNull);
+    expect(resolveGoogleAndroidClientId(googleAndroidServerClientId),
+        googleBrowserClientId);
   });
 }

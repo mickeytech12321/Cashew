@@ -38,11 +38,10 @@ class AccountsPageState extends State<AccountsPage> {
   bool requestingDriveAccess = false;
   String? driveAccessFeedback;
 
-  String _browserLabel(String en, String ar) =>
+  String _driveLabel(String en, String ar) =>
       Localizations.localeOf(context).languageCode == 'ar' ? ar : en;
 
-  Future<bool> _grantBrowserDriveAccess() async {
-    if (!kIsWeb) return true;
+  Future<bool> _grantDriveAccess() async {
     final account = googleUser;
     if (account == null || requestingDriveAccess) return false;
     setState(() {
@@ -52,13 +51,15 @@ class AccountsPageState extends State<AccountsPage> {
     try {
       await account.authorizationClient.authorizeScopes(googleBackupScopes);
       if (mounted) {
-        setState(() => driveAccessFeedback =
-            _browserLabel('Drive access granted.', 'تم السماح بالوصول إلى Google Drive.'));
+        setState(() => driveAccessFeedback = _driveLabel(
+              'Drive access granted.',
+              'تم السماح بالوصول إلى Google Drive.',
+            ));
       }
       return googleUser == account;
     } catch (_) {
       if (mounted) {
-        setState(() => driveAccessFeedback = _browserLabel(
+        setState(() => driveAccessFeedback = _driveLabel(
           'Drive access was not granted. You can try again.',
           'لم يُمنح الوصول إلى Google Drive. تقدر تحاول تاني.',
         ));
@@ -246,7 +247,7 @@ class AccountsPageState extends State<AccountsPage> {
                           fontSize: 15,
                         ),
                       ),
-                      if (kIsWeb)
+                      if (kIsWeb || getPlatform() == PlatformOS.isAndroid)
                         Padding(
                           padding: const EdgeInsetsDirectional.fromSTEB(18, 14, 18, 0),
                           child: Column(
@@ -255,8 +256,8 @@ class AccountsPageState extends State<AccountsPage> {
                                 icon: const Icon(Icons.add_to_drive),
                                 onPressed: requestingDriveAccess
                                     ? null
-                                    : _grantBrowserDriveAccess,
-                                label: Text(_browserLabel(
+                                    : _grantDriveAccess,
+                                label: Text(_driveLabel(
                                   'Allow Google Drive backups',
                                   'السماح بالنسخ إلى Google Drive',
                                 )),

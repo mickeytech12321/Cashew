@@ -8,7 +8,6 @@ import 'package:budget/widgets/notificationsSettings.dart';
 import 'package:budget/widgets/periodCyclePicker.dart';
 import 'package:budget/widgets/selectAmount.dart';
 import 'package:drift/drift.dart' show Value;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -17,7 +16,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
   return {
     "databaseJustImported": false,
     "backupLimit": 20,
-    "backupSync": !kIsWeb,
+    "backupSync": false,
     "syncEveryChange": false,
     "devicesHaveBeenSynced": 1,
     "numBackups": 1,
@@ -130,7 +129,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "accountColorfulAmountsWithArrows": false,
     "netTotalsColorful": false,
     "EmailAutoTransactions-amountOfEmails": 10,
-    "autoBackups": !kIsWeb,
+    "autoBackups": false,
     "autoBackupsFrequency": 3, //in days
     "hasSignedIn": false,
     "lastBackup": DateTime.now().subtract(Duration(days: 1)).toString(),
