@@ -1,3 +1,5 @@
+import 'package:budget/pages/addTransactionPage.dart';
+import 'package:budget/widgets/openPopup.dart' show RoutesToPopAfterDelete;
 import 'package:budget/struct/bankNotificationInbox.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
@@ -253,15 +255,53 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
           ),
         );
         if (approved != true || !mounted) return;
-        final result = await database.approveImportedFinancialEvent(
-          eventPk: event['event_pk'] as String,
-          transactionPk: uuid.v4(),
-          categoryFk: categoryPk!,
-          walletPk: walletPk,
-          title: title.trim().isEmpty
-              ? label('Imported transaction', 'معاملة مستوردة')
-              : String.fromCharCodes(title.runes.take(NAME_LIMIT)),
-        );
+        final transactionPk = uuid.v4();
+        Future<String> save(ImportDuplicateAction action, {String? expectedExistingPk}) =>
+            database.approveImportedFinancialEvent(
+              eventPk: event['event_pk'] as String,
+              transactionPk: transactionPk,
+              categoryFk: categoryPk!,
+              walletPk: walletPk,
+              title: title.trim().isEmpty
+                  ? label('Imported transaction', 'معاملة مستوردة')
+                  : String.fromCharCodes(title.runes.take(NAME_LIMIT)),
+              duplicateAction: action,
+              expectedExistingPk: expectedExistingPk,
+            );
+        String result;
+        try {
+          result = await save(ImportDuplicateAction.ask);
+        } on ImportedTransactionMatch catch (match) {
+          if (!mounted) return;
+          final existing = match.transaction;
+          final choice = await showDialog<ImportDuplicateAction>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text(label('Possible duplicate', 'معاملة محتمل تكرارها')),
+              content: Text([
+                label('A paid transaction with this amount is already recorded around this time.',
+                    'توجد معاملة مدفوعة بنفس المبلغ في وقت قريب.'),
+                existing.name,
+                _formatTimestamp(existing.dateCreated),
+              ].join('\n')),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context),
+                    child: Text(label('Cancel', 'إلغاء'))),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, ImportDuplicateAction.linkExisting),
+                  child: Text(label('Use existing', 'استخدم المعاملة الموجودة')),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, ImportDuplicateAction.saveSeparate),
+                  child: Text(label('Save separately', 'احفظ كمعاملة منفصلة')),
+                ),
+              ],
+            ),
+          );
+          if (choice == null || !mounted) return;
+          result = await save(choice, expectedExistingPk:
+              choice == ImportDuplicateAction.linkExisting ? existing.transactionPk : null);
+        }
         if (mounted) {
           _notify(
             result == 'duplicate'
@@ -273,6 +313,26 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
           );
         }
       });
+
+  Future<void> _openLinkedTransaction(String id) async {
+    Transaction transaction;
+    try {
+      transaction = await database.getTransactionFromPk(id);
+    } catch (_) {
+      if (mounted) {
+        _notify(label('The linked transaction is unavailable.',
+            'المعاملة المرتبطة غير متاحة.'));
+      }
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => AddTransactionPage(
+        transaction: transaction,
+        routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+      ),
+    ));
+  }
 
   String _amountLabel(Map<String, dynamic> event) {
     final prefix = event['direction'] == 'debit' ? '−' : '+';
@@ -477,9 +537,11 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                           when text.isNotEmpty)
                         text,
                     ].join('\n')),
-                    onTap: _status == 'review' && !_busy
+                    onTap: _busy ? null : _status == 'review'
                         ? () => _review(event)
-                        : null,
+                        : event['transaction_fk'] is String
+                            ? () => _openLinkedTransaction(event['transaction_fk'] as String)
+                            : null,
                     trailing: switch (_status) {
                       'review' => IconButton(
                           tooltip: label('Ignore message', 'تجاهل الرسالة'),
@@ -504,7 +566,8 @@ class _FinancialImportPageState extends State<FinancialImportPage> {
                                         event['event_pk'] as String);
                                   }),
                         ),
-                      _ => null,
+                      _ => event['transaction_fk'] == null ? null
+                          : const Icon(Icons.chevron_right),
                     },
                   ),
                 if (_offset > 0 || events.length > _pageSize)

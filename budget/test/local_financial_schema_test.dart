@@ -29,6 +29,38 @@ class _Version46Database extends FinanceDatabase {
 }
 
 void main() {
+  test('bank import pauses before linking a duplicate and can save a separate payment',
+      () async {
+    final db = FinanceDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final time = DateTime(2026, 11, 25, 12);
+    await db.into(db.wallets).insert(WalletsCompanion.insert(
+        walletPk: const Value('wallet'), name: 'Wallet', order: 0,
+        currency: const Value('egp')));
+    await db.into(db.categories).insert(CategoriesCompanion.insert(
+        categoryPk: const Value('daily'), name: 'Daily', order: 0));
+    await db.into(db.transactions).insert(Transaction(
+      transactionPk: 'existing', name: 'First payment', amount: -50,
+      note: '', categoryFk: 'daily', walletFk: 'wallet', dateCreated: time,
+      income: false, paid: true, skipPaid: false,
+    ));
+    await db.stageImportedFinancialEvent(
+      eventPk: 'second', sourceType: 'manual', rawText: 'second payment',
+      occurredAt: time, amount: 50, currency: 'egp', direction: 'debit',
+    );
+    Future<String> approve(ImportDuplicateAction action) =>
+      db.approveImportedFinancialEvent(eventPk: 'second', transactionPk: 'new',
+          categoryFk: 'daily', walletPk: 'wallet', duplicateAction: action);
+    await expectLater(approve(ImportDuplicateAction.ask), throwsA(
+      isA<ImportedTransactionMatch>().having(
+        (match) => match.transaction.transactionPk, 'matching ID', 'existing'),
+    ));
+    expect(await db.getImportedFinancialEvents(), hasLength(1));
+    expect(await db.select(db.transactions).get(), hasLength(1));
+    expect(await approve(ImportDuplicateAction.saveSeparate), 'approved');
+    expect(await db.select(db.transactions).get(), hasLength(2));
+  });
+
   test('notification account links are app and currency scoped', () async {
     final db = FinanceDatabase(NativeDatabase.memory());
     addTearDown(db.close);

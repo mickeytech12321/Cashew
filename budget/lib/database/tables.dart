@@ -43,6 +43,13 @@ const int COLOUR_LIMIT = 50;
 const int DEFAULT_LIMIT = 100000;
 const int DEFAULT_OFFSET = 0;
 
+enum ImportDuplicateAction { linkExisting, ask, saveSeparate }
+
+class ImportedTransactionMatch implements Exception {
+  const ImportedTransactionMatch(this.transaction);
+  final Transaction transaction;
+}
+
 class PlanningRateUnavailable implements Exception {
   const PlanningRateUnavailable(this.source, this.target);
   final String? source;
@@ -4730,6 +4737,8 @@ class FinanceDatabase extends _$FinanceDatabase {
     required String categoryFk,
     String? walletPk,
     String? title,
+    String? expectedExistingPk,
+    ImportDuplicateAction duplicateAction = ImportDuplicateAction.linkExisting,
   }) async {
     if (transactionPk.trim().isEmpty || categoryFk.trim().isEmpty) {
       throw ArgumentError('Invalid approval target');
@@ -4758,8 +4767,10 @@ class FinanceDatabase extends _$FinanceDatabase {
           event['currency'] != wallet.currency?.toLowerCase()) {
         throw StateError('Import currency must match the wallet currency');
       }
-      if (categoryFk == '0') {
-        throw ArgumentError('Select a regular transaction category');
+      final category = await getCategoryInstanceOrNull(categoryFk);
+      if (categoryFk == '0' || category == null ||
+          category.income != (direction == 'credit')) {
+        throw ArgumentError('Select a matching transaction category');
       }
       if (await (select(transactions)
             ..where((row) => row.transactionPk.equals(transactionPk)))
@@ -4770,8 +4781,9 @@ class FinanceDatabase extends _$FinanceDatabase {
           DateTime.fromMillisecondsSinceEpoch(event['occurred_at'] as int);
       final signedAmount = direction == 'credit' ? amount : -amount;
       final duplicate = await customSelect(
-        'SELECT transaction_pk FROM transactions WHERE wallet_fk = ? '
-        'AND amount BETWEEN ? AND ? AND date_created BETWEEN ? AND ? LIMIT 1',
+        'SELECT * FROM transactions WHERE wallet_fk = ? AND paid = 1 AND skip_paid = 0 '
+        'AND amount BETWEEN ? AND ? AND date_created BETWEEN ? AND ? '
+        'ORDER BY date_created DESC, transaction_pk LIMIT 1',
         variables: [
           Variable<String>(resolvedWallet),
           Variable<double>(signedAmount - 0.00000001),
@@ -4780,7 +4792,15 @@ class FinanceDatabase extends _$FinanceDatabase {
           Variable<DateTime>(occurredAt.add(const Duration(minutes: 2))),
         ],
       ).getSingleOrNull();
-      if (duplicate != null) {
+      if (expectedExistingPk != null &&
+          (duplicateAction != ImportDuplicateAction.linkExisting ||
+              duplicate?.read<String>('transaction_pk') != expectedExistingPk)) {
+        throw StateError('The possible duplicate changed during review');
+      }
+      if (duplicate != null && duplicateAction != ImportDuplicateAction.saveSeparate) {
+        if (duplicateAction == ImportDuplicateAction.ask) {
+          throw ImportedTransactionMatch(transactions.map(duplicate.data));
+        }
         await setImportedFinancialEventStatus(eventPk, 'duplicate',
             transactionFk: duplicate.data['transaction_pk'] as String?);
         return 'duplicate';
