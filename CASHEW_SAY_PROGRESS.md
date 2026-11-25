@@ -128,6 +128,9 @@
 
 ## Latest verification
 
+- **Tested.** Full local or Drive restore accepts compatible Cashew v6.7.5 schema-48 exports in an isolated candidate. The importer validates the core table layout, retains every original row and maps wallet archives to Cashew account metadata before applying the snapshot. Backups with populated tags or other unsupported newer fields remain rejected. A private export was verified by comparing each original table in both directions and reopening the restored ledger. No user data or fixture from that export was committed. Live Drive sign-in and browser restore still need interactive verification.
+- **Verified on Android by the user.** Cashew Preview launched and reached Settings. The shipped preview used a local build without the Web OAuth client ID. Google Drive verification needs the public Web client ID and an Android OAuth client registered for the preview package and its signing certificate. The local database restore is independent of Google sign-in.
+
 - All **109 Flutter tests** passed together on Flutter **3.50.1** against the clean package resolution, including the generated v46 backup restore and the new checks for local recovery copy deletion. Verification used the repository compatibility script, native SQLite and loopback-only networking.
 - Dart analysis reported zero errors, 156 warnings and 710 informational diagnostics. Schema 47 remains unchanged and this batch needs no data rewrite.
 - Web JavaScript compilation succeeded after applying the version-specific Drift and sqlite3 compatibility adjustment through `scripts/prepare_flutter_compat.py web`. The same helper now owns the Flutter layout patch and the Android dependency adjustments used by CI. Browser backup and restore were not exercised interactively.

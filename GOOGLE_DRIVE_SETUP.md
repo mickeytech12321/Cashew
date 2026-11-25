@@ -40,6 +40,8 @@ Set the GitHub Actions repository **variable** `CASHEW_GOOGLE_WEB_CLIENT_ID` to 
 
 Run this only as part of an Android build you intend to create. GitHub-hosted debug keys can differ from a local debug key. OAuth will work only for the SHA‑1 of the APK actually installed. For repeatable testing, consistently use a registered signer. Keep signing keys, passwords, OAuth client secrets, service account keys, and access tokens out of repository variables, commits and chat.
 
+GitHub Actions variables are available to the workflow. For a local build with Drive enabled, explicitly pass the public Web client ID with the flag above and register the APK's actual package and certificate in Google Cloud. A build without the Web client ID supports local file restore.
+
 ## Build an isolated Android preview
 
 Use Flutter 3.50.1 and Android SDK 36. This optimized test build uses the local Android test key and installs under `com.mickey.cashew.preview` with its own app data. It can be installed alongside the standard app.

@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:budget/database/backupValidation.dart';
-import 'package:budget/database/tables.dart';
 import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sqlite;
@@ -25,14 +24,14 @@ Future<Directory> _temporaryRestoreDirectory(File live) async {
 
 /// Validate and migrate an isolated candidate before publishing it for startup.
 Future<void> stageNativeRestore(File live, Uint8List bytes) async {
-  validateCashewBackupHeader(bytes);
+  validateCashewBackupHeader(bytes, allowCompatibleRestore: true);
   final temporary = await _temporaryRestoreDirectory(live);
   try {
     final candidate = await File(p.join(temporary.path, 'candidate.sqlite'))
         .writeAsBytes(bytes, flush: true);
-    final db = FinanceDatabase(NativeDatabase.createInBackground(candidate));
+    final db = CashewRestoreCandidate(NativeDatabase.createInBackground(candidate));
     try {
-      await validateCashewBackupDatabase(db);
+      await db.validate();
     } finally {
       await db.close();
     }

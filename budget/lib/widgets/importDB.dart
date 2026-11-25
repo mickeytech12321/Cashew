@@ -1,3 +1,4 @@
+import 'package:budget/database/backupValidation.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/struct/settings.dart';
@@ -92,6 +93,9 @@ Future importDB(BuildContext context, {ignoreOverwriteWarning = false}) async {
       () async {
         return await importDBFileFromDevice(context);
       },
+      onError: (error) {
+        if (context.mounted) showCashewBackupImportError(context, error);
+      },
       onSuccess: (result) {
         if (result != null)
           restartAppPopup(
@@ -104,6 +108,29 @@ Future importDB(BuildContext context, {ignoreOverwriteWarning = false}) async {
       },
     );
   }
+}
+
+void showCashewBackupImportError(BuildContext context, Object error) {
+  final ar = Localizations.localeOf(context).languageCode == 'ar';
+  final description = switch (error) {
+    CashewBackupVersionException(:final foundVersion, :final supportedVersion)
+        when foundVersion > 0 =>
+      ar
+          ? 'الملف يستخدم db-v$foundVersion. هذه النسخة تدعم لحد db-v$supportedVersion والنسخ المتوافقة فقط.'
+          : 'The file uses db-v$foundVersion. This build supports up to db-v$supportedVersion and compatible backups.',
+    CashewBackupVersionException() => ar
+        ? 'تعذّر تحديد إصدار النسخة الاحتياطية. جرّب تصديرها مرة أخرى من Cashew.'
+        : 'The backup has no schema version. Try exporting it again from Cashew.',
+    CashewBackupUnsupportedData() => ar
+        ? 'النسخة فيها وسوم أو بيانات أحدث محتاجة دعم إضافي قبل الاستعادة.'
+        : 'The backup contains tags or newer fields that require additional restore support.',
+    _ => error.toString(),
+  };
+  openSnackbar(SnackbarMessage(
+    title: 'error-importing'.tr(),
+    description: description,
+    icon: Icons.warning_amber,
+  ));
 }
 
 class ImportDB extends StatefulWidget {

@@ -72,11 +72,11 @@ Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) 
 }
 
 Future<void> overwriteDefaultDB(Uint8List dataStore) async {
-  validateCashewBackupHeader(dataStore);
+  validateCashewBackupHeader(dataStore, allowCompatibleRestore: true);
   final memory = InMemoryWebStorage(Uint8List.fromList(dataStore));
-  final candidate = FinanceDatabase(WebDatabase.withStorage(memory));
+  final candidate = CashewRestoreCandidate(WebDatabase.withStorage(memory));
   try {
-    await validateCashewBackupDatabase(candidate);
+    await candidate.validate();
   } finally {
     await candidate.close();
   }

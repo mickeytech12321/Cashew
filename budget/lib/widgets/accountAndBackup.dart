@@ -121,8 +121,8 @@ Future<bool> signInGoogle(
       openSnackbar(SnackbarMessage(
         title: "sign-in-error".tr(),
         description: arabic
-            ? 'نسخة أندرويد دي محتاجة إعداد CASHEW_GOOGLE_WEB_CLIENT_ID.'
-            : 'This Android build needs CASHEW_GOOGLE_WEB_CLIENT_ID.',
+            ? 'تسجيل Google يحتاج نسخة أندرويد مهيّأة لـGoogle Drive. يمكنك استعادة بياناتك من ملف محلي في الإعدادات.'
+            : 'Google sign-in requires an Android build configured for Drive. You can restore a local backup from Settings.',
       ));
     }
     return false;
@@ -570,14 +570,9 @@ Future<void> loadBackup(
           : "restart-required-to-load-backup".tr(),
     );
   } catch (e) {
+    if (!context.mounted) return;
     popRoute(context);
-    openSnackbar(
-      SnackbarMessage(
-          title: e.toString(),
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.error_outlined
-              : Icons.error_rounded),
-    );
+    showCashewBackupImportError(context, e);
   }
 }
 
