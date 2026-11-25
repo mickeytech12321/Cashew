@@ -1,3 +1,6 @@
+import 'package:budget/widgets/cashuSurfaces.dart';
+import 'package:budget/struct/instaPayTransfer.dart';
+import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'package:budget/database/generatePreviewData.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -105,6 +108,7 @@ class AddTransactionPage extends StatefulWidget {
     this.selectedNotes,
     this.startInitialAddTransactionSequence = true,
     this.transferBalancePopup = false,
+    this.initialInstaPay = false,
     required this.routesToPopAfterDelete,
   }) : super(key: key);
 
@@ -125,6 +129,7 @@ class AddTransactionPage extends StatefulWidget {
   final String? selectedNotes;
   final bool startInitialAddTransactionSequence;
   final bool transferBalancePopup;
+  final bool initialInstaPay;
 
   @override
   _AddTransactionPageState createState() => _AddTransactionPageState();
@@ -388,6 +393,80 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     );
   }
 
+  late bool _instaPaySelected = widget.initialInstaPay;
+  bool _hadInstaPay = false;
+  late bool _paymentLoaded = widget.transaction == null;
+  bool _paymentLoadFailed = false;
+  late final _paymentDraftPk = uuid.v4();
+
+  bool _canPayWithInstaPay(TransactionWallet? wallet) =>
+      isInstaPayCurrency(wallet?.currency) &&
+      !selectedIncome &&
+      selectedPaid &&
+      selectedType == null &&
+      !selectedBudgetIsShared &&
+      selectedObjectiveLoanPk == null &&
+      selectedCategory?.categoryPk != '0' &&
+      widget.transaction?.pairedTransactionFk == null &&
+      widget.transaction?.sharedKey == null;
+
+  String _paymentLabel(String english, String arabic) =>
+      Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
+
+  Future<void> _loadPaymentMethod() async {
+    try {
+      final payment = await database.getInstaPayExpense(widget.transaction!.transactionPk);
+      if (!mounted) return;
+      setState(() {
+        _paymentLoaded = true;
+        _paymentLoadFailed = false;
+        if (payment != null) {
+          _hadInstaPay = true;
+          _instaPaySelected = true;
+          selectedAmount = payment.principal;
+          selectedAmountCalculation = null;
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() => _paymentLoadFailed = true);
+    }
+  }
+
+  Widget _paymentMethodTile() {
+    if (!_paymentLoaded) {
+      if (_paymentLoadFailed) {
+        return TextButton(
+          onPressed: _loadPaymentMethod,
+          child: Text(_paymentLabel('Retry loading payment method', 'أعد تحميل طريقة الدفع')),
+        );
+      }
+      return const LinearProgressIndicator();
+    }
+    final accounts = context.watch<AllWallets>();
+    final available = _canPayWithInstaPay(accounts.indexedByPk[selectedWalletPk]);
+    if (!available && !_instaPaySelected) return const SizedBox.shrink();
+    final amount = (selectedAmount ?? 0).abs();
+    final fee = _instaPaySelected && available ? instaPayTransferFee(amount) : null;
+    String format(double value) => convertToMoney(
+      accounts, value, currencyKey: 'egp', addCurrencyName: true,
+    );
+    final details = fee != null
+        ? _paymentLabel('Fee ${format(fee)} · Total debit ${format(amount + fee)}',
+            'الرسوم ${format(fee)} · إجمالي الخصم ${format(amount + fee)}')
+        : available
+            ? _paymentLabel('Adds a fee to this expense', 'بيضيف الرسوم للمصروف')
+            : _paymentLabel('Choose a paid expense in EGP', 'اختار مصروفًا مدفوعًا بالجنيه المصري');
+    return SwitchListTile(
+      secondary: const Icon(Icons.send_to_mobile_outlined),
+      title: Text(_paymentLabel('InstaPay payment', 'دفع بإنستاباي')),
+      subtitle: Text(details),
+      value: _instaPaySelected,
+      onChanged: available || _instaPaySelected
+          ? (value) => setState(() => _instaPaySelected = value)
+          : null,
+    );
+  }
+
   bool lockAddTransaction = false;
   Future<bool> addTransaction() async {
     if (lockAddTransaction) return false;
@@ -400,6 +479,34 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     lockAddTransaction = false;
     savingHapticFeedback();
     return result;
+  }
+
+  Future<bool> _confirmPossibleDuplicate(Transaction draft) async {
+    final duplicate = await database.findLikelyDuplicateTransaction(draft);
+    if (!mounted) return false;
+    if (duplicate == null) return true;
+    final arabic = Localizations.localeOf(context).languageCode == 'ar';
+    final date = MaterialLocalizations.of(context).formatMediumDate(duplicate.dateCreated);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(arabic ? 'معاملة مشابهة موجودة' : 'Possible duplicate transaction'),
+        content: Text([
+          if (duplicate.name.isNotEmpty) duplicate.name,
+          date,
+          duplicate.amount.toString(),
+          arabic ? 'هل تريد حفظ معاملة أخرى بهذا المبلغ؟'
+              : 'Save another transaction for this amount?',
+        ].join('\n')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false),
+              child: Text(arabic ? 'الرجوع' : 'Go back')),
+          FilledButton(onPressed: () => Navigator.pop(context, true),
+              child: Text(arabic ? 'الحفظ على أي حال' : 'Save anyway')),
+        ],
+      ),
+    );
+    return confirmed == true && mounted;
   }
 
   Future<bool> addTransactionLocked() async {
@@ -455,7 +562,23 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       );
     }
     try {
-      print("Added transaction");
+      if (!_paymentLoaded) return false;
+      final createdTransaction = createTransaction();
+      final fee = _instaPaySelected ? instaPayTransferFee(-createdTransaction.amount) : null;
+      if (_instaPaySelected &&
+          (!_canPayWithInstaPay(context.read<AllWallets>().indexedByPk[selectedWalletPk]) ||
+              fee == null)) {
+        openSnackbar(SnackbarMessage(
+          title: _paymentLabel('Choose a paid EGP expense with up to two decimal places',
+              'اختار مصروفًا مدفوعًا بالجنيه وبحد أقصى منزلتين عشريتين'),
+          icon: Icons.warning_amber,
+        ));
+        return false;
+      }
+      if (widget.transaction == null && !await _confirmPossibleDuplicate(
+          fee == null ? createdTransaction : createdTransaction.copyWith(
+            amount: createdTransaction.amount - fee,
+          ))) return false;
       if (selectedTitle != null &&
           selectedCategory != null &&
           selectedTitle != "") {
@@ -466,8 +589,6 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         // }
         await addAssociatedTitles(selectedTitle!, selectedCategory!);
       }
-
-      Transaction createdTransaction = await createTransaction();
 
       if (widget.transaction != null) {
         // Only ask if changes were made that will affect other balance correction
@@ -550,18 +671,29 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         }
       }
 
-      final int? rowId = await database.createOrUpdateTransaction(
-        insert: widget.transaction == null,
-        createdTransaction,
-        originalTransaction: widget.transaction,
-      );
+      final Transaction? transactionJustAdded;
+      if (_instaPaySelected || _hadInstaPay) {
+        transactionJustAdded = await database.saveInstaPayExpense(
+          createdTransaction.copyWith(
+            transactionPk: widget.transaction?.transactionPk ?? _paymentDraftPk,
+          ),
+          enabled: _instaPaySelected,
+          original: widget.transaction,
+        );
+      } else {
+        final rowId = await database.createOrUpdateTransaction(
+          insert: widget.transaction == null,
+          createdTransaction,
+          originalTransaction: widget.transaction,
+        );
+        transactionJustAdded = rowId == null
+            ? null
+            : widget.transaction != null
+                ? await database.getTransactionFromPk(widget.transaction!.transactionPk)
+                : await database.getTransactionFromRowId(rowId);
+      }
 
-      if (rowId != null) {
-        final Transaction transactionJustAdded =
-            await database.getTransactionFromRowId(rowId);
-        print("Transaction just added:");
-        print(transactionJustAdded);
-
+      if (transactionJustAdded != null) {
         // Do the flash animation only if the date was changed
         if (transactionJustAdded.dateCreated !=
             widget.transaction?.dateCreated) {
@@ -612,7 +744,12 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       } else {
         openSnackbar(SnackbarMessage(
           title: "cannot-create-transaction".tr(),
-          description: e.toString(),
+          description: (_instaPaySelected || _hadInstaPay)
+              ? _paymentLabel(
+                  'Check the account and amount. If the entry changed, reopen it.',
+                  'راجع الحساب والمبلغ. لو المعاملة اتغيّرت، افتحها من جديد.',
+                )
+              : e.toString(),
           icon: appStateSettings["outlinedIcons"]
               ? Icons.warning_amber_outlined
               : Icons.warning_amber_rounded,
@@ -712,7 +849,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
   // When creating a new entry only
   void showDiscardChangesPopupIfNotEditing() {
     Transaction transactionCreated = createTransaction();
-    if (transactionCreated != transactionInitial &&
+    if ((transactionCreated != transactionInitial || _instaPaySelected != widget.initialInstaPay) &&
         widget.transaction == null) {
       discardChangesPopup(context, forceShow: true);
     } else {
@@ -721,6 +858,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
   }
 
   late TextEditingController _titleInputController;
+  bool _showNotes = false;
   late TextEditingController _noteInputController;
 
   @override
@@ -763,6 +901,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       //   selectedAmountCalculation = amountString;
       // }
       textAddTransaction = "save-changes".tr();
+      _loadPaymentMethod();
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         updateInitial();
@@ -1004,13 +1143,12 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     if (selectedObjectiveLoanPk != null) {
       initialIsNegative = selectedIncome;
     }
-    dynamic result = await openBottomSheet(
+    final saved = await openBalanceTransfer(
       context,
-      fullSnap: true,
-      TransferBalancePopup(
+      TransferBalancePage(
         allowEditWallet: true,
         wallet: Provider.of<AllWallets>(context, listen: false)
-            .indexedByPk[appStateSettings["selectedWalletPk"]]!,
+            .indexedByPk[appStateSettings["selectedWalletPk"]],
         showAllEditDetails: true,
         initialAmount: selectedAmount,
         initialDate: selectedDate,
@@ -1019,7 +1157,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         initialIsNegative: initialIsNegative,
       ),
     );
-    if (result == true) {
+    if (saved && mounted) {
       popRoute(context);
     }
   }
@@ -1079,18 +1217,25 @@ class _AddTransactionPageState extends State<AddTransactionPage>
           setSelectedCategory: setSelectedCategory,
           setSelectedSubCategory: setSelectedSubCategory,
         ),
-        Container(height: 14),
+        const SizedBox(height: 10),
         Padding(
           padding: const EdgeInsetsDirectional.symmetric(horizontal: 22),
-          child: TransactionNotesTextInput(
-            noteInputController: _noteInputController,
-            setNotesInputFocused: (isFocused) {
-              setState(() {
-                notesInputFocused = isFocused;
-              });
-            },
-            setSelectedNoteController: setSelectedNoteController,
-          ),
+          child: _showNotes || _noteInputController.text.isNotEmpty
+              ? TransactionNotesTextInput(
+                  noteInputController: _noteInputController,
+                  setNotesInputFocused: (isFocused) {
+                    setState(() => notesInputFocused = isFocused);
+                  },
+                  setSelectedNoteController: setSelectedNoteController,
+                )
+              : CashuPanel(
+                  padding: EdgeInsets.zero,
+                  child: CashuActionRow(
+                    icon: Icons.notes_outlined,
+                    title: cashuLabel(context, 'Add a note or attachment', 'إضافة ملاحظة أو مرفق'),
+                    onTap: () => setState(() => _showNotes = true),
+                  ),
+                ),
         ),
       ],
     );
@@ -1103,6 +1248,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
           child: Column(
             children: [
               Container(height: 10),
+              _paymentMethodTile(),
               Padding(
                 padding: const EdgeInsetsDirectional.symmetric(horizontal: 10),
                 child: AnimatedSwitcher(
@@ -2034,6 +2180,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         return false;
       },
       child: PageFramework(
+        backgroundColor: CashuColors(context).canvas,
         belowAppBarPaddingWhenCenteredTitleSmall: 0,
         resizeToAvoidBottomInset: true,
         title: widget.transaction == null
@@ -4138,12 +4285,9 @@ Future<List<int>?> getGoogleDriveFileImageData(String url) async {
       String? fileId = getFileIdFromUrl(url);
       if (fileId == null) throw ("No file id found!");
 
-      if (googleUser == null) {
-        await signInGoogle(drivePermissionsAttachments: true);
-      }
+      if (!await signInGoogle(drivePermissionsAttachments: true)) return null;
 
-      final authHeaders = await googleUser!.authHeaders;
-      final authenticateClient = GoogleAuthClient(authHeaders);
+      final authenticateClient = await getGoogleAuthorizedClient(googleAttachmentScopes);
       drive.DriveApi driveApi = drive.DriveApi(authenticateClient);
 
       List<int> dataStore = [];

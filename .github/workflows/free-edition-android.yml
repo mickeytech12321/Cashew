@@ -1,0 +1,117 @@
+name: Android free-edition build check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CASHEW_HOUSEHOLD_PROJECT_ID: ${{ vars.CASHEW_HOUSEHOLD_PROJECT_ID }}
+      CASHEW_HOUSEHOLD_APP_ID: ${{ vars.CASHEW_HOUSEHOLD_APP_ID }}
+      CASHEW_HOUSEHOLD_API_KEY: ${{ vars.CASHEW_HOUSEHOLD_API_KEY }}
+      CASHEW_HOUSEHOLD_SENDER_ID: ${{ vars.CASHEW_HOUSEHOLD_SENDER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Java 17 for Android build
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.50.1'
+          cache: false
+      - name: Toolchain versions
+        run: |
+          java -version
+          flutter --version
+      - name: Resolve dependencies
+        working-directory: budget
+        run: flutter pub get
+      - name: Audit resolved Android plugin compatibility
+        working-directory: budget
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+          root = Path.cwd()
+          deps = json.loads((root / '.dart_tool' / 'package_config.json').read_text())['packages']
+          plugins = []
+          legacy = []
+          for dep in deps:
+              uri = dep['rootUri']
+              if not uri.startswith('file:'):
+                  continue
+              from urllib.parse import urlparse, unquote
+              folder = Path(unquote(urlparse(uri).path))
+              if not (folder / 'android').is_dir():
+                  continue
+              plugins.append(dep['name'])
+              for source in (folder / 'android' / 'src').rglob('*') if (folder / 'android' / 'src').exists() else []:
+                  if source.suffix not in ('.java', '.kt'):
+                      continue
+                  content = source.read_text(errors='replace')
+                  if 'PluginRegistry.Registrar' in content or re.search(r'\\bRegistrar\\b', content):
+                      legacy.append(f'{dep["name"]}: {source.relative_to(folder)}')
+          print('Resolved Android plugins:', len(plugins))
+          print('\\n'.join(sorted(plugins)))
+          print('Legacy Registrar references:', len(legacy))
+          print('\\n'.join(sorted(legacy)))
+          if any(name.startswith('in_app_purchase') for name in plugins):
+              raise SystemExit('Free edition must not include billing plugins')
+          PY
+      - name: Apply Flutter dependency compatibility fixes
+        run: python3 scripts/prepare_flutter_compat.py android
+      - name: Verify Google configuration for manual Android builds
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CASHEW_GOOGLE_WEB_CLIENT_ID: ${{ vars.CASHEW_GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          if [[ -n "$CASHEW_GOOGLE_WEB_CLIENT_ID" && ! "$CASHEW_GOOGLE_WEB_CLIENT_ID" =~ ^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$ ]]; then
+            echo "::error::Set CASHEW_GOOGLE_WEB_CLIENT_ID to a valid public Web OAuth ID or leave it unset to use CashU's client."
+            exit 1
+          fi
+      - name: Build Android debug APK
+        working-directory: budget
+        env:
+          CASHEW_GOOGLE_WEB_CLIENT_ID: ${{ vars.CASHEW_GOOGLE_WEB_CLIENT_ID }}
+        run: >-
+          flutter build apk --debug
+          --dart-define="CASHEW_GOOGLE_WEB_CLIENT_ID=$CASHEW_GOOGLE_WEB_CLIENT_ID"
+          --dart-define="CASHEW_HOUSEHOLD_PROJECT_ID=$CASHEW_HOUSEHOLD_PROJECT_ID"
+          --dart-define="CASHEW_HOUSEHOLD_APP_ID=$CASHEW_HOUSEHOLD_APP_ID"
+          --dart-define="CASHEW_HOUSEHOLD_API_KEY=$CASHEW_HOUSEHOLD_API_KEY"
+          --dart-define="CASHEW_HOUSEHOLD_SENDER_ID=$CASHEW_HOUSEHOLD_SENDER_ID"
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cashew-free-edition-debug
+          path: budget/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+
+      - name: Build optimized Android release test APK
+        working-directory: budget
+        env:
+          CASHEW_TEST_RELEASE: 'true'
+          CASHEW_GOOGLE_WEB_CLIENT_ID: ${{ vars.CASHEW_GOOGLE_WEB_CLIENT_ID }}
+        run: >-
+          flutter build apk --release --no-tree-shake-icons
+          --dart-define="CASHEW_GOOGLE_WEB_CLIENT_ID=$CASHEW_GOOGLE_WEB_CLIENT_ID"
+          --dart-define="CASHEW_HOUSEHOLD_PROJECT_ID=$CASHEW_HOUSEHOLD_PROJECT_ID"
+          --dart-define="CASHEW_HOUSEHOLD_APP_ID=$CASHEW_HOUSEHOLD_APP_ID"
+          --dart-define="CASHEW_HOUSEHOLD_API_KEY=$CASHEW_HOUSEHOLD_API_KEY"
+          --dart-define="CASHEW_HOUSEHOLD_SENDER_ID=$CASHEW_HOUSEHOLD_SENDER_ID"
+      - name: Upload release test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: cashew-free-edition-release-test
+          path: budget/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error

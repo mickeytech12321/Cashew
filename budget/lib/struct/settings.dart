@@ -33,13 +33,16 @@ Future<bool> initializeSettings() async {
   packageInfoGlobal = await PackageInfo.fromPlatform();
 
   Map<String, dynamic> userSettings = await getUserSettings();
-  if (userSettings["databaseJustImported"] == true) {
+  final nativeRestore = sharedPreferences.getBool('nativeBackupRestoreApplied') == true;
+  if (nativeRestore || userSettings["databaseJustImported"] == true) {
+    if (nativeRestore) {
+      await sharedPreferences.remove('nativeBackupRestoreApplied');
+    }
     isDatabaseImportedOnThisSession = true;
     try {
       print("Settings were loaded from backup, trying to restore");
       String storedSettings = (await database.getSettings()).settingsJSON;
       await sharedPreferences.setString('userSettings', storedSettings);
-      print(storedSettings);
       userSettings = json.decode(storedSettings);
       //we need to load any defaults to migrate if on an older version backup restores
       //Set to defaults if a new setting is added, but no entry saved
@@ -53,7 +56,6 @@ Future<bool> initializeSettings() async {
       });
       // Always reset the language/locale when restoring a backup
       userSettings["locale"] = "System";
-      userSettings["databaseJustImported"] = false;
       print("Settings were restored");
     } catch (e) {
       print("Error restoring imported settings " + e.toString());
@@ -73,6 +75,7 @@ Future<bool> initializeSettings() async {
         databaseCorruptedError = e.toString();
       }
     }
+    userSettings["databaseJustImported"] = false;
   }
 
   appStateSettings = userSettings;

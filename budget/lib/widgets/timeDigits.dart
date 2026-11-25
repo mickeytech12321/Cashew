@@ -2,7 +2,7 @@ import 'package:budget/colors.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/textWidgets.dart';
-import 'package:easy_localization/easy_localization.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 
@@ -13,7 +13,7 @@ bool? isSetting24HourFormat() {
 }
 
 bool isSystem24HourFormat(BuildContext context) {
-  DateFormat format = DateFormat.jm(context.locale.toString());
+  DateFormat format = DateFormat.jm(Localizations.localeOf(context).toString());
   String formattedTime =
       format.format(DateTime.now()).toUpperCase().replaceAll(".", "");
   return MediaQuery.alwaysUse24HourFormatOf(context) ||

@@ -1,3 +1,5 @@
+import 'package:budget/pages/cashuAddAssetPage.dart';
+import 'package:budget/struct/accountTypes.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -81,9 +83,7 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
         floatingActionButton: AnimateFABDelayed(
           fab: AddFAB(
             tooltip: "add-account".tr(),
-            openPage: AddWalletPage(
-              routesToPopAfterDelete: RoutesToPopAfterDelete.None,
-            ),
+            openPage: const CashuAddAssetPage(),
           ),
         ),
         actions: [
@@ -100,9 +100,7 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
                 action: () {
                   pushRoute(
                     context,
-                    AddWalletPage(
-                      routesToPopAfterDelete: RoutesToPopAfterDelete.None,
-                    ),
+                    const CashuAddAssetPage(),
                   );
                 },
               ),
@@ -200,18 +198,23 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
           //     ),
           //   ),
           // ),
-          StreamBuilder<List<WalletWithDetails>>(
+          StreamBuilder<(
+            List<WalletWithDetails>, Map<String, Map<String, dynamic>>,
+          )>(
             stream: database.watchAllWalletsWithDetails(
-                searchFor: searchValue == "" ? null : searchValue),
+              searchFor: searchValue.isEmpty ? null : searchValue,
+            ).asyncMap((wallets) async => (wallets, await database.getAllAccountDetails())),
             builder: (context, snapshot) {
-              if (snapshot.hasData && (snapshot.data ?? []).length <= 0) {
+              final rows = snapshot.data?.$1 ?? [];
+              final details = snapshot.data?.$2 ?? {};
+              if (snapshot.hasData && rows.isEmpty) {
                 return SliverToBoxAdapter(
                   child: NoResults(
                     message: "no-accounts-found".tr(),
                   ),
                 );
               }
-              if (snapshot.hasData && (snapshot.data ?? []).length > 0) {
+              if (snapshot.hasData && rows.isNotEmpty) {
                 return SliverReorderableList(
                   onReorderStart: (index) {
                     HapticFeedback.heavyImpact();
@@ -227,8 +230,13 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
                     });
                   },
                   itemBuilder: (context, index) {
-                    WalletWithDetails walletWithDetails = snapshot.data![index];
+                    WalletWithDetails walletWithDetails = rows[index];
                     TransactionWallet wallet = walletWithDetails.wallet;
+                    final account = details[wallet.walletPk];
+                    final type = account?['account_type'] as String?;
+                    final archived = account?['archived'] == 1;
+                    final arabic = Localizations.localeOf(context).languageCode == 'ar';
+
                     Color accentColor = dynamicPastel(
                         context,
                         HexColor(wallet.colour,
@@ -258,7 +266,7 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
                                   .length >
                               1),
                       canReorder: searchValue == "" &&
-                          (snapshot.data ?? []).length != 1,
+                          rows.length != 1,
                       currentReorder:
                           currentReorder != -1 && currentReorder != index,
                       index: index,
@@ -272,6 +280,15 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
                             fontSize: 21,
                           ),
                           Container(height: 2),
+                          if (archived || (type != null && type != 'unspecified'))
+                            Text(
+                              [
+                                if (type != null && type != 'unspecified')
+                                  accountTypeLabel(type, arabic: arabic),
+                                if (archived) arabic ? 'مؤرشف' : 'Archived',
+                              ].join(' · '),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                           TextFont(
                             textAlign: TextAlign.start,
                             text: convertToMoney(
@@ -338,10 +355,10 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
                       key: ValueKey(wallet.walletPk),
                     );
                   },
-                  itemCount: snapshot.data!.length,
+                  itemCount: rows.length,
                   onReorder: (_intPrevious, _intNew) async {
                     WalletWithDetails oldWalletWithDetails =
-                        snapshot.data![_intPrevious];
+                        rows[_intPrevious];
                     TransactionWallet oldWallet = oldWalletWithDetails.wallet;
 
                     if (_intNew > _intPrevious) {

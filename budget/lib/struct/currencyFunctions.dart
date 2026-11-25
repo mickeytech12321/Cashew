@@ -20,10 +20,20 @@ Future<bool> getExchangeRates() async {
   try {
     Uri url = Uri.parse(
         "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.min.json");
-    dynamic response = await http.get(url);
-    if (response.statusCode == 200) {
-      cachedCurrencyExchange = json.decode(response.body)?["usd"];
+    final response = await http.get(url).timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) return false;
+    final decoded = json.decode(response.body);
+    if (decoded is! Map || decoded["usd"] is! Map) return false;
+    final rates = <String, double>{};
+    for (final entry in (decoded["usd"] as Map).entries) {
+      final value = entry.value;
+      if (entry.key is String && value is num && value.isFinite && value > 0) {
+        rates[entry.key as String] = value.toDouble();
+      }
     }
+    if (rates.isEmpty) return false;
+    rates["usd"] = 1;
+    cachedCurrencyExchange = rates;
   } catch (e) {
     print("Error getting currency rates: " + e.toString());
     return false;
@@ -107,26 +117,41 @@ String getCurrencyString(AllWallets allWallets, {String? currencyKey}) {
           : (currenciesJSON[selectedWalletCurrency]?["Symbol"] ?? "");
 }
 
+double? getKnownCurrencyExchangeRate(
+  String? currencyKey, {
+  Map<String, dynamic>? appStateSettingsPassed,
+}) {
+  if (currencyKey == null || currencyKey.trim().isEmpty) return null;
+  final settings = appStateSettingsPassed ?? appStateSettings;
+  final key = currencyKey.trim().toLowerCase();
+  if (key == "usd") return 1;
+  for (final source in [settings["customCurrencyAmounts"], settings["cachedCurrencyExchange"]]) {
+    if (source is! Map) continue;
+    final value = source[currencyKey] ?? source[key];
+    if (value is num && value.isFinite && value > 0) return value.toDouble();
+  }
+  return null;
+}
+
+double? strictCurrencyRatio(String? from, String? to, {
+  Map<String, dynamic>? appStateSettingsPassed,
+}) {
+  if (from == null || to == null || from.trim().isEmpty || to.trim().isEmpty) return null;
+  if (from.trim().toLowerCase() == to.trim().toLowerCase()) return 1;
+  final source = getKnownCurrencyExchangeRate(from, appStateSettingsPassed: appStateSettingsPassed);
+  final target = getKnownCurrencyExchangeRate(to, appStateSettingsPassed: appStateSettingsPassed);
+  if (source == null || target == null) return null;
+  final ratio = target / source;
+  return ratio.isFinite && ratio > 0 ? ratio : null;
+}
+
 double getCurrencyExchangeRate(
   String? currencyKey, {
   Map<String, dynamic>? appStateSettingsPassed,
 }) {
-  if (currencyKey == null || currencyKey == "") return 1;
-  if ((appStateSettingsPassed ?? appStateSettings)["customCurrencyAmounts"]
-          ?[currencyKey] !=
-      null) {
-    return (appStateSettingsPassed ?? appStateSettings)["customCurrencyAmounts"]
-            [currencyKey]
-        .toDouble();
-  } else if ((appStateSettingsPassed ??
-          appStateSettings)["cachedCurrencyExchange"]?[currencyKey] !=
-      null) {
-    return (appStateSettingsPassed ??
-            appStateSettings)["cachedCurrencyExchange"][currencyKey]
-        .toDouble();
-  } else {
-    return 1;
-  }
+  // Preserve legacy display behavior. Financial writes should use strictCurrencyRatio.
+  return getKnownCurrencyExchangeRate(currencyKey,
+      appStateSettingsPassed: appStateSettingsPassed) ?? 1;
 }
 
 double budgetAmountToPrimaryCurrency(AllWallets allWallets, Budget budget) {

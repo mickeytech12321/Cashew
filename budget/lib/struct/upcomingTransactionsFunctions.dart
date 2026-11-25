@@ -18,33 +18,29 @@ import 'package:flutter/material.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:provider/provider.dart';
 
+// Advance calendar periods without overflowing short months.
+DateTime? nextRecurringDate(DateTime date, BudgetReoccurence? recurrence, int? length) {
+  if (length == null || length <= 0 || recurrence == null || recurrence == BudgetReoccurence.custom) return null;
+  DateTime make(int year, int month, int day) => date.isUtc
+      ? DateTime.utc(year, month, day, date.hour, date.minute, date.second, date.millisecond, date.microsecond)
+      : DateTime(year, month, day, date.hour, date.minute, date.second, date.millisecond, date.microsecond);
+  if (recurrence == BudgetReoccurence.daily || recurrence == BudgetReoccurence.weekly) {
+    return make(date.year, date.month, date.day + length * (recurrence == BudgetReoccurence.weekly ? 7 : 1));
+  }
+  final month = date.month + (recurrence == BudgetReoccurence.monthly ? length : 0);
+  final year = date.year + (recurrence == BudgetReoccurence.yearly ? length : 0);
+  final lastDay = make(year, month + 1, 0).day;
+  return make(year, month, date.day > lastDay ? lastDay : date.day);
+}
+
 Future createNewSubscriptionTransaction(
     BuildContext context, Transaction transaction,
     {String? closelyRelatedPairedTransactionFk}) async {
   if (transaction.createdAnotherFutureTransaction == false) {
     if (transaction.type == TransactionSpecialType.subscription ||
         transaction.type == TransactionSpecialType.repetitive) {
-      int yearOffset = 0;
-      int monthOffset = 0;
-      int dayOffset = 0;
-      if (transaction.reoccurrence == BudgetReoccurence.yearly) {
-        yearOffset = transaction.periodLength ?? 0;
-      } else if (transaction.reoccurrence == BudgetReoccurence.monthly) {
-        monthOffset = transaction.periodLength ?? 0;
-      } else if (transaction.reoccurrence == BudgetReoccurence.weekly) {
-        dayOffset = (transaction.periodLength ?? 0) * 7;
-      } else if (transaction.reoccurrence == BudgetReoccurence.daily) {
-        dayOffset = transaction.periodLength ?? 0;
-      }
-      DateTime newDate = DateTime(
-        transaction.dateCreated.year + yearOffset,
-        transaction.dateCreated.month + monthOffset,
-        transaction.dateCreated.day + dayOffset,
-        transaction.dateCreated.hour,
-        transaction.dateCreated.minute,
-        transaction.dateCreated.second,
-        transaction.dateCreated.millisecond,
-      );
+      final newDate = nextRecurringDate(transaction.dateCreated, transaction.reoccurrence, transaction.periodLength);
+      if (newDate == null) return;
 
       // After end date
       if (transaction.endDate != null &&
@@ -148,19 +144,7 @@ int? countTransactionOccurrences({
       reoccurrence == BudgetReoccurence.custom ||
       periodLength == null) return null;
 
-  int yearOffset = 0;
-  int monthOffset = 0;
-  int dayOffset = 0;
-
-  if (reoccurrence == BudgetReoccurence.yearly) {
-    yearOffset = periodLength;
-  } else if (reoccurrence == BudgetReoccurence.monthly) {
-    monthOffset = periodLength;
-  } else if (reoccurrence == BudgetReoccurence.weekly) {
-    dayOffset = periodLength * 7;
-  } else if (reoccurrence == BudgetReoccurence.daily) {
-    dayOffset = periodLength;
-  }
+  if (periodLength <= 0) return null;
 
   DateTime currentDate = dateCreated;
 
@@ -169,15 +153,9 @@ int? countTransactionOccurrences({
   while (!endDate.isBefore(currentDate)) {
     occurrenceCount++;
 
-    currentDate = DateTime(
-      currentDate.year + yearOffset,
-      currentDate.month + monthOffset,
-      currentDate.day + dayOffset,
-      currentDate.hour,
-      currentDate.minute,
-      currentDate.second,
-      currentDate.millisecond,
-    );
+    final next = nextRecurringDate(currentDate, reoccurrence, periodLength);
+    if (next == null || !next.isAfter(currentDate)) return null;
+    currentDate = next;
 
     if (endDate.isBefore(currentDate)) {
       break;

@@ -1,3 +1,4 @@
+import 'package:budget/struct/cloudConfiguration.dart';
 import 'package:animations/animations.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/database/initializeDefaultDatabase.dart';
@@ -316,10 +317,12 @@ Future<bool> runAllCloudFunctions(BuildContext context,
       loadingIndeterminateKey.currentState?.setVisibility(true);
       await parseEmailsInBackground(context, forceParse: true);
     }
-    loadingIndeterminateKey.currentState?.setVisibility(true);
-    await syncPendingQueueOnServer(); //sync before download
-    loadingIndeterminateKey.currentState?.setVisibility(true);
-    await getCloudBudgets();
+    if (enableCashewCloudServices) {
+      loadingIndeterminateKey.currentState?.setVisibility(true);
+      await syncPendingQueueOnServer();
+      loadingIndeterminateKey.currentState?.setVisibility(true);
+      await getCloudBudgets();
+    }
     loadingIndeterminateKey.currentState?.setVisibility(true);
     await createBackupInBackground(context);
     loadingIndeterminateKey.currentState?.setVisibility(true);
@@ -336,7 +339,6 @@ Future<bool> runAllCloudFunctions(BuildContext context,
       // Request had invalid authentication credentials. Try logging out and back in.
       // This stems from silent sign-in not providing the credentials for GDrive API for e.g.
       await refreshGoogleSignIn();
-      runAllCloudFunctions(context);
     } else {
       if (kIsWeb && appStateSettings["webForceLoginPopupOnLaunch"] == true) {
         signOutGoogle();
@@ -429,8 +431,7 @@ class PageNavigationFrameworkState extends State<PageNavigationFramework> {
       runNotificationPayLoads(context);
       runQuickActionsPayLoads(context);
       initializeLocalizedMonthNames();
-      initializeStoreAndPurchases(
-          context: context, popRouteWithPurchase: false);
+      // Free edition: do not initialize the purchase store.
 
       if (entireAppLoaded == false) {
         await runAllCloudFunctions(context);
@@ -445,6 +446,7 @@ class PageNavigationFrameworkState extends State<PageNavigationFramework> {
       // Maybe another device already marked them as paid
       await markSubscriptionsAsPaid(context);
       await markUpcomingAsPaid();
+      if (mounted) await postDueBankCertificatePayouts(context);
 
       // Should do this after syncing and after the subscriptions/upcoming transactions auto paid for
       // The upcoming transactions may have been modified after a sync
@@ -583,15 +585,13 @@ class AddMoreThingsPopup extends StatelessWidget {
             },
             onSelected: (String selection) async {
               if (selection == "transfer-balance") {
+                final navigator = Navigator.of(context);
+                final wallet = context.read<AllWallets>()
+                    .indexedByPk[appStateSettings["selectedWalletPk"]];
                 popRoute(context);
-                openBottomSheet(
-                  context,
-                  fullSnap: true,
-                  TransferBalancePopup(
-                    allowEditWallet: true,
-                    wallet: Provider.of<AllWallets>(context, listen: false)
-                        .indexedByPk[appStateSettings["selectedWalletPk"]]!,
-                  ),
+                openBalanceTransfer(
+                  navigator.context,
+                  TransferBalancePage(allowEditWallet: true, wallet: wallet),
                 );
               } else if (selection == "correct-total-balance") {
                 TransactionWallet? wallet =

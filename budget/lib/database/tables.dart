@@ -1,3 +1,9 @@
+import 'package:budget/struct/instaPayTransfer.dart';
+import 'package:budget/struct/investmentMarketPrices.dart';
+import 'package:budget/struct/creditStatementCsv.dart' show BankStatementLine;
+import 'package:budget/struct/investmentLedger.dart';
+import 'package:budget/struct/investmentQuoteCsv.dart' show InvestmentQuote;
+import 'package:budget/struct/upcomingTransactionsFunctions.dart' show nextRecurringDate;
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
 import 'package:budget/pages/homePage/homePageLineGraph.dart';
@@ -25,8 +31,11 @@ import 'package:budget/pages/activityPage.dart';
 
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
+part 'transferSync.dart';
+part 'metadataSync.dart';
+part 'cashuPayments.dart';
 
-int schemaVersionGlobal = 46;
+const int schemaVersionGlobal = 48;
 
 // To update and migrate the database, check the README
 
@@ -38,6 +47,19 @@ const int COLOUR_LIMIT = 50;
 // Query Constants
 const int DEFAULT_LIMIT = 100000;
 const int DEFAULT_OFFSET = 0;
+
+enum ImportDuplicateAction { linkExisting, ask, saveSeparate }
+
+class ImportedTransactionMatch implements Exception {
+  const ImportedTransactionMatch(this.transaction);
+  final Transaction transaction;
+}
+
+class PlanningRateUnavailable implements Exception {
+  const PlanningRateUnavailable(this.source, this.target);
+  final String? source;
+  final String target;
+}
 
 enum BudgetReoccurence { custom, daily, weekly, monthly, yearly }
 
@@ -580,6 +602,11 @@ class CategoryWithDetails {
   });
 }
 
+typedef CashuOverviewAccount = ({
+  String id, String name, String currency, String type, double balance,
+  double spent, bool excludeFromNetWorth,
+});
+
 class WalletWithDetails {
   final TransactionWallet wallet;
   final double? totalSpent;
@@ -696,6 +723,357 @@ class FinanceDatabase extends _$FinanceDatabase {
   // you should bump this number whenever you change or add a table definition
   @override
   int get schemaVersion => schemaVersionGlobal;
+
+  static const supportedAccountTypes = <String>{
+    'unspecified', 'cash', 'bank', 'debit', 'prepaid', 'ewallet',
+    'credit', 'savings', 'investment',
+  };
+
+  Future<Map<String, dynamic>?> getAccountDetails(String walletPk) async {
+    final row = await customSelect(
+      'SELECT * FROM account_details WHERE wallet_fk = ?',
+      variables: [Variable<String>(walletPk)],
+    ).getSingleOrNull();
+    return row?.data;
+  }
+
+  Future<Map<String, Map<String, dynamic>>> getAllAccountDetails() async {
+    final rows = await customSelect('SELECT * FROM account_details').get();
+    return {
+      for (final row in rows)
+        if (row.data['wallet_fk'] is String)
+          row.data['wallet_fk'] as String: row.data,
+    };
+  }
+
+  Selectable<QueryRow> _netWorthExclusionQuery() => customSelect(
+      'SELECT wallet_fk FROM account_details '
+      'WHERE exclude_from_net_worth = 1 OR archived = 1',
+      readsFrom: {wallets},
+    );
+
+  Future<Set<String>> getWalletPksExcludedFromNetWorth() async =>
+      (await _netWorthExclusionQuery().get())
+          .map((r) => r.read<String>('wallet_fk')).toSet();
+
+  Stream<Set<String>> watchWalletPksExcludedFromNetWorth() =>
+      _netWorthExclusionQuery()
+          .watch()
+          .map((rows) => rows.map((r) => r.read<String>('wallet_fk')).toSet())
+          .distinct(setEquals);
+
+  Future<void> setAccountArchived(String walletPk, bool archived) async {
+    final current = await getAccountDetails(walletPk);
+    await saveAccountDetails(
+      walletPk: walletPk,
+      accountType: (current?['account_type'] as String?) ?? 'unspecified',
+      institutionName: current?['institution_name'] as String?,
+      archived: archived,
+      excludeFromNetWorth:
+          ((current?['exclude_from_net_worth'] as int?) ?? 0) == 1,
+    );
+  }
+
+  Future<void> setAccountExcludedFromNetWorth(
+      String walletPk, bool excluded) async {
+    final current = await getAccountDetails(walletPk);
+    await saveAccountDetails(
+      walletPk: walletPk,
+      accountType: (current?['account_type'] as String?) ?? 'unspecified',
+      institutionName: current?['institution_name'] as String?,
+      archived: ((current?['archived'] as int?) ?? 0) == 1,
+      excludeFromNetWorth: excluded,
+    );
+  }
+
+  Future<void> saveAccountDetails({
+    required String walletPk,
+    required String accountType,
+    String? institutionName,
+    bool archived = false,
+    bool excludeFromNetWorth = false,
+  }) async {
+    if (!supportedAccountTypes.contains(accountType)) {
+      throw ArgumentError.value(accountType, 'accountType');
+    }
+    await transaction(() async {
+      if (await getWalletInstanceOrNull(walletPk) == null) {
+        throw StateError('Wallet does not exist');
+      }
+      // The generated schema does not model account_details. Dependent
+      // streams watch wallets so metadata edits invalidate them after commit.
+      await customUpdate(
+        'INSERT INTO account_details '
+        '(wallet_fk, account_type, institution_name, archived, exclude_from_net_worth) '
+        'VALUES (?, ?, ?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
+        'account_type = excluded.account_type, institution_name = excluded.institution_name, '
+        'archived = excluded.archived, exclude_from_net_worth = excluded.exclude_from_net_worth',
+        variables: [
+          Variable<String>(walletPk),
+          Variable<String>(accountType),
+          Variable<String>(institutionName?.trim()),
+          Variable<int>(archived ? 1 : 0),
+          Variable<int>(excludeFromNetWorth ? 1 : 0),
+        ],
+        updates: {wallets},
+      );
+      await customStatement(
+        'UPDATE wallets SET archived = ? WHERE wallet_pk = ?',
+        [archived ? 1 : 0, walletPk],
+      );
+    });
+  }
+
+  // Local extension tables are deliberately outside the legacy generated schema.
+  // They are not included in cloud sync until a compatible protocol exists.
+  Future<void> createLocalFinancialSchema47() async {
+    await customStatement('''CREATE TABLE IF NOT EXISTS account_details (
+      wallet_fk TEXT PRIMARY KEY NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      account_type TEXT NOT NULL DEFAULT 'unspecified',
+      institution_name TEXT,
+      archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
+      exclude_from_net_worth INTEGER NOT NULL DEFAULT 0 CHECK (exclude_from_net_worth IN (0,1))
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS financial_actions (
+      action_pk TEXT PRIMARY KEY NOT NULL,
+      action_type TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      idempotency_key TEXT UNIQUE,
+      undone_at INTEGER
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS financial_action_changes (
+      change_pk TEXT PRIMARY KEY NOT NULL,
+      action_fk TEXT NOT NULL REFERENCES financial_actions(action_pk) ON DELETE CASCADE,
+      entity_type TEXT NOT NULL,
+      entity_pk TEXT NOT NULL,
+      before_json TEXT,
+      after_json TEXT
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS financial_action_changes_action_idx ON financial_action_changes(action_fk)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS credit_card_details (
+      wallet_fk TEXT PRIMARY KEY NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      credit_limit REAL CHECK (credit_limit IS NULL OR credit_limit >= 0),
+      statement_day INTEGER CHECK (statement_day IS NULL OR statement_day BETWEEN 1 AND 31),
+      due_day INTEGER CHECK (due_day IS NULL OR due_day BETWEEN 1 AND 31),
+      minimum_payment REAL CHECK (minimum_payment IS NULL OR minimum_payment >= 0),
+      apr_percent REAL CHECK (apr_percent IS NULL OR apr_percent >= 0),
+      last_four TEXT CHECK (last_four IS NULL OR length(last_four) = 4),
+      linked_bank_wallet_fk TEXT REFERENCES wallets(wallet_pk) ON DELETE SET NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS credit_card_payment_rules (
+      wallet_fk TEXT PRIMARY KEY NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      minimum_percent REAL CHECK (minimum_percent BETWEEN 0 AND 100),
+      late_fee REAL CHECK (late_fee >= 0)
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS credit_card_statements (
+      wallet_fk TEXT NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      closes_at INTEGER NOT NULL,
+      due_at INTEGER NOT NULL,
+      statement_balance REAL NOT NULL CHECK (statement_balance >= 0),
+      minimum_due REAL NOT NULL CHECK (minimum_due >= 0 AND minimum_due <= statement_balance),
+      currency TEXT NOT NULL,
+      PRIMARY KEY(wallet_fk, closes_at)
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS account_identifiers (
+      identifier_pk TEXT PRIMARY KEY NOT NULL,
+      wallet_fk TEXT NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      identifier_type TEXT NOT NULL,
+      identifier_value TEXT NOT NULL,
+      UNIQUE(identifier_type, identifier_value)
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS account_identifiers_wallet_idx ON account_identifiers(wallet_fk)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS bank_notification_receipts (
+      identity TEXT NOT NULL,
+      posted_at INTEGER NOT NULL,
+      PRIMARY KEY(identity, posted_at)
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS bank_notification_receipts_time_idx '
+        'ON bank_notification_receipts(posted_at)');
+    await customStatement('DELETE FROM bank_notification_receipts WHERE posted_at < ?',
+      [DateTime.now().subtract(const Duration(days: 1, minutes: 2)).millisecondsSinceEpoch]);
+    await customStatement('''CREATE TABLE IF NOT EXISTS imported_financial_events (
+      event_pk TEXT PRIMARY KEY NOT NULL,
+      source_type TEXT NOT NULL,
+      source_sender TEXT,
+      raw_text TEXT NOT NULL,
+      occurred_at INTEGER NOT NULL,
+      amount REAL,
+      currency TEXT,
+      direction TEXT CHECK (direction IS NULL OR direction IN ('debit','credit')),
+      merchant TEXT,
+      identifier_last4 TEXT,
+      wallet_fk TEXT REFERENCES wallets(wallet_pk) ON DELETE SET NULL,
+      confidence REAL NOT NULL DEFAULT 0 CHECK (confidence BETWEEN 0 AND 1),
+      status TEXT NOT NULL DEFAULT 'review' CHECK (status IN ('review','approved','ignored','duplicate')),
+      fingerprint TEXT NOT NULL UNIQUE,
+      transaction_fk TEXT REFERENCES transactions(transaction_pk) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS imported_financial_events_status_idx ON imported_financial_events(status, occurred_at)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenarios (
+      scenario_pk TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      base_date INTEGER NOT NULL,
+      horizon_days INTEGER NOT NULL CHECK (horizon_days BETWEEN 1 AND 3650),
+      starting_balance REAL NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenario_currency (
+      scenario_fk TEXT PRIMARY KEY NOT NULL REFERENCES planning_scenarios(scenario_pk) ON DELETE CASCADE,
+      currency TEXT NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenario_goals (
+      scenario_fk TEXT NOT NULL REFERENCES planning_scenarios(scenario_pk) ON DELETE CASCADE,
+      goal_fk TEXT NOT NULL REFERENCES objectives(objective_pk) ON DELETE CASCADE,
+      PRIMARY KEY (scenario_fk, goal_fk)
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS planning_scenario_items (
+      item_pk TEXT PRIMARY KEY NOT NULL,
+      scenario_fk TEXT NOT NULL REFERENCES planning_scenarios(scenario_pk) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      direction TEXT NOT NULL CHECK (direction IN ('income','expense')),
+      first_date INTEGER NOT NULL,
+      recurrence_days INTEGER CHECK (recurrence_days IS NULL OR recurrence_days > 0),
+      end_date INTEGER
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS planning_items_scenario_idx ON planning_scenario_items(scenario_fk, first_date)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS wealth_assets (
+      asset_pk TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      asset_type TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 1,
+      unit_value REAL NOT NULL,
+      liability INTEGER NOT NULL DEFAULT 0 CHECK (liability IN (0,1)),
+      institution_name TEXT,
+      notes TEXT,
+      updated_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS wealth_snapshots (
+      snapshot_pk TEXT PRIMARY KEY NOT NULL,
+      captured_at INTEGER NOT NULL,
+      net_worth_primary REAL NOT NULL,
+      breakdown_json TEXT NOT NULL
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS wealth_snapshots_date_idx ON wealth_snapshots(captured_at)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_holdings (
+      holding_pk TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      market_price REAL,
+      market_price_at INTEGER
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_market_sources (
+      holding_fk TEXT PRIMARY KEY NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
+      symbol TEXT NOT NULL,
+      revision TEXT NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_market_listings (
+      holding_fk TEXT PRIMARY KEY NOT NULL REFERENCES investment_market_sources(holding_fk) ON DELETE CASCADE,
+      mic TEXT NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_quotes (
+      holding_fk TEXT NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
+      quoted_at INTEGER NOT NULL,
+      price REAL NOT NULL CHECK (price >= 0),
+      PRIMARY KEY (holding_fk, quoted_at)
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_trades (
+      trade_pk TEXT PRIMARY KEY NOT NULL,
+      holding_fk TEXT NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
+      traded_at INTEGER NOT NULL,
+      buy INTEGER NOT NULL CHECK (buy IN (0,1)),
+      units REAL NOT NULL CHECK (units > 0),
+      price REAL NOT NULL CHECK (price > 0),
+      fees REAL NOT NULL CHECK (fees >= 0)
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS investment_trades_holding_date_idx '
+        'ON investment_trades(holding_fk, traded_at)');
+    await customStatement('''CREATE TABLE IF NOT EXISTS household_members (
+      member_pk TEXT PRIMARY KEY NOT NULL,
+      display_name TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('owner','editor','viewer')),
+      local_only INTEGER NOT NULL DEFAULT 1 CHECK (local_only IN (0,1)),
+      created_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS household_account_access (
+      member_fk TEXT NOT NULL REFERENCES household_members(member_pk) ON DELETE CASCADE,
+      wallet_fk TEXT NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      can_view INTEGER NOT NULL DEFAULT 1 CHECK (can_view IN (0,1)),
+      can_edit INTEGER NOT NULL DEFAULT 0 CHECK (can_edit IN (0,1)),
+      PRIMARY KEY(member_fk, wallet_fk)
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS sync_conflicts (
+      conflict_pk TEXT PRIMARY KEY NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_pk TEXT NOT NULL,
+      local_json TEXT NOT NULL,
+      remote_json TEXT NOT NULL,
+      detected_at INTEGER NOT NULL,
+      resolved_at INTEGER,
+      resolution TEXT CHECK (resolution IS NULL OR resolution IN ('local','remote','manual'))
+    )''');
+    await customStatement('CREATE INDEX IF NOT EXISTS sync_conflicts_open_idx ON sync_conflicts(resolved_at, detected_at)');
+  }
+
+  // Keep the upstream v48 fields on disk, including tags this UI cannot edit.
+  Future<void> _createFinancialSchema48() async {
+    await createLocalFinancialSchema47();
+    await _createCashuPaymentSchema(this);
+    await customStatement('''CREATE TABLE IF NOT EXISTS tags (
+      date_created INTEGER NOT NULL,
+      date_time_modified INTEGER,
+      "order" INTEGER NOT NULL,
+      archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+      name TEXT NOT NULL,
+      colour TEXT,
+      icon_name TEXT,
+      emoji_icon_name TEXT,
+      tag_pk TEXT PRIMARY KEY NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS transaction_to_tag_links (
+      transaction_pk TEXT REFERENCES transactions(transaction_pk),
+      tag_pk TEXT REFERENCES tags(tag_pk),
+      PRIMARY KEY (transaction_pk, tag_pk)
+    )''');
+    const upstreamColumns = {
+      'wallets': {
+        'archived': 'INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))',
+        'emoji_icon_name': 'TEXT',
+      },
+      'categories': {
+        'archived': 'INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))',
+      },
+      'associated_titles': {
+        'archived': 'INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))',
+      },
+      'scanner_templates': {'default_title': 'TEXT'},
+    };
+    for (final table in upstreamColumns.entries) {
+      final columns =
+          await customSelect('PRAGMA table_info("${table.key}")').get();
+      final names = columns.map((column) => column.read<String>('name')).toSet();
+      for (final column in table.value.entries) {
+        if (!names.contains(column.key)) {
+          await customStatement(
+            'ALTER TABLE "${table.key}" ADD COLUMN "${column.key}" ${column.value}',
+          );
+        }
+      }
+    }
+    await customStatement(
+      "INSERT OR IGNORE INTO account_details(wallet_fk, archived) "
+      "SELECT wallet_pk, 1 FROM wallets WHERE archived = 1",
+    );
+    await customStatement(
+      'UPDATE wallets SET archived = (SELECT archived FROM account_details '
+      'WHERE wallet_fk = wallets.wallet_pk) WHERE EXISTS (SELECT 1 FROM '
+      'account_details WHERE wallet_fk = wallets.wallet_pk '
+      'AND archived <> wallets.archived)',
+    );
+  }
 
   @override
   MigrationStrategy get migration {
@@ -863,9 +1241,9 @@ class FinanceDatabase extends _$FinanceDatabase {
           await migrator.alterTable(TableMigration(transactions));
           await migrator.deleteTable("Labels");
         }
-        await migrator.runMigrationSteps(
+        if (from < 46) await migrator.runMigrationSteps(
           from: from,
-          to: to,
+          to: to > 46 ? 46 : to,
           steps: migrationSteps(
             from33To34: (m, schema) async {
               await m.addColumn(schema.wallets, schema.wallets.decimals);
@@ -1168,6 +1546,8 @@ class FinanceDatabase extends _$FinanceDatabase {
         );
       },
       beforeOpen: (details) async {
+        // Also repair missing extension tables from earlier builds.
+        await transaction(_createFinancialSchema48);
         // This code exists because migration 42to43 may have not run correctly...
         // See explanation in 41to42
         try {
@@ -2477,12 +2857,22 @@ class FinanceDatabase extends _$FinanceDatabase {
         .get();
   }
 
-  Future<List<Transaction>> getAllNewTransactions(DateTime lastSynced) {
-    return (select(transactions)
+  Future<List<Transaction>> getAllNewTransactions(DateTime lastSynced) async {
+    final changed = await (select(transactions)
           ..where((tbl) =>
               tbl.dateTimeModified.isBiggerOrEqualValue(lastSynced) |
               tbl.dateTimeModified.isNull()))
         .get();
+    final found = {for (final row in changed) row.transactionPk};
+    final peers = changed.where(_isTransferLeg)
+        .map((row) => row.pairedTransactionFk!)
+        .where((id) => !found.contains(id)).toSet().toList();
+    for (var offset = 0; offset < peers.length; offset += 400) {
+      changed.addAll(await (select(transactions)
+        ..where((row) => row.transactionPk.isIn(peers.skip(offset).take(400))))
+          .get());
+    }
+    return changed;
   }
 
   Future<List<TransactionWithCategory>>
@@ -2657,15 +3047,23 @@ class FinanceDatabase extends _$FinanceDatabase {
     return true;
   }
 
+  // Keep upstream-only tombstones for future backup round trips. The older
+  // sync protocol cannot decode their enum values or missing timestamps.
+  SimpleSelectStatement<$DeleteLogsTable, DeleteLog> _supportedDeleteLogs() =>
+      select(deleteLogs)
+        ..where((log) => log.type.isIn(
+              DeleteLogType.values.map((type) => type.index),
+            ) & log.dateTimeModified.isNotNull());
+
   Future<List<DeleteLog>> getAllNewDeleteLogs(DateTime lastSynced) async {
-    return (select(deleteLogs)
+    return (_supportedDeleteLogs()
           ..where(
               (tbl) => tbl.dateTimeModified.isBiggerOrEqualValue(lastSynced)))
         .get();
   }
 
   Future<List<DeleteLog>> getAllDeleteLogs() async {
-    return select(deleteLogs).get();
+    return _supportedDeleteLogs().get();
   }
 
   Future<bool> createDeleteLog(DeleteLogType type, String deletedPk,
@@ -2689,34 +3087,22 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Future<bool> createDeleteLogs(
       DeleteLogType type, List<String> deletedPks) async {
-    List<DeleteLogsCompanion> deleteLogsToInsert = [];
-    Map<String, Transaction?> fetchedTransactions = {};
-
-    await Future.wait(deletedPks.map((deletePk) async {
-      deleteLogsToInsert.add(
-        DeleteLogsCompanion.insert(
-          type: type,
-          entryPk: deletePk,
-          dateTimeModified: Value(DateTime.now()),
-        ),
-      );
-      if (type == DeleteLogType.Transaction) {
-        Transaction? transactionToDelete =
-            await database.tryGetTransactionFromPk(deletePk);
-        fetchedTransactions[deletePk] = transactionToDelete;
+    if (type == DeleteLogType.Transaction) {
+      final removed = await Future.wait(deletedPks.map(tryGetTransactionFromPk));
+      for (final row in removed.nonNulls) {
+        addTransactionToRecentlyDeleted(row, save: false);
       }
-    }));
-
-    fetchedTransactions.forEach((deletePk, transactionToDelete) {
-      if (transactionToDelete != null)
-        addTransactionToRecentlyDeleted(transactionToDelete, save: false);
+      await saveRecentlyDeletedTransactions();
+    }
+    final now = DateTime.now();
+    await batch((batch) {
+      batch.insertAll(deleteLogs, [
+        for (final id in deletedPks)
+          DeleteLogsCompanion.insert(
+            type: type, entryPk: id, dateTimeModified: Value(now),
+          ),
+      ], mode: InsertMode.replace);
     });
-    saveRecentlyDeletedTransactions();
-
-    await database.batch((batch) {
-      batch.insertAll(deleteLogs, deleteLogsToInsert, mode: InsertMode.replace);
-    });
-
     return true;
   }
 
@@ -2746,8 +3132,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       );
     }
 
-    return into(wallets)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    return into(wallets).insertOnConflictUpdate(companionToInsert);
   }
 
   //create or update a new objective
@@ -2816,8 +3201,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           companionToInsert.copyWith(scannerTemplatePk: Value.absent());
     }
 
-    return into(scannerTemplates)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    return into(scannerTemplates).insertOnConflictUpdate(companionToInsert);
   }
 
   Future<int> createOrUpdateCategoryLimit(CategoryBudgetLimit categoryLimit,
@@ -3139,8 +3523,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           companionToInsert.copyWith(associatedTitlePk: Value.absent());
     }
 
-    return into(associatedTitles)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    return into(associatedTitles).insertOnConflictUpdate(companionToInsert);
   }
 
   Future moveAssociatedTitle(
@@ -3423,26 +3806,57 @@ class FinanceDatabase extends _$FinanceDatabase {
     return transaction;
   }
 
+  Future<Transaction?> findLikelyDuplicateTransaction(Transaction draft) async {
+    if (!draft.paid || draft.type != null || draft.categoryFk == '0' ||
+        draft.amount == 0 || !draft.amount.isFinite || draft.pairedTransactionFk != null) {
+      return null;
+    }
+    final title = draft.name.trim().toLowerCase();
+    final date = draft.dateCreated;
+    final start = title.isEmpty ? date.subtract(const Duration(minutes: 5))
+        : DateTime(date.year, date.month, date.day);
+    final end = title.isEmpty ? date.add(const Duration(minutes: 5))
+        : DateTime(date.year, date.month, date.day + 1);
+    final row = await customSelect(
+      'SELECT transaction_pk FROM transactions WHERE wallet_fk = ? '
+      'AND category_fk = ? AND paid = 1 AND type IS NULL AND paired_transaction_fk IS NULL '
+      'AND amount BETWEEN ? AND ? AND date_created >= ? AND date_created < ? '
+      'AND LOWER(TRIM(name)) = ? AND shared_reference_budget_pk IS ? '
+      'AND objective_fk IS ? AND objective_loan_fk IS ? '
+      'ORDER BY date_created DESC, transaction_pk LIMIT 1',
+      variables: [
+        Variable<String>(draft.walletFk),
+        Variable<String>(draft.categoryFk),
+        Variable<double>(draft.amount - 0.00000001),
+        Variable<double>(draft.amount + 0.00000001),
+        Variable<DateTime>(start),
+        Variable<DateTime>(end),
+        Variable<String>(title),
+        Variable<String>(draft.sharedReferenceBudgetPk),
+        Variable<String>(draft.objectiveFk),
+        Variable<String>(draft.objectiveLoanFk),
+      ],
+    ).getSingleOrNull();
+    return row == null ? null : tryGetTransactionFromPk(row.read<String>('transaction_pk'));
+  }
+
   // create or update a new transaction
   Future<int?>? createOrUpdateTransaction(
     Transaction transaction, {
     bool insert = false,
     bool updateSharedEntry = true,
+    bool preserveBalanceCorrectionTime = false,
     Transaction? originalTransaction,
   }) async {
     if (updateSharedEntry == true && appStateSettings["sharedBudgets"] == false)
       updateSharedEntry = false;
+    if (!transaction.amount.isFinite) return null;
     double maxAmount = 999999999999;
     if (transaction.amount >= maxAmount)
       transaction = transaction.copyWith(amount: maxAmount);
     else if (transaction.amount <= -maxAmount)
       transaction = transaction.copyWith(amount: -maxAmount);
 
-    if (transaction.amount == double.infinity ||
-        transaction.amount == double.negativeInfinity ||
-        transaction.amount.isNaN) {
-      return null;
-    }
 
     transaction = transaction.copyWith(
       name: transaction.name.trim(),
@@ -3462,7 +3876,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     // Preserve order of balance correction transaction
     // Negative entries at 30 seconds on the minute
     // Positive entries at 31 seconds on the minute
-    if (transaction.categoryFk == "0") {
+    if (transaction.categoryFk == "0" && !preserveBalanceCorrectionTime) {
       if (transaction.amount < 0) {
         transaction = transaction.copyWith(
             dateCreated: transaction.dateCreated
@@ -3588,8 +4002,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       companionToInsert = companionToInsert.copyWith(methodAdded: Value(null));
     }
 
-    return into(transactions)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    return into(transactions).insertOnConflictUpdate(companionToInsert);
   }
 
   // ************************************************************
@@ -3598,206 +4011,2435 @@ class FinanceDatabase extends _$FinanceDatabase {
   // These are also not logged into the Delete log!
   // ************************************************************
 
-  Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
-    // We want InsertMode.insertOrReplace because
-    // if null values are inserted we want to overwrite it with a null
-    // For example when a transactions subCategoryPk is set to null
-    // We need to set it to null, nt keep the default when syncing!
+  // Local-only atomic transfer writer. Callers must provide stable unique IDs
+  // and explicit amounts in each wallet's currency.
+  Future<bool> saveAtomicLocalTransfer(
+    Transaction outgoing,
+    Transaction incoming, {
+    required String idempotencyKey,
+    bool preserveTime = false,
+    bool instaPay = false,
+    bool arabicFeeLabel = false,
+  }) async {
+    if (idempotencyKey.trim().isEmpty ||
+        outgoing.transactionPk.isEmpty || incoming.transactionPk.isEmpty ||
+        outgoing.transactionPk == incoming.transactionPk ||
+        outgoing.walletFk == incoming.walletFk ||
+        outgoing.categoryFk != '0' || incoming.categoryFk != '0' ||
+        outgoing.income || !incoming.income ||
+        !outgoing.paid || !incoming.paid ||
+        outgoing.type != null || incoming.type != null ||
+        outgoing.sharedReferenceBudgetPk != null ||
+        incoming.sharedReferenceBudgetPk != null ||
+        outgoing.sharedKey != null || incoming.sharedKey != null ||
+        !outgoing.amount.isFinite || !incoming.amount.isFinite ||
+        outgoing.amount >= 0 || incoming.amount <= 0 ||
+        outgoing.amount.abs() > 999999999999 ||
+        incoming.amount > 999999999999) {
+      throw ArgumentError('Invalid local transfer');
+    }
+    return transaction(() async {
+      final previous = await customSelect(
+        'SELECT action_pk FROM financial_actions WHERE idempotency_key = ?',
+        variables: [Variable<String>(idempotencyKey)],
+      ).getSingleOrNull();
+      if (previous != null) return false;
+      final source = await getWalletInstanceOrNull(outgoing.walletFk);
+      final target = await getWalletInstanceOrNull(incoming.walletFk);
+      if (source == null || target == null) throw StateError('Missing wallet');
+      if ((instaPay || source.currency == target.currency) &&
+          (outgoing.amount.abs() - incoming.amount).abs() > 0.00000001) {
+        throw ArgumentError('Same-currency transfer amounts differ');
+      }
+      final fee = instaPay ? instaPayTransferFee(outgoing.amount.abs()) : null;
+      if (instaPay &&
+          (fee == null ||
+              !isInstaPayCurrency(source.currency) ||
+              !isInstaPayCurrency(target.currency) ||
+              outgoing.objectiveLoanFk != null ||
+              incoming.objectiveLoanFk != null)) {
+        throw ArgumentError('InstaPay requires a valid EGP transfer');
+      }
+      if ((await getAccountDetails(source.walletPk))?['archived'] == 1 ||
+          (await getAccountDetails(target.walletPk))?['archived'] == 1) {
+        throw StateError('A transfer account is archived');
+      }
+      final existing = await (select(transactions)
+        ..where((t) => t.transactionPk.isIn(
+          [outgoing.transactionPk, incoming.transactionPk]))).get();
+      if (existing.isNotEmpty) throw StateError('Transfer ID already exists');
+      final debit = outgoing.copyWith(
+        pairedTransactionFk: Value(incoming.transactionPk));
+      final credit = incoming.copyWith(
+        pairedTransactionFk: Value(outgoing.transactionPk));
+      final first = await createOrUpdateTransaction(debit,
+          updateSharedEntry: false, preserveBalanceCorrectionTime: preserveTime);
+      final second = await createOrUpdateTransaction(credit,
+          updateSharedEntry: false, preserveBalanceCorrectionTime: preserveTime);
+      if (first == null || second == null) throw StateError('Transfer write failed');
+      final entryIds = [debit.transactionPk, credit.transactionPk];
+      if (fee != null) {
+        final label = arabicFeeLabel ? 'رسوم إنستاباي' : 'InstaPay fees';
+        await into(categories).insert(
+          CategoriesCompanion.insert(
+            categoryPk: const Value(_instaPayFeesCategoryPk),
+            name: label,
+            order: await getAmountOfCategories(),
+          ),
+          mode: InsertMode.insertOrIgnore,
+        );
+        final expensePk = uuid.v4();
+        final savedDebit = await getTransactionFromPk(debit.transactionPk);
+        await into(transactions).insert(Transaction(
+          transactionPk: expensePk,
+          walletFk: debit.walletFk,
+          categoryFk: _instaPayFeesCategoryPk,
+          name: label,
+          amount: -fee,
+          note: debit.note,
+          dateCreated: savedDebit.dateCreated,
+          dateTimeModified: DateTime.now(),
+          income: false,
+          paid: true,
+          skipPaid: false,
+        ));
+        entryIds.add(expensePk);
+      }
+      await customStatement(
+        'INSERT INTO financial_actions (action_pk, action_type, created_at, idempotency_key) VALUES (?, ?, ?, ?)',
+        [outgoing.transactionPk, 'transfer', DateTime.now().millisecondsSinceEpoch, idempotencyKey],
+      );
+      final savedLegs = await (select(transactions)
+        ..where((t) => t.transactionPk.isIn(entryIds))).get();
+      if (savedLegs.length != entryIds.length) {
+        throw StateError('Transfer entries missing');
+      }
+      for (final leg in savedLegs) {
+        await customStatement(
+          'INSERT INTO financial_action_changes (change_pk, action_fk, entity_type, entity_pk, after_json) VALUES (?, ?, ?, ?, ?)',
+          [leg.transactionPk, outgoing.transactionPk, 'transaction', leg.transactionPk, jsonEncode(leg.toJson())],
+        );
+      }
+      return true;
+    });
+  }
 
-    syncLogs.sort(
-        (a, b) => a.transactionDateTime!.compareTo(b.transactionDateTime!));
+  Future<List<Map<String, dynamic>>> getLocalFinancialActions({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (limit < 1 || limit > 500 || offset < 0) {
+      throw ArgumentError('Invalid action history pagination');
+    }
+    final rows = await customSelect(
+      'SELECT * FROM financial_actions ORDER BY created_at DESC, action_pk DESC LIMIT ? OFFSET ?',
+      variables: [Variable<int>(limit), Variable<int>(offset)],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
 
-    await batch((batch) {
-      for (SyncLog syncLog in syncLogs) {
-        if (syncLog.deleteLogType != null) {
-          print("Sync Log: Deleting " +
-              syncLog.deleteLogType.toString() +
-              " " +
-              syncLog.pk.toString());
-        } else if (syncLog.updateLogType != null) {
-          String name = "";
-          try {
-            name = syncLog.itemToUpdate?.title;
-          } catch (e) {}
-          try {
-            name = syncLog.itemToUpdate?.name;
-          } catch (e) {}
-          print(
-            "Sync Log: Creating " +
-                syncLog.updateLogType.toString() +
-                " " +
-                name,
-          );
+  Future<List<Map<String, dynamic>>> getLocalFinancialActionChanges(
+    String actionPk,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM financial_action_changes WHERE action_fk = ? ORDER BY change_pk',
+      variables: [Variable<String>(actionPk)],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
+  // Undo only locally journaled transfers whose persisted legs are unchanged.
+  Future<bool> undoLocalTransfer(String actionPk) async {
+    return transaction(() async {
+      final action = await customSelect(
+        'SELECT * FROM financial_actions WHERE action_pk = ?',
+        variables: [Variable<String>(actionPk)],
+      ).getSingleOrNull();
+      if (action == null || action.data['action_type'] != 'transfer' ||
+          action.data['undone_at'] != null) return false;
+      final changes = await getLocalFinancialActionChanges(actionPk);
+      final currentEntries = <Transaction>[];
+      final ids = <String>[];
+      for (final change in changes) {
+        final id = change['entity_pk'];
+        if (id is! String || change['entity_type'] != 'transaction' ||
+            change['before_json'] != null || ids.contains(id)) {
+          throw StateError('Invalid transfer change');
         }
-
-        if (syncLog.deleteLogType == DeleteLogType.TransactionWallet) {
-          batch.deleteWhere(
-            wallets,
-            (tbl) =>
-                tbl.walletPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.TransactionCategory) {
-          batch.deleteWhere(
-            categories,
-            (tbl) =>
-                tbl.categoryPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.Budget) {
-          batch.deleteWhere(
-            budgets,
-            (tbl) =>
-                tbl.budgetPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.CategoryBudgetLimit) {
-          batch.deleteWhere(
-            categoryBudgetLimits,
-            (tbl) =>
-                tbl.categoryLimitPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.Transaction) {
-          batch.deleteWhere(
-            transactions,
-            (tbl) =>
-                tbl.transactionPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType ==
-            DeleteLogType.TransactionAssociatedTitle) {
-          batch.deleteWhere(
-            associatedTitles,
-            (tbl) =>
-                tbl.associatedTitlePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.deleteLogType == DeleteLogType.ScannerTemplate) {
-          batch.deleteWhere(scannerTemplates,
-              (tbl) => tbl.scannerTemplatePk.equals(syncLog.pk));
-        } else if (syncLog.deleteLogType == DeleteLogType.Objective) {
-          batch.deleteWhere(
-            objectives,
-            (tbl) =>
-                tbl.objectivePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-        } else if (syncLog.updateLogType == UpdateLogType.TransactionWallet) {
-          batch.update(
-            wallets,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.walletPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(wallets, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.TransactionCategory) {
-          batch.update(
-            categories,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.categoryPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(categories, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.Budget) {
-          batch.update(
-            budgets,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.budgetPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(budgets, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.CategoryBudgetLimit) {
-          batch.update(
-            categoryBudgetLimits,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.categoryLimitPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(categoryBudgetLimits, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.Transaction) {
-          batch.update(
-            transactions,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.transactionPk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(transactions, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType ==
-            UpdateLogType.TransactionAssociatedTitle) {
-          batch.update(
-            associatedTitles,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.associatedTitlePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(associatedTitles, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.ScannerTemplate) {
-          batch.update(
-            scannerTemplates,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.scannerTemplatePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(scannerTemplates, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
-        } else if (syncLog.updateLogType == UpdateLogType.Objective) {
-          batch.update(
-            objectives,
-            syncLog.itemToUpdate,
-            where: (tbl) =>
-                tbl.objectivePk.equals(syncLog.pk) &
-                tbl.dateTimeModified.isSmallerThanValue(
-                  syncLog.transactionDateTime ?? DateTime.now(),
-                ),
-          );
-          batch.insert(objectives, syncLog.itemToUpdate,
-              mode: InsertMode.insertOrReplace);
+        final current = await (select(transactions)
+          ..where((t) => t.transactionPk.equals(id))).getSingleOrNull();
+        if (current == null || jsonEncode(current.toJson()) != change['after_json']) {
+          throw StateError('Transfer has changed; undo refused');
         }
+        currentEntries.add(current);
+        ids.add(id);
+      }
+      _validateTransferJournal(actionPk, currentEntries);
+      final externalLinks = await (select(transactions)
+        ..where((t) => t.pairedTransactionFk.isIn(ids) &
+            t.transactionPk.isNotIn(ids))).get();
+      if (externalLinks.isNotEmpty) throw StateError('Transfer has dependent entries');
+      final deletedAt = DateTime.now();
+      await batch((batch) {
+        batch.insertAll(deleteLogs, [
+          for (final id in ids)
+            DeleteLogsCompanion.insert(
+              type: DeleteLogType.Transaction,
+              entryPk: id,
+              dateTimeModified: Value(deletedAt),
+            ),
+        ]);
+      });
+      await (delete(transactions)..where((t) => t.transactionPk.isIn(ids))).go();
+      await customStatement(
+        'UPDATE financial_actions SET undone_at = ? WHERE action_pk = ?',
+        [DateTime.now().millisecondsSinceEpoch, actionPk],
+      );
+      return true;
+    });
+  }
+
+  // Redo a transfer only when its journal is intact and all entries are absent.
+  Future<bool> redoLocalTransfer(String actionPk) async {
+    return transaction(() async {
+      final action = await customSelect(
+        'SELECT * FROM financial_actions WHERE action_pk = ?',
+        variables: [Variable<String>(actionPk)],
+      ).getSingleOrNull();
+      if (action == null || action.data['action_type'] != 'transfer' ||
+          action.data['undone_at'] == null) return false;
+      final changes = await getLocalFinancialActionChanges(actionPk);
+      final restored = <Transaction>[];
+      for (final change in changes) {
+        final id = change['entity_pk'];
+        final snapshot = change['after_json'];
+        if (id is! String || snapshot is! String ||
+            change['entity_type'] != 'transaction' ||
+            change['before_json'] != null) {
+          throw StateError('Invalid transfer change');
+        }
+        if (await tryGetTransactionFromPk(id) != null) {
+          throw StateError('Transfer ID already exists');
+        }
+        final decoded = jsonDecode(snapshot);
+        if (decoded is! Map<String, dynamic>) {
+          throw StateError('Invalid transfer snapshot');
+        }
+        final restoredTransaction = Transaction.fromJson(decoded);
+        if (restoredTransaction.transactionPk != id) {
+          throw StateError('Transfer snapshot identity mismatch');
+        }
+        restored.add(restoredTransaction);
+      }
+      _validateTransferJournal(actionPk, restored);
+      for (final leg in restored) {
+        final saved = await createOrUpdateTransaction(
+          leg, updateSharedEntry: false, preserveBalanceCorrectionTime: true);
+        if (saved == null) throw StateError('Transfer restore failed');
+        final persisted = await (select(transactions)
+              ..where((row) => row.transactionPk.equals(leg.transactionPk)))
+            .getSingle();
+        await customStatement(
+          'UPDATE financial_action_changes SET after_json = ? '
+          'WHERE action_fk = ? AND entity_pk = ?',
+          [jsonEncode(persisted.toJson()), actionPk, leg.transactionPk],
+        );
+        await (delete(deleteLogs)
+          ..where((d) => d.type.equalsValue(DeleteLogType.Transaction) &
+              d.entryPk.equals(leg.transactionPk))).go();
+      }
+      await customStatement(
+        'UPDATE financial_actions SET undone_at = NULL WHERE action_pk = ?',
+        [actionPk],
+      );
+      return true;
+    });
+  }
+
+  static const _instaPayFeesCategoryPk = 'cashu-instapay-fees';
+
+  void _validateTransferJournal(String actionPk, List<Transaction> entries) {
+    final byId = {for (final entry in entries) entry.transactionPk: entry};
+    final debit = byId[actionPk];
+    final credit = byId[debit?.pairedTransactionFk];
+    if (entries.length != byId.length ||
+        entries.length < 2 || entries.length > 3 ||
+        debit == null || credit == null ||
+        debit.amount >= 0 || credit.amount <= 0 ||
+        debit.categoryFk != '0' || credit.categoryFk != '0' ||
+        debit.walletFk == credit.walletFk ||
+        credit.pairedTransactionFk != actionPk) {
+      throw StateError('Transfer pairing mismatch');
+    }
+    if (entries.length == 3) {
+      final fee = entries.singleWhere(
+        (entry) => entry.transactionPk != actionPk &&
+            entry.transactionPk != credit.transactionPk,
+      );
+      if (fee.walletFk != debit.walletFk ||
+          fee.dateCreated != debit.dateCreated ||
+          fee.pairedTransactionFk != null ||
+          fee.categoryFk != _instaPayFeesCategoryPk ||
+          fee.income || !fee.paid ||
+          fee.amount.abs() != instaPayTransferFee(-debit.amount) ||
+          fee.amount >= 0) {
+        throw StateError('InstaPay fee mismatch');
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>?> getCreditCardDetails(String walletPk) async {
+    final row = await customSelect(
+      'SELECT c.*, r.minimum_percent, r.late_fee FROM credit_card_details c '
+      'LEFT JOIN credit_card_payment_rules r ON r.wallet_fk = c.wallet_fk '
+      'WHERE c.wallet_fk = ?',
+      variables: [Variable<String>(walletPk)],
+    ).getSingleOrNull();
+    return row?.data;
+  }
+
+  Future<void> saveCreditCardDetails({
+    required String walletPk,
+    double? creditLimit,
+    int? statementDay,
+    int? dueDay,
+    double? minimumPayment,
+    double? minimumPercent,
+    double? lateFee,
+    double? aprPercent,
+    String? lastFour,
+    String? linkedBankWalletFk,
+  }) async {
+    if ((creditLimit != null && (!creditLimit.isFinite || creditLimit < 0)) ||
+        (minimumPayment != null &&
+            (!minimumPayment.isFinite || minimumPayment < 0)) ||
+        (minimumPercent != null && (!minimumPercent.isFinite ||
+            minimumPercent < 0 || minimumPercent > 100)) ||
+        (lateFee != null && (!lateFee.isFinite || lateFee < 0 ||
+            lateFee > 999999999999)) ||
+        (aprPercent != null && (!aprPercent.isFinite || aprPercent < 0)) ||
+        (statementDay != null && (statementDay < 1 || statementDay > 31)) ||
+        (dueDay != null && (dueDay < 1 || dueDay > 31)) ||
+        (lastFour != null && !RegExp(r'^[0-9]{4}$').hasMatch(lastFour))) {
+      throw ArgumentError('Invalid credit card details');
+    }
+    await transaction(() async {
+      final account = await getAccountDetails(walletPk);
+      if (account == null || account['account_type'] != 'credit') {
+        throw StateError('Wallet is not a credit card account');
+      }
+      if (linkedBankWalletFk == walletPk) {
+        throw ArgumentError('Credit card cannot link to itself');
+      }
+      if (linkedBankWalletFk != null &&
+          await getWalletInstanceOrNull(linkedBankWalletFk) == null) {
+        throw StateError('Linked bank account does not exist');
+      }
+      await customStatement(
+        'INSERT INTO credit_card_details '
+        '(wallet_fk, credit_limit, statement_day, due_day, minimum_payment, apr_percent, last_four, linked_bank_wallet_fk) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
+        'credit_limit=excluded.credit_limit, statement_day=excluded.statement_day, '
+        'due_day=excluded.due_day, minimum_payment=excluded.minimum_payment, '
+        'apr_percent=excluded.apr_percent, last_four=excluded.last_four, '
+        'linked_bank_wallet_fk=excluded.linked_bank_wallet_fk',
+        [walletPk, creditLimit, statementDay, dueDay, minimumPayment,
+         aprPercent, lastFour, linkedBankWalletFk],
+      );
+      if (minimumPercent == null && lateFee == null) {
+        await customStatement(
+          'DELETE FROM credit_card_payment_rules WHERE wallet_fk = ?', [walletPk],
+        );
+      } else {
+        await customStatement(
+          'INSERT INTO credit_card_payment_rules (wallet_fk, minimum_percent, late_fee) '
+          'VALUES (?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
+          'minimum_percent = excluded.minimum_percent, late_fee = excluded.late_fee',
+          [walletPk, minimumPercent, lateFee],
+        );
       }
     });
+  }
+
+  Future<List<({String currency, String? category, double income, double expenses})>>
+      getFinancialInsights(DateTime start, DateTime end, {String? walletPk}) async {
+    if (!start.isBefore(end)) throw ArgumentError('Invalid insights period');
+    final rows = await customSelect(
+      'SELECT LOWER(TRIM(w.currency)) AS currency, c.name AS category, '
+      'SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income, '
+      'SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS expenses '
+      'FROM transactions t JOIN wallets w ON w.wallet_pk = t.wallet_fk '
+      'LEFT JOIN categories c ON c.category_pk = t.category_fk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      "WHERE t.paid = 1 AND t.skip_paid = 0 AND t.category_fk != '0' "
+      'AND COALESCE(d.archived, 0) = 0 AND t.date_created >= ? AND t.date_created < ? '
+      '${walletPk == null ? '' : 'AND w.wallet_pk = ? '}'
+      'GROUP BY LOWER(TRIM(w.currency)), c.category_pk, c.name '
+      'ORDER BY currency, expenses DESC, c.name',
+      variables: [
+        Variable<DateTime>(start),
+        Variable<DateTime>(end),
+        if (walletPk != null) Variable<String>(walletPk),
+      ],
+    ).get();
+    return rows.map((row) => (
+      currency: row.readNullable<String>('currency') ?? '',
+      category: row.readNullable<String>('category'),
+      income: row.read<double>('income'),
+      expenses: row.read<double>('expenses'),
+    )).toList();
+  }
+
+  Future<List<({String id, String name, String currency})>>
+      getFinancialInsightsAccounts() async {
+    final rows = await customSelect(
+      'SELECT w.wallet_pk, w.name, w.currency FROM wallets w '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'WHERE COALESCE(d.archived, 0) = 0 ORDER BY w."order", w.wallet_pk',
+    ).get();
+    return rows.map((row) => (
+      id: row.read<String>('wallet_pk'),
+      name: row.read<String>('name'),
+      currency: row.readNullable<String>('currency') ?? '',
+    )).toList();
+  }
+
+  Stream<List<CashuOverviewAccount>> watchCashuOverviewAccounts(
+      DateTime month, DateTime now) {
+    final start = DateTime(month.year, month.month);
+    final end = DateTime(month.year, month.month + 1);
+    final dayEnd = DateTime(now.year, now.month, now.day + 1);
+    return customSelect(
+      'SELECT w.wallet_pk, w.name, w.currency, '
+      "COALESCE(d.account_type, 'unspecified') AS account_type, "
+      'COALESCE(d.exclude_from_net_worth, 0) AS exclude_from_net_worth, '
+      'COALESCE(SUM(CASE WHEN t.date_created < ? THEN t.amount ELSE 0 END), 0) AS balance, '
+      'COALESCE(SUM(CASE WHEN t.date_created >= ? AND t.date_created < ? '
+      'AND t.date_created < ? AND t.amount < 0 AND t.skip_paid = 0 '
+      "AND t.category_fk != '0' THEN -t.amount ELSE 0 END), 0) AS spent "
+      'FROM wallets w LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk AND t.paid = 1 '
+      'WHERE COALESCE(d.archived, 0) = 0 '
+      'GROUP BY w.wallet_pk ORDER BY w."order", w.wallet_pk',
+      variables: [
+        Variable<DateTime>(dayEnd),
+        Variable<DateTime>(start),
+        Variable<DateTime>(end),
+        Variable<DateTime>(dayEnd),
+      ],
+      readsFrom: {wallets, transactions},
+    ).watch().map((rows) => [
+      for (final row in rows)
+        (
+          id: row.read<String>('wallet_pk'),
+          name: row.read<String>('name'),
+          currency: row.readNullable<String>('currency')?.trim().toLowerCase() ?? '',
+          type: row.read<String>('account_type'),
+          balance: row.read<double>('balance'),
+          spent: row.read<double>('spent'),
+          excludeFromNetWorth: row.read<int>('exclude_from_net_worth') == 1,
+        ),
+    ]);
+  }
+
+  Stream<double> watchMonthlySpendingInCurrency(
+      String currency, DateTime day, {String? walletPk}) {
+    final start = DateTime(day.year, day.month);
+    final end = DateTime(day.year, day.month, day.day + 1);
+    return customSelect(
+      'SELECT COALESCE(SUM(-t.amount), 0) AS amount FROM transactions t '
+      'JOIN wallets w ON t.wallet_fk = w.wallet_pk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      "WHERE LOWER(TRIM(w.currency)) = ? AND t.paid = 1 AND t.skip_paid = 0 "
+      "AND COALESCE(d.archived, 0) = 0 AND t.amount < 0 AND t.category_fk != '0' "
+      'AND t.date_created >= ? AND t.date_created < ? '
+      '${walletPk == null ? '' : 'AND w.wallet_pk = ?'}',
+      variables: [Variable<String>(currency.trim().toLowerCase()),
+        Variable<DateTime>(start), Variable<DateTime>(end),
+        if (walletPk != null) Variable<String>(walletPk)],
+      readsFrom: {transactions, wallets},
+    ).watchSingle().map((row) => row.read<double>('amount')).distinct();
+  }
+
+  Future<List<Map<String, dynamic>>> getAssistantAccountTotals({
+    required bool monthlySpending,
+    required DateTime asOf,
+    DateTime? spendingStart,
+    DateTime? spendingEnd,
+  }) async {
+    final monthStart = DateTime(asOf.year, asOf.month);
+    final spendingFilter = monthlySpending
+        ? "AND t.skip_paid = 0 AND t.amount < 0 AND t.category_fk != '0' "
+            'AND t.date_created >= ? '
+        : '';
+    final pastPeriod = monthlySpending && spendingEnd != null;
+    final rows = await customSelect(
+      'SELECT w.name, w.currency, w.decimals, '
+      'COALESCE(SUM(t.amount), 0) AS total '
+      'FROM wallets w LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk '
+      'AND t.paid = 1 AND t.date_created ${pastPeriod ? '<' : '<='} ? '
+      '$spendingFilter'
+      'WHERE COALESCE(d.archived, 0) = 0 '
+      'GROUP BY w.wallet_pk, w.name, w.currency ORDER BY w."order", w.wallet_pk',
+      variables: [
+        Variable<DateTime>(pastPeriod ? spendingEnd! : asOf),
+        if (monthlySpending) Variable<DateTime>(spendingStart ?? monthStart),
+      ],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
+  Future<Map<String, dynamic>> getCreditCardSummary(String walletPk, {DateTime? asOf}) async {
+    final details = await getCreditCardDetails(walletPk);
+    if (details == null) throw StateError('Credit card details not found');
+    final wallet = await getWalletInstanceOrNull(walletPk);
+    if (wallet == null) throw StateError('Wallet not found');
+
+    final now = asOf ?? DateTime.now();
+    DateTime monthDay(int year, int month, int day) {
+      final last = DateTime(year, month + 1, 0).day;
+      return DateTime(year, month, day > last ? last : day);
+    }
+    DateTime dayEnd(DateTime date) =>
+        DateTime(date.year, date.month, date.day + 1).subtract(const Duration(seconds: 1));
+    DateTime nextDay(int day) {
+      final current = dayEnd(monthDay(now.year, now.month, day));
+      return current.isAfter(now)
+          ? current
+          : dayEnd(monthDay(now.year, now.month + 1, day));
+    }
+
+    final statementDay = details['statement_day'] as int?;
+    final dueDay = details['due_day'] as int?;
+    final nextStatement = statementDay == null ? null : nextDay(statementDay);
+    final nextDue = dueDay == null ? null : nextDay(dueDay);
+    final closing = nextStatement == null ? null
+        : dayEnd(monthDay(nextStatement.year, nextStatement.month - 1, statementDay!));
+    DateTime? statementDue;
+    if (closing != null && dueDay != null) {
+      statementDue = dayEnd(monthDay(closing.year, closing.month, dueDay));
+      if (!statementDue.isAfter(closing)) {
+        statementDue = dayEnd(monthDay(closing.year, closing.month + 1, dueDay));
+      }
+    }
+
+    final balances = await customSelect(
+      'SELECT COALESCE(SUM(amount), 0) AS balance, '
+      'COALESCE(SUM(CASE WHEN date_created <= ? THEN amount ELSE 0 END), 0) AS closing_balance, '
+      'COALESCE(SUM(CASE WHEN date_created > ? AND amount > 0 THEN amount ELSE 0 END), 0) AS later_credits, '
+      'COALESCE(SUM(CASE WHEN date_created > ? AND amount < 0 THEN -amount ELSE 0 END), 0) AS later_charges, '
+      'COALESCE(SUM(CASE WHEN date_created > ? AND date_created <= ? '
+      'AND amount > 0 THEN amount ELSE 0 END), 0) AS credits_by_due '
+      'FROM transactions WHERE wallet_fk = ? AND paid = 1 AND skip_paid = 0 AND date_created <= ?',
+      variables: [
+        Variable<DateTime>(closing),
+        Variable<DateTime>(closing),
+        Variable<DateTime>(closing),
+        Variable<DateTime>(closing),
+        Variable<DateTime>(statementDue),
+        Variable<String>(walletPk),
+        Variable<DateTime>(now),
+      ],
+    ).getSingle();
+    final balance = balances.read<double>('balance');
+    final outstanding = balance < 0 ? -balance : 0.0;
+    final limit = (details['credit_limit'] as num?)?.toDouble();
+    final endingDebt = (-balances.read<double>('closing_balance')).clamp(0.0, double.infinity);
+    final remaining = (endingDebt - balances.read<double>('later_credits'))
+        .clamp(0.0, endingDebt);
+    final floor = (details['minimum_payment'] as num?)?.toDouble();
+    final percent = (details['minimum_percent'] as num?)?.toDouble();
+    final proportional = percent == null ? 0.0 : endingDebt * percent / 100;
+    final decimals = wallet.decimals.clamp(0, 12);
+    final configuredMinimum = proportional > (floor ?? 0) ? proportional : (floor ?? 0.0);
+    final minimum = closing == null || (floor == null && percent == null) ? null
+        : double.parse(configuredMinimum.toStringAsFixed(decimals)).clamp(0.0, endingDebt);
+    final credited = balances.read<double>('later_credits');
+    final lateFee = (details['late_fee'] as num?)?.toDouble();
+    final missedMinimum = minimum != null && statementDue != null &&
+        now.isAfter(statementDue) &&
+        double.parse(balances.read<double>('credits_by_due').toStringAsFixed(decimals)) <
+            double.parse(minimum.toStringAsFixed(decimals));
+    return {
+      ...details,
+      'current_balance': balance,
+      'outstanding': outstanding,
+      'available_credit': limit == null ? null : (limit - outstanding).clamp(0.0, limit),
+      'utilization_percent': limit == null || limit == 0 ? null : outstanding / limit * 100,
+      'over_limit_amount': limit == null ? null : (outstanding - limit).clamp(0.0, double.infinity),
+      'statement_credits': closing == null ? null : credited,
+      'charges_after_statement': closing == null ? null : balances.read<double>('later_charges'),
+      'estimated_minimum_remaining': minimum == null
+          ? null : (minimum - credited).clamp(0.0, remaining),
+      'estimated_late_fee': missedMinimum ? lateFee : null,
+      'estimated_statement_overdue': statementDue != null && now.isAfter(statementDue) && remaining > 0,
+      'next_statement_date': nextStatement,
+      'next_due_date': nextDue,
+      'last_statement_date': closing,
+      'last_statement_due_date': statementDue,
+      'estimated_statement_balance': closing == null ? null : endingDebt,
+      'estimated_statement_remaining': closing == null ? null : remaining,
+    };
+  }
+
+  Future<void> saveCreditCardStatement({
+    required String walletPk,
+    required DateTime closingDate,
+    required DateTime dueDate,
+    required double statementBalance,
+    required double minimumDue,
+  }) async {
+    final closes = DateTime(closingDate.year, closingDate.month, closingDate.day + 1);
+    final due = DateTime(dueDate.year, dueDate.month, dueDate.day + 1);
+    if (!due.isAfter(closes) || !statementBalance.isFinite || statementBalance < 0 ||
+        statementBalance > 999999999999 || !minimumDue.isFinite ||
+        minimumDue < 0 || minimumDue > statementBalance) {
+      throw ArgumentError('Invalid credit statement');
+    }
+    await transaction(() async {
+      final wallet = await getWalletInstanceOrNull(walletPk);
+      final currency = wallet?.currency?.toLowerCase();
+      if (currency == null || currency.isEmpty ||
+          (await getAccountDetails(walletPk))?['account_type'] != 'credit') {
+        throw StateError('Select a saved credit card with a currency');
+      }
+      await customStatement(
+        'INSERT INTO credit_card_statements '
+        '(wallet_fk,closes_at,due_at,statement_balance,minimum_due,currency) VALUES (?,?,?,?,?,?) '
+        'ON CONFLICT(wallet_fk,closes_at) DO UPDATE SET '
+        'due_at=excluded.due_at,statement_balance=excluded.statement_balance,'
+        'minimum_due=excluded.minimum_due,currency=excluded.currency',
+        [walletPk, closes.millisecondsSinceEpoch, due.millisecondsSinceEpoch,
+         statementBalance, minimumDue, currency],
+      );
+    });
+  }
+
+  Future<int> importCreditCardStatements(String walletPk, List<BankStatementLine> statements) {
+    if (statements.isEmpty || statements.length > 36) {
+      throw ArgumentError('Invalid statement import size');
+    }
+    return transaction(() async {
+      var added = 0;
+      for (final line in statements) {
+        final close = DateTime(line.closed.year, line.closed.month, line.closed.day + 1);
+        final existing = await customSelect(
+          'SELECT 1 FROM credit_card_statements WHERE wallet_fk = ? AND closes_at = ?',
+          variables: [Variable<String>(walletPk), Variable<int>(close.millisecondsSinceEpoch)],
+        ).getSingleOrNull();
+        if (existing != null) continue;
+        await saveCreditCardStatement(
+          walletPk: walletPk, closingDate: line.closed, dueDate: line.due,
+          statementBalance: line.balance, minimumDue: line.minimum,
+        );
+        added++;
+      }
+      return added;
+    });
+  }
+
+  Future<bool> deleteCreditCardStatement(String walletPk, DateTime closed) async {
+    final cutoff = DateTime(closed.year, closed.month, closed.day + 1);
+    final count = await customUpdate(
+      'DELETE FROM credit_card_statements WHERE wallet_fk = ? AND closes_at = ?',
+      variables: [Variable<String>(walletPk), Variable<int>(cutoff.millisecondsSinceEpoch)],
+    );
+    return count > 0;
+  }
+
+  Future<List<({DateTime closed, DateTime due, double balance, double minimum, String currency,
+      double? ledgerBalance, double? credits, double? remaining,
+      double? minimumRemaining, bool overdue, bool superseded})>> getCreditCardStatements(
+        String walletPk, {DateTime? asOf}) async {
+    final now = asOf ?? DateTime.now();
+    final rows = await customSelect(
+      'WITH statement_windows AS ('
+      'SELECT *, LEAD(closes_at) OVER (PARTITION BY wallet_fk, currency ORDER BY closes_at) AS next_close '
+      'FROM credit_card_statements WHERE wallet_fk = ?) '
+      'SELECT s.*, CASE WHEN LOWER(w.currency) = s.currency THEN '
+      '(SELECT COALESCE(SUM(amount), 0) FROM transactions '
+      'WHERE wallet_fk = s.wallet_fk AND paid = 1 AND skip_paid = 0 '
+      'AND date_created < CAST(s.closes_at / 1000 AS INTEGER)) END AS ledger_total, '
+      'CASE WHEN LOWER(w.currency) = s.currency AND CAST(s.closes_at / 1000 AS INTEGER) <= ? THEN '
+      '(SELECT COALESCE(SUM(amount), 0) FROM transactions '
+      'WHERE wallet_fk = s.wallet_fk AND paid = 1 AND skip_paid = 0 AND amount > 0 '
+      'AND date_created >= CAST(s.closes_at / 1000 AS INTEGER) '
+      'AND (s.next_close IS NULL OR date_created < CAST(s.next_close / 1000 AS INTEGER)) '
+      'AND date_created <= ?) END AS statement_credits '
+      'FROM statement_windows s JOIN wallets w ON w.wallet_pk = s.wallet_fk '
+      'ORDER BY s.closes_at DESC LIMIT 36',
+      variables: [Variable<String>(walletPk), Variable<DateTime>(now), Variable<DateTime>(now)],
+    ).get();
+    DateTime dayLabel(int milliseconds) {
+      final cutoff = DateTime.fromMillisecondsSinceEpoch(milliseconds);
+      return DateTime(cutoff.year, cutoff.month, cutoff.day - 1);
+    }
+    return rows.map((row) {
+      final signed = row.readNullable<double>('ledger_total');
+      final credits = row.readNullable<double>('statement_credits');
+      final balance = row.read<double>('statement_balance');
+      final minimum = row.read<double>('minimum_due');
+      final due = row.read<int>('due_at');
+      final nextClose = row.readNullable<int>('next_close');
+      final superseded = nextClose != null && now.millisecondsSinceEpoch >= nextClose;
+      final remaining = credits == null ? null : (balance - credits).clamp(0.0, balance);
+      final minimumRemaining = credits == null ? null : (minimum - credits).clamp(0.0, minimum);
+      return (
+        closed: dayLabel(row.read<int>('closes_at')),
+        due: dayLabel(due),
+        balance: balance,
+        minimum: minimum,
+        currency: row.read<String>('currency'),
+        ledgerBalance: signed == null ? null : (signed < 0 ? -signed : 0.0),
+        credits: credits,
+        remaining: remaining,
+        minimumRemaining: minimumRemaining,
+        superseded: superseded,
+        overdue: !superseded && minimumRemaining != null && minimumRemaining > 0 &&
+            now.millisecondsSinceEpoch >= due,
+      );
+    }).toList();
+  }
+
+  Future<void> saveAccountIdentifier({
+    required String identifierPk,
+    required String walletPk,
+    required String identifierType,
+    required String identifierValue,
+  }) async {
+    final type = identifierType.trim().toLowerCase();
+    final value = identifierValue.trim().toLowerCase();
+    if (identifierPk.trim().isEmpty || value.isEmpty ||
+        !{'card_last4', 'sender', 'account_alias'}.contains(type)) {
+      throw ArgumentError('Invalid account identifier');
+    }
+    if (await getWalletInstanceOrNull(walletPk) == null) {
+      throw StateError('Wallet does not exist');
+    }
+    await customStatement(
+      'INSERT INTO account_identifiers '
+      '(identifier_pk, wallet_fk, identifier_type, identifier_value) '
+      'VALUES (?, ?, ?, ?) ON CONFLICT(identifier_pk) DO UPDATE SET '
+      'wallet_fk=excluded.wallet_fk, identifier_type=excluded.identifier_type, '
+      'identifier_value=excluded.identifier_value',
+      [identifierPk, walletPk, type, value],
+    );
+  }
+
+  Future<List<({String id, String account, String digits})>> getImportCardLinks({String? walletPk}) async {
+    final rows = await customSelect(
+      'SELECT i.identifier_pk, w.name, i.identifier_value '
+      'FROM account_identifiers i JOIN wallets w ON w.wallet_pk = i.wallet_fk '
+      "WHERE i.identifier_type = 'card_last4' "
+      '${walletPk == null ? '' : 'AND i.wallet_fk = ? '}'
+      'ORDER BY w.name, i.identifier_value',
+      variables: [if (walletPk != null) Variable<String>(walletPk)],
+    ).get();
+    return rows.map((row) => (
+      id: row.read<String>('identifier_pk'),
+      account: row.read<String>('name'),
+      digits: row.read<String>('identifier_value'),
+    )).toList();
+  }
+
+  Future<bool> addImportCardLink(String walletPk, String digits) {
+    if (!RegExp(r'^[0-9]{4}$').hasMatch(digits)) {
+      throw ArgumentError.value(digits, 'digits');
+    }
+    return transaction(() async {
+      final wallet = await getWalletInstanceOrNull(walletPk);
+      if (wallet == null || wallet.currency?.trim().isNotEmpty != true ||
+          (await getAccountDetails(walletPk))?['archived'] == 1) {
+        throw StateError('Select an active account with a currency');
+      }
+      await customStatement(
+        'INSERT INTO account_identifiers '
+        '(identifier_pk, wallet_fk, identifier_type, identifier_value) '
+        "VALUES (?, ?, 'card_last4', ?) "
+        'ON CONFLICT(identifier_type, identifier_value) DO NOTHING',
+        [uuid.v4(), walletPk, digits],
+      );
+      final result = await customSelect('SELECT changes() AS count').getSingle();
+      return result.read<int>('count') == 1;
+    });
+  }
+
+  Future<void> removeImportCardLink(String id, {String? walletPk}) => customStatement(
+    "DELETE FROM account_identifiers WHERE identifier_pk = ? AND identifier_type = 'card_last4' "
+    '${walletPk == null ? '' : 'AND wallet_fk = ?'}',
+    [id, if (walletPk != null) walletPk],
+  );
+
+  Future<String?> resolveWalletByIdentifier(
+      String identifierType, String identifierValue) async {
+    final row = await customSelect(
+      'SELECT wallet_fk FROM account_identifiers '
+      'WHERE identifier_type = ? AND identifier_value = ?',
+      variables: [
+        Variable<String>(identifierType.trim().toLowerCase()),
+        Variable<String>(identifierValue.trim().toLowerCase()),
+      ],
+    ).getSingleOrNull();
+    return row?.data['wallet_fk'] as String?;
+  }
+
+  Future<String?> suggestImportedCardWallet(String? lastFour, String? currency) async {
+    if (lastFour == null || !RegExp(r'^[0-9]{4}$').hasMatch(lastFour) ||
+        currency == null || currency.trim().isEmpty) return null;
+
+    final matches = await customSelect(
+      'SELECT w.wallet_pk FROM wallets w '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'WHERE LOWER(w.currency) = ? AND COALESCE(d.archived, 0) = 0 '
+      'AND (EXISTS (SELECT 1 FROM account_identifiers i '
+      "WHERE i.wallet_fk = w.wallet_pk AND i.identifier_type = 'card_last4' "
+      'AND i.identifier_value = ?) OR EXISTS (SELECT 1 FROM credit_card_details c '
+      "WHERE c.wallet_fk = w.wallet_pk AND d.account_type = 'credit' "
+      'AND c.last_four = ?)) LIMIT 2',
+      variables: [
+        Variable<String>(currency.trim().toLowerCase()),
+        Variable<String>(lastFour),
+        Variable<String>(lastFour),
+      ],
+    ).get();
+    return matches.length == 1 ? matches.single.read<String>('wallet_pk') : null;
+  }
+
+  Future<bool> addImportNotificationLink(String walletPk, String package,
+      {bool sms = false}) =>
+      transaction(() async {
+    final source = sms ? 'sms' : 'notification';
+    final sourceId = sms ? package.trim().toLowerCase() : package;
+    if (sms
+        ? !RegExp(r'^[a-z0-9+_. -]{1,32}$').hasMatch(sourceId)
+        : !RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$')
+                .hasMatch(sourceId) || sourceId.length > 255) {
+      throw ArgumentError('Invalid message source');
+    }
+    final wallet = await getWalletInstanceOrNull(walletPk);
+    final currency = wallet?.currency?.trim().toLowerCase();
+    if (currency == null || currency.isEmpty ||
+        (await getAccountDetails(walletPk))?['archived'] == 1) {
+      throw StateError('Select an active account with a currency');
+    }
+    final changed = await customUpdate(
+      'INSERT INTO account_identifiers '
+      '(identifier_pk, wallet_fk, identifier_type, identifier_value) '
+      "VALUES (?, ?, 'sender', ?) "
+      'ON CONFLICT(identifier_type, identifier_value) DO NOTHING',
+      variables: [Variable<String>(uuid.v4()), Variable<String>(walletPk),
+        Variable<String>('$source:$sourceId:$currency')],
+    );
+    return changed == 1;
+  });
+
+  Future<List<({String id, String account, String package, String currency})>>
+      getImportNotificationLinks({bool sms = false}) async {
+    final rows = await customSelect(
+      'SELECT i.identifier_pk, i.identifier_value, w.name '
+      'FROM account_identifiers i JOIN wallets w ON w.wallet_pk = i.wallet_fk '
+      "WHERE i.identifier_type = 'sender' AND i.identifier_value LIKE ? "
+      'ORDER BY w.name, i.identifier_value',
+      variables: [Variable<String>(sms ? 'sms:%' : 'notification:%')],
+    ).get();
+    return [
+      for (final row in rows)
+        if (row.read<String>('identifier_value').split(':') case [_, final package, final currency])
+          (id: row.read<String>('identifier_pk'), account: row.read<String>('name'),
+           package: package, currency: currency),
+    ];
+  }
+
+  Future<void> removeImportNotificationLink(String id, {bool sms = false}) => customStatement(
+    "DELETE FROM account_identifiers WHERE identifier_pk = ? "
+    "AND identifier_type = 'sender' AND identifier_value LIKE ?",
+    [id, sms ? 'sms:%' : 'notification:%'],
+  );
+
+  Future<String?> suggestImportedNotificationWallet(
+      String? package, String? currency, {bool sms = false}) async {
+    final code = currency?.trim().toLowerCase();
+    if (package == null || code == null || code.isEmpty) return null;
+    final row = await customSelect(
+      'SELECT w.wallet_pk FROM account_identifiers i '
+      'JOIN wallets w ON w.wallet_pk = i.wallet_fk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      "WHERE i.identifier_type = 'sender' AND i.identifier_value = ? "
+      'AND LOWER(TRIM(w.currency)) = ? AND COALESCE(d.archived, 0) = 0',
+      variables: [Variable<String>(sms ? 'sms:${package.trim().toLowerCase()}:$code'
+          : 'notification:$package:$code'), Variable<String>(code)],
+    ).getSingleOrNull();
+    return row?.read<String>('wallet_pk');
+  }
+
+  String financialImportFingerprint({
+    required String sourceType,
+    String? sender,
+    required String rawText,
+    required DateTime occurredAt,
+  }) {
+    // Stable, deterministic local fingerprint without adding a crypto dependency.
+    final normalized = [
+      sourceType.trim().toLowerCase(),
+      sender?.trim().toLowerCase() ?? '',
+      // Preserve the canonical input used by existing schema-47 fingerprints.
+      rawText.replaceAll(RegExp(r'\\s+'), ' ').trim().toLowerCase(),
+      occurredAt.millisecondsSinceEpoch.toString(),
+    ].join('|');
+    // Keep the same lower 63 bits on Dart VM and JavaScript.
+    var hash = BigInt.parse('cbf29ce484222325', radix: 16);
+    final prime = BigInt.from(0x100000001b3);
+    final mask = (BigInt.one << 63) - BigInt.one;
+    for (final unit in utf8.encode(normalized)) {
+      hash = ((hash ^ BigInt.from(unit)) * prime) & mask;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  Future<bool> stageBankNotificationEvent({
+    required String eventPk,
+    required String package,
+    required String notificationId,
+    required String? deliverySignature,
+    required DateTime occurredAt,
+    required DateTime receivedAt,
+    required double amount,
+    required String currency,
+    required String direction,
+    required String? lastFour,
+    required double confidence,
+    String sourceType = 'notification',
+  }) async {
+    if (sourceType != 'notification' && sourceType != 'sms') {
+      throw ArgumentError.value(sourceType, 'sourceType');
+    }
+    const maxAge = Duration(days: 1);
+    const updateWindow = Duration(minutes: 2);
+    if (occurredAt.isBefore(receivedAt.subtract(maxAge)) ||
+        occurredAt.isAfter(receivedAt.add(updateWindow))) return false;
+    final time = occurredAt.millisecondsSinceEpoch;
+    final signed = deliverySignature != null &&
+        RegExp(r'^[a-f0-9]{64}$').hasMatch(deliverySignature);
+    final replayWindow = sourceType == 'sms' ? maxAge : updateWindow;
+    final identity = financialImportFingerprint(
+      sourceType: '$sourceType-delivery', sender: '$package:$notificationId',
+      rawText: jsonEncode([if (signed) deliverySignature, amount, currency, direction, lastFour]),
+      occurredAt: DateTime.fromMillisecondsSinceEpoch(0),
+    );
+    // Older builds deduplicated solely by source and timestamp. Suppress
+    // replays of their matching parsed events without conflating new alerts.
+    final legacy = financialImportFingerprint(
+      sourceType: sourceType, sender: package, rawText: package, occurredAt: occurredAt,
+    );
+    return transaction(() async {
+      await customStatement(
+        'DELETE FROM bank_notification_receipts WHERE posted_at < ?',
+        [receivedAt.subtract(maxAge + updateWindow).millisecondsSinceEpoch],
+      );
+      final prior = await customSelect(
+        'SELECT 1 FROM bank_notification_receipts '
+        'WHERE identity = ? AND posted_at BETWEEN ? AND ? LIMIT 1',
+        variables: [
+          Variable<String>(identity),
+          Variable<int>(time - replayWindow.inMilliseconds),
+          Variable<int>(time + replayWindow.inMilliseconds),
+        ],
+      ).getSingleOrNull();
+      if (prior != null) return false;
+      final oldEvent = await customSelect(
+        'SELECT 1 FROM imported_financial_events WHERE fingerprint = ? '
+        'AND amount = ? AND currency = ? AND direction = ? AND identifier_last4 IS ?',
+        variables: [Variable<String>(legacy), Variable<double>(amount),
+          Variable<String>(currency), Variable<String>(direction), Variable<String>(lastFour)],
+      ).getSingleOrNull();
+      final added = oldEvent == null && await stageImportedFinancialEvent(
+        eventPk: eventPk, sourceType: sourceType, sourceSender: package,
+        rawText: package, fingerprintInput: identity, occurredAt: occurredAt, amount: amount,
+        currency: currency, direction: direction, identifierLast4: lastFour, confidence: confidence,
+      );
+      await customStatement(
+        'INSERT OR IGNORE INTO bank_notification_receipts(identity, posted_at) VALUES (?, ?)',
+        [identity, time],
+      );
+      return added;
+    });
+  }
+
+  Future<bool> stageImportedFinancialEvent({
+    required String eventPk,
+    required String sourceType,
+    String? sourceSender,
+    required String rawText,
+    String? fingerprintInput,
+    required DateTime occurredAt,
+    double? amount,
+    String? currency,
+    String? direction,
+    String? merchant,
+    String? identifierLast4,
+    String? walletFk,
+    double confidence = 0,
+  }) async {
+    if (eventPk.trim().isEmpty || rawText.trim().isEmpty ||
+        !confidence.isFinite || confidence < 0 || confidence > 1 ||
+        amount != null && (!amount.isFinite || amount < 0) ||
+        direction != null && !{'debit', 'credit'}.contains(direction)) {
+      throw ArgumentError('Invalid imported financial event');
+    }
+    final fingerprint = financialImportFingerprint(
+      sourceType: sourceType, sender: sourceSender,
+      rawText: fingerprintInput ?? rawText, occurredAt: occurredAt);
+    return transaction(() async {
+      await customStatement(
+        'INSERT INTO imported_financial_events '
+        '(event_pk, source_type, source_sender, raw_text, occurred_at, amount, '
+        'currency, direction, merchant, identifier_last4, wallet_fk, confidence, '
+        'fingerprint, created_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+        'ON CONFLICT(fingerprint) DO NOTHING',
+        [
+          eventPk, sourceType.trim().toLowerCase(), sourceSender?.trim(), rawText,
+          occurredAt.millisecondsSinceEpoch, amount, currency?.toLowerCase(),
+          direction, merchant?.trim(), identifierLast4, walletFk, confidence,
+          fingerprint, DateTime.now().millisecondsSinceEpoch,
+        ],
+      );
+      final result = await customSelect('SELECT changes() AS count').getSingle();
+      return result.read<int>('count') == 1;
+    });
+  }
+
+  /// Call on an isolated backup connection so the local review inbox is preserved.
+  Future<void> omitImportMessageBodiesFromBackup() async {
+    await customStatement("UPDATE imported_financial_events SET raw_text = '' WHERE raw_text != ''");
+    await customStatement('DELETE FROM bank_notification_receipts');
+    await customStatement('VACUUM');
+  }
+
+  Future<List<Map<String, dynamic>>> getImportedFinancialEvents({
+    String status = 'review',
+    String? direction,
+    String? sourceType,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    if (!{'review', 'approved', 'ignored', 'duplicate'}.contains(status) ||
+        (direction != null && !{'debit', 'credit'}.contains(direction)) ||
+        (sourceType != null && !{'manual', 'notification', 'sms'}.contains(sourceType)) ||
+        limit < 1 || limit > 500 || offset < 0) {
+      throw ArgumentError('Invalid import query');
+    }
+    final rows = await customSelect(
+      'SELECT * FROM imported_financial_events WHERE status = ? '
+      '${direction == null ? '' : 'AND direction = ? '}'
+      '${sourceType == null ? '' : 'AND source_type = ? '}'
+      'ORDER BY occurred_at DESC, event_pk DESC LIMIT ? OFFSET ?',
+      variables: [
+        Variable<String>(status),
+        if (direction != null) Variable<String>(direction),
+        if (sourceType != null) Variable<String>(sourceType),
+        Variable<int>(limit),
+        Variable<int>(offset),
+      ],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
+  Future<bool> restoreIgnoredFinancialEvent(String eventPk) async {
+    final changed = await customUpdate(
+      "UPDATE imported_financial_events SET status = 'review' "
+      "WHERE event_pk = ? AND status = 'ignored' AND transaction_fk IS NULL",
+      variables: [Variable<String>(eventPk)],
+    );
+    return changed == 1;
+  }
+
+  Future<void> setImportedFinancialEventStatus(
+      String eventPk, String status, {String? transactionFk}) async {
+    if (!{'review', 'approved', 'ignored', 'duplicate'}.contains(status)) {
+      throw ArgumentError.value(status, 'status');
+    }
+    await customStatement(
+      'UPDATE imported_financial_events SET status = ?, transaction_fk = ?, '
+      "raw_text = CASE WHEN ? = 'review' THEN raw_text ELSE '' END "
+      'WHERE event_pk = ?',
+      [status, transactionFk, status, eventPk],
+    );
+  }
+
+  Future<String> approveImportedFinancialEvent({
+    required String eventPk,
+    required String transactionPk,
+    required String categoryFk,
+    String? walletPk,
+    String? title,
+    String? expectedExistingPk,
+    ImportDuplicateAction duplicateAction = ImportDuplicateAction.linkExisting,
+  }) async {
+    if (transactionPk.trim().isEmpty || categoryFk.trim().isEmpty) {
+      throw ArgumentError('Invalid approval target');
+    }
+    return transaction(() async {
+      final row = await customSelect(
+        'SELECT * FROM imported_financial_events WHERE event_pk = ?',
+        variables: [Variable<String>(eventPk)],
+      ).getSingleOrNull();
+      if (row == null) throw StateError('Imported event not found');
+      final event = row.data;
+      if (event['status'] != 'review') throw StateError('Event already reviewed');
+      final amount = (event['amount'] as num?)?.toDouble();
+      final direction = event['direction'] as String?;
+      final resolvedWallet = walletPk ?? event['wallet_fk'] as String?;
+      if (amount == null || !amount.isFinite || amount <= 0 ||
+          amount > 999999999999 || direction == null || resolvedWallet == null) {
+        throw StateError('Imported event needs manual details');
+      }
+      final wallet = await getWalletInstanceOrNull(resolvedWallet);
+      if (wallet == null ||
+          (await getAccountDetails(resolvedWallet))?['archived'] == 1) {
+        throw StateError('Select an active account');
+      }
+      if (event['currency'] == null ||
+          event['currency'] != wallet.currency?.toLowerCase()) {
+        throw StateError('Import currency must match the wallet currency');
+      }
+      final category = await getCategoryInstanceOrNull(categoryFk);
+      if (categoryFk == '0' || category == null ||
+          category.income != (direction == 'credit')) {
+        throw ArgumentError('Select a matching transaction category');
+      }
+      if (await (select(transactions)
+            ..where((row) => row.transactionPk.equals(transactionPk)))
+          .getSingleOrNull() != null) {
+        throw StateError('Transaction already exists');
+      }
+      final occurredAt =
+          DateTime.fromMillisecondsSinceEpoch(event['occurred_at'] as int);
+      final signedAmount = direction == 'credit' ? amount : -amount;
+      final duplicate = await customSelect(
+        'SELECT t.* FROM transactions t WHERE t.wallet_fk = ? AND t.paid = 1 AND t.skip_paid = 0 '
+        'AND (t.amount BETWEEN ? AND ? OR EXISTS ('
+        "SELECT 1 FROM cashu_instapay_expenses p WHERE ? = 'egp' "
+        'AND p.transaction_fk = t.transaction_pk '
+        'AND p.wallet_fk = t.wallet_fk AND t.type IS NULL AND t.income = 0 '
+        'AND ROUND(-t.amount * 100) = p.principal_minor + p.fee_minor '
+        'AND (-p.principal_minor / 100.0) BETWEEN ? AND ?)) '
+        'AND t.date_created BETWEEN ? AND ? '
+        'ORDER BY CASE WHEN t.amount BETWEEN ? AND ? THEN 0 ELSE 1 END, '
+        't.date_created DESC, t.transaction_pk LIMIT 1',
+        variables: [
+          Variable<String>(resolvedWallet),
+          Variable<double>(signedAmount - 0.00000001),
+          Variable<double>(signedAmount + 0.00000001),
+          Variable<String>(event['currency'] as String?),
+          Variable<double>(signedAmount - 0.00000001),
+          Variable<double>(signedAmount + 0.00000001),
+          Variable<DateTime>(occurredAt.subtract(const Duration(minutes: 2))),
+          Variable<DateTime>(occurredAt.add(const Duration(minutes: 2))),
+          Variable<double>(signedAmount - 0.00000001),
+          Variable<double>(signedAmount + 0.00000001),
+        ],
+      ).getSingleOrNull();
+      if (expectedExistingPk != null &&
+          (duplicateAction != ImportDuplicateAction.linkExisting ||
+              duplicate?.read<String>('transaction_pk') != expectedExistingPk)) {
+        throw StateError('The possible duplicate changed during review');
+      }
+      if (duplicate != null && duplicateAction != ImportDuplicateAction.saveSeparate) {
+        if (duplicateAction == ImportDuplicateAction.ask) {
+          throw ImportedTransactionMatch(transactions.map(duplicate.data));
+        }
+        await setImportedFinancialEventStatus(eventPk, 'duplicate',
+            transactionFk: duplicate.data['transaction_pk'] as String?);
+        return 'duplicate';
+      }
+      final saved = await createOrUpdateTransaction(
+        Transaction(
+          transactionPk: transactionPk,
+          name: (title?.trim().isNotEmpty == true
+                  ? title!.trim()
+                  : (event['merchant'] as String?)?.trim().isNotEmpty == true
+                      ? (event['merchant'] as String).trim()
+                      : 'Imported transaction'),
+          amount: signedAmount,
+          note: '',
+          categoryFk: categoryFk,
+          walletFk: resolvedWallet,
+          dateCreated: occurredAt,
+          dateTimeModified: null,
+          income: direction == 'credit',
+          paid: true,
+          skipPaid: false,
+        ),
+        updateSharedEntry: false,
+      );
+      if (saved == null) throw StateError('Imported transaction write failed');
+      await setImportedFinancialEventStatus(
+          eventPk, 'approved', transactionFk: transactionPk);
+      return 'approved';
+    });
+  }
+
+  Future<void> savePlanningScenario({
+    required String scenarioPk,
+    required String name,
+    required DateTime baseDate,
+    required int horizonDays,
+    required double startingBalance,
+    String? currency,
+  }) async {
+    final code = currency?.trim().toLowerCase();
+    if (scenarioPk.trim().isEmpty || name.trim().isEmpty ||
+        horizonDays < 1 || horizonDays > 3650 || !startingBalance.isFinite ||
+        (code != null && !RegExp(r'^[a-z]{3}$').hasMatch(code))) {
+      throw ArgumentError('Invalid planning scenario');
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await transaction(() async {
+      if (code != null) {
+        final existing = await customSelect(
+          'SELECT currency FROM planning_scenario_currency WHERE scenario_fk = ?',
+          variables: [Variable<String>(scenarioPk)],
+        ).getSingleOrNull();
+        if (existing != null && existing.read<String>('currency') != code) {
+          throw StateError('The currency of a saved scenario cannot change');
+        }
+      }
+      await customStatement(
+        'INSERT INTO planning_scenarios '
+        '(scenario_pk,name,base_date,horizon_days,starting_balance,created_at,updated_at) '
+        'VALUES (?,?,?,?,?,?,?) ON CONFLICT(scenario_pk) DO UPDATE SET '
+        'name=excluded.name,base_date=excluded.base_date,horizon_days=excluded.horizon_days,'
+        'starting_balance=excluded.starting_balance,updated_at=excluded.updated_at',
+        [scenarioPk, name.trim(), baseDate.millisecondsSinceEpoch, horizonDays,
+         startingBalance, now, now],
+      );
+      if (code != null) {
+        await customStatement(
+          'INSERT INTO planning_scenario_currency (scenario_fk,currency) VALUES (?,?) '
+          'ON CONFLICT(scenario_fk) DO NOTHING', [scenarioPk, code],
+        );
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getPlanningScenarios() async {
+    final rows = await customSelect(
+      'SELECT p.*, c.currency FROM planning_scenarios p '
+      'LEFT JOIN planning_scenario_currency c ON c.scenario_fk = p.scenario_pk '
+      'ORDER BY p.updated_at DESC, p.scenario_pk',
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getPlanningScenarioItems(String scenarioPk) async {
+    final rows = await customSelect(
+      'SELECT * FROM planning_scenario_items WHERE scenario_fk = ? '
+      'ORDER BY first_date, item_pk',
+      variables: [Variable<String>(scenarioPk)],
+    ).get();
+    return rows.map((row) => row.data).toList();
+  }
+
+  Future<void> deletePlanningScenarioItem(String scenarioPk, String itemPk) async {
+    await customStatement(
+      'DELETE FROM planning_scenario_items WHERE scenario_fk = ? AND item_pk = ?',
+      [scenarioPk, itemPk],
+    );
+  }
+
+  Future<Set<String>> getPlanningScenarioGoals(String scenarioPk) async {
+    final rows = await customSelect(
+      'SELECT goal_fk FROM planning_scenario_goals WHERE scenario_fk = ? ORDER BY goal_fk',
+      variables: [Variable<String>(scenarioPk)],
+    ).get();
+    return rows.map((row) => row.read<String>('goal_fk')).toSet();
+  }
+
+  Future<void> setPlanningScenarioGoals(String scenarioPk, Set<String> goalPks) async {
+    await transaction(() async {
+      final scenario = await customSelect(
+        'SELECT scenario_pk FROM planning_scenarios WHERE scenario_pk = ?',
+        variables: [Variable<String>(scenarioPk)],
+      ).getSingleOrNull();
+      if (scenario == null) throw StateError('Planning scenario not found');
+      final valid = goalPks.isEmpty ? <Objective>[] : await (select(objectives)
+            ..where((row) => row.objectivePk.isIn(goalPks) &
+                row.type.equals(ObjectiveType.goal.index) & row.archived.equals(false)))
+          .get();
+      if (valid.length != goalPks.length) throw StateError('Goal no longer available');
+      await customStatement(
+        'DELETE FROM planning_scenario_goals WHERE scenario_fk = ?', [scenarioPk],
+      );
+      for (final id in goalPks) {
+        await customStatement(
+          'INSERT INTO planning_scenario_goals (scenario_fk,goal_fk) VALUES (?,?)',
+          [scenarioPk, id],
+        );
+      }
+    });
+  }
+
+  Future<void> deletePlanningScenario(String scenarioPk) async {
+    await transaction(() async {
+      await customStatement(
+        'DELETE FROM planning_scenario_goals WHERE scenario_fk = ?', [scenarioPk],
+      );
+      await customStatement(
+        'DELETE FROM planning_scenario_items WHERE scenario_fk = ?', [scenarioPk],
+      );
+      await customStatement(
+        'DELETE FROM planning_scenario_currency WHERE scenario_fk = ?', [scenarioPk],
+      );
+      await customStatement(
+        'DELETE FROM planning_scenarios WHERE scenario_pk = ?', [scenarioPk],
+      );
+    });
+  }
+
+  Future<void> savePlanningScenarioItem({
+    required String itemPk,
+    required String scenarioPk,
+    required String name,
+    required double amount,
+    required bool income,
+    required DateTime firstDate,
+    int? recurrenceDays,
+    DateTime? endDate,
+  }) async {
+    if (itemPk.trim().isEmpty || scenarioPk.trim().isEmpty ||
+        name.trim().isEmpty || !amount.isFinite || amount < 0 ||
+        recurrenceDays != null && recurrenceDays <= 0 ||
+        endDate != null && endDate.isBefore(firstDate)) {
+      throw ArgumentError('Invalid planning item');
+    }
+    await customStatement(
+      'INSERT INTO planning_scenario_items '
+      '(item_pk,scenario_fk,name,amount,direction,first_date,recurrence_days,end_date) '
+      'VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(item_pk) DO UPDATE SET '
+      'scenario_fk=excluded.scenario_fk,name=excluded.name,amount=excluded.amount,'
+      'direction=excluded.direction,first_date=excluded.first_date,'
+      'recurrence_days=excluded.recurrence_days,end_date=excluded.end_date',
+      [itemPk, scenarioPk, name.trim(), amount, income ? 'income' : 'expense',
+       firstDate.millisecondsSinceEpoch, recurrenceDays,
+       endDate?.millisecondsSinceEpoch],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> calculatePlanningScenario(
+      String scenarioPk, {String? scheduledWalletPk, Set<String> scheduledWalletPks = const {}, bool projectRecurrences = false, bool includeOverdueBills = false, String? goalPk,
+        Map<String, dynamic>? rateSettings}) async {
+    final scenario = await customSelect(
+      'SELECT p.*, c.currency FROM planning_scenarios p '
+      'LEFT JOIN planning_scenario_currency c ON c.scenario_fk = p.scenario_pk '
+      'WHERE p.scenario_pk = ?',
+      variables: [Variable<String>(scenarioPk)]).getSingleOrNull();
+    if (scenario == null) throw StateError('Planning scenario not found');
+    final items = await customSelect(
+      'SELECT * FROM planning_scenario_items WHERE scenario_fk = ? '
+      'ORDER BY first_date, item_pk',
+      variables: [Variable<String>(scenarioPk)]).get();
+    final base = DateTime.fromMillisecondsSinceEpoch(
+        scenario.data['base_date'] as int);
+    DateTime advanceDays(DateTime date, int days) => DateTime(
+      date.year, date.month, date.day + days, date.hour, date.minute,
+      date.second, date.millisecond, date.microsecond,
+    );
+    final horizon = DateTime(base.year, base.month,
+        base.day + (scenario.data['horizon_days'] as int) + 1);
+    final startingBalance = (scenario.data['starting_balance'] as num).toDouble();
+    var balance = startingBalance;
+    final points = <Map<String, dynamic>>[];
+    for (final row in items) {
+      final data = row.data;
+      var date = DateTime.fromMillisecondsSinceEpoch(data['first_date'] as int);
+      final end = data['end_date'] == null
+          ? horizon
+          : DateTime.fromMillisecondsSinceEpoch(data['end_date'] as int);
+      final recurrence = data['recurrence_days'] as int?;
+      if (recurrence != null && recurrence <= 0) {
+        throw StateError('Invalid saved recurrence');
+      }
+      if (date.isBefore(base)) {
+        if (recurrence == null) continue;
+        final baseDay = DateTime.utc(base.year, base.month, base.day);
+        final itemDay = DateTime.utc(date.year, date.month, date.day);
+        final elapsed = baseDay.difference(itemDay).inDays;
+        date = advanceDays(date, ((elapsed + recurrence - 1) ~/ recurrence) * recurrence);
+        if (date.isBefore(base)) date = advanceDays(date, recurrence);
+      }
+      final signed = (data['amount'] as num).toDouble() *
+          (data['direction'] == 'income' ? 1 : -1);
+      while (date.isBefore(horizon) && !date.isAfter(end)) {
+        points.add({
+          'date': date,
+          'item_pk': data['item_pk'],
+          'amount': signed,
+          'name': data['name'],
+        });
+        if (recurrence == null) break;
+        date = advanceDays(date, recurrence);
+      }
+    }
+    final scheduledAccounts = {
+      ...scheduledWalletPks,
+      if (scheduledWalletPk != null) scheduledWalletPk,
+    };
+    final target = scenario.readNullable<String>('currency');
+    if (target == null && scheduledAccounts.length > 1) {
+      throw ArgumentError('Multiple scheduled accounts require a scenario currency');
+    }
+    if (scheduledAccounts.isNotEmpty) {
+      final scheduled = await (select(transactions)
+            ..where((row) =>
+                row.walletFk.isIn(scheduledAccounts) &
+                row.paid.equals(false) &
+                row.skipPaid.equals(false) &
+                (row.dateCreated.isBiggerOrEqualValue(base) |
+                    (includeOverdueBills ? row.amount.isSmallerThanValue(0)
+                      : const Constant(false))) &
+                row.dateCreated.isSmallerThanValue(horizon) &
+                row.type.isInValues([
+                  TransactionSpecialType.upcoming,
+                  TransactionSpecialType.subscription,
+                  TransactionSpecialType.repetitive,
+                ])))
+          .get();
+      final ratios = <String, double>{};
+      if (target != null) {
+        for (final walletPk in scheduled.map((entry) => entry.walletFk).toSet()) {
+          final source = (await getWalletInstanceOrNull(walletPk))?.currency;
+          final ratio = strictCurrencyRatio(source, target,
+              appStateSettingsPassed: rateSettings);
+          if (ratio == null) throw PlanningRateUnavailable(source, target);
+          ratios[walletPk] = ratio;
+        }
+      }
+      final lastScheduledBySeries = <String, DateTime>{};
+      String seriesKey(String id) => id.replaceFirst(RegExp(r'::predict::[0-9]+$'), '');
+      for (final entry in scheduled) {
+        final series = seriesKey(entry.transactionPk);
+        final last = lastScheduledBySeries[series];
+        if (last == null || entry.dateCreated.isAfter(last)) {
+          lastScheduledBySeries[series] = entry.dateCreated;
+        }
+      }
+      for (final entry in scheduled) {
+        void addOccurrence(DateTime date, {required bool projected, DateTime? overdueSince}) {
+          points.add({
+            'date': date,
+            'item_pk': entry.transactionPk,
+            'name': entry.name,
+            'amount': entry.amount * (ratios[entry.walletFk] ?? 1),
+            'scheduled': true,
+            'projected': projected,
+            if (overdueSince != null) 'overdue_since': overdueSince,
+            'goal_pk': entry.objectiveFk,
+          });
+        }
+
+        final overdue = entry.dateCreated.isBefore(base);
+        addOccurrence(overdue ? base : entry.dateCreated,
+            projected: false, overdueSince: overdue ? entry.dateCreated : null);
+        if (!projectRecurrences ||
+            entry.createdAnotherFutureTransaction == true ||
+            entry.objectiveFk != null ||
+            entry.objectiveLoanFk != null ||
+            (entry.type != TransactionSpecialType.subscription &&
+                entry.type != TransactionSpecialType.repetitive) ||
+            entry.dateCreated != lastScheduledBySeries[seriesKey(entry.transactionPk)]) {
+          continue;
+        }
+        var date = entry.dateCreated;
+        while (true) {
+          final next = nextRecurringDate(date, entry.reoccurrence, entry.periodLength);
+          if (next == null || !next.isAfter(date) || !next.isBefore(horizon) ||
+              (entry.endDate?.isBefore(next) ?? false)) break;
+          if (!next.isBefore(base)) addOccurrence(next, projected: true);
+          date = next;
+        }
+      }
+    }
+    final scenarioCurrency = scenario.readNullable<String>('currency');
+    final selectedGoals = scenarioCurrency == null ? const <String>{}
+        : goalPk == null ? await getPlanningScenarioGoals(scenarioPk) : {goalPk};
+    for (final selectedGoal in selectedGoals) {
+      final goal = await (select(objectives)
+            ..where((row) => row.objectivePk.equals(selectedGoal) &
+                row.type.equals(ObjectiveType.goal.index) &
+                row.archived.equals(false)))
+          .getSingleOrNull();
+      final deadline = goal?.endDate;
+      if (scenarioCurrency != null && goal != null && deadline != null &&
+          !deadline.isBefore(base) && deadline.isBefore(horizon)) {
+        double convert(double amount, String? currency) {
+          if (amount == 0) return 0;
+          final ratio = strictCurrencyRatio(currency, scenarioCurrency,
+              appStateSettingsPassed: rateSettings);
+          if (ratio == null) throw PlanningRateUnavailable(currency, scenarioCurrency);
+          return amount * ratio;
+        }
+        final goalWallet = await getWalletInstanceOrNull(goal.walletFk);
+        final target = convert(goal.amount.abs(), goalWallet?.currency);
+        final direction = goal.income ? 1 : -1;
+        final settled = await customSelect(
+          'SELECT w.currency AS currency, SUM(t.amount) AS total FROM transactions t '
+          'LEFT JOIN wallets w ON w.wallet_pk = t.wallet_fk '
+          'WHERE t.objective_fk = ? AND t.paid = 1 AND t.skip_paid = 0 AND t.date_created < ? '
+          'GROUP BY w.currency',
+          variables: [Variable<String>(selectedGoal), Variable<DateTime>(base)],
+        ).get();
+        var contributed = 0.0;
+        for (final row in settled) {
+          contributed += convert(row.read<double>('total'),
+              row.readNullable<String>('currency')) * direction;
+        }
+        final endOfDeadline = advanceDays(
+            DateTime(deadline.year, deadline.month, deadline.day), 1);
+        final scheduled = points.where((point) =>
+            point['goal_pk'] == selectedGoal &&
+            (point['date'] as DateTime).isBefore(endOfDeadline));
+        for (final point in scheduled) {
+          contributed += (point['amount'] as double) * direction;
+        }
+        final remaining = target - contributed;
+        if (!remaining.isFinite) throw StateError('Invalid goal projection');
+        if (remaining > 0) {
+          points.add({
+            'date': deadline,
+            'item_pk': selectedGoal,
+            'amount': remaining * direction,
+            'name': goal.name,
+            'goal': true,
+          });
+        }
+      }
+    }
+    points.sort((a, b) {
+      final byDate = (a['date'] as DateTime).compareTo(b['date'] as DateTime);
+      if (byDate != 0) return byDate;
+      final bySource = (a['scheduled'] == true ? 1 : 0)
+          .compareTo(b['scheduled'] == true ? 1 : 0);
+      return bySource != 0
+          ? bySource
+          : (a['item_pk'] as String).compareTo(b['item_pk'] as String);
+    });
+    for (final point in points) {
+      balance += point['amount'] as double;
+      if (!balance.isFinite) throw StateError('Invalid forecast balance');
+      point['balance'] = balance;
+    }
+    points.insert(0, {'date': base, 'balance': startingBalance, 'item_pk': null});
+    return points;
+  }
+
+  Future<void> saveWealthAsset({
+    required String assetPk,
+    required String name,
+    required String assetType,
+    required String currency,
+    double quantity = 1,
+    required double unitValue,
+    bool liability = false,
+    String? institutionName,
+    String? notes,
+  }) async {
+    if (assetPk.trim().isEmpty || name.trim().isEmpty ||
+        assetType.trim().isEmpty || currency.trim().isEmpty ||
+        !quantity.isFinite || quantity < 0 || !unitValue.isFinite ||
+        unitValue < 0 || !(quantity * unitValue).isFinite) {
+      throw ArgumentError('Invalid wealth asset');
+    }
+    await customStatement(
+      'INSERT INTO wealth_assets '
+      '(asset_pk,name,asset_type,currency,quantity,unit_value,liability,institution_name,notes,updated_at) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(asset_pk) DO UPDATE SET '
+      'name=excluded.name,asset_type=excluded.asset_type,currency=excluded.currency,'
+      'quantity=excluded.quantity,unit_value=excluded.unit_value,liability=excluded.liability,'
+      'institution_name=excluded.institution_name,notes=excluded.notes,updated_at=excluded.updated_at',
+      [assetPk,name.trim(),assetType.trim(),currency.trim().toLowerCase(),quantity,
+       unitValue,liability ? 1 : 0,institutionName?.trim(),notes,
+       DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  Future<void> createInvestmentHolding({
+    required String id,
+    required String name,
+    required String currency,
+  }) async {
+    final code = currency.trim().toLowerCase();
+    if (id.isEmpty || name.trim().isEmpty || name.trim().length > NAME_LIMIT ||
+        !RegExp(r'^[a-z]{3}$').hasMatch(code)) {
+      throw ArgumentError('Invalid investment holding');
+    }
+    await customStatement(
+      'INSERT INTO investment_holdings (holding_pk, name, currency) VALUES (?, ?, ?)',
+      [id, name.trim(), code],
+    );
+  }
+
+  Future<List<({String id, String name, String currency, double? price, DateTime? priceAt})>>
+      getInvestmentHoldings() async {
+    final rows = await customSelect(
+      'SELECT * FROM investment_holdings ORDER BY name COLLATE NOCASE, holding_pk',
+    ).get();
+    return rows.map((row) {
+      final timestamp = row.readNullable<int>('market_price_at');
+      return (
+        id: row.read<String>('holding_pk'),
+        name: row.read<String>('name'),
+        currency: row.read<String>('currency'),
+        price: row.readNullable<double>('market_price'),
+        priceAt: timestamp == null ? null : DateTime.fromMillisecondsSinceEpoch(timestamp),
+      );
+    }).toList();
+  }
+
+  Future<InvestmentMarketSource?> getInvestmentMarketSource(String id) async {
+    final row = await customSelect(
+      'SELECT s.symbol, s.revision, l.mic FROM investment_market_sources s '
+      'LEFT JOIN investment_market_listings l ON l.holding_fk = s.holding_fk '
+      'WHERE s.holding_fk = ?',
+      variables: [Variable<String>(id)],
+    ).getSingleOrNull();
+    if (row == null) return null;
+    final stored = row.read<String>('symbol');
+    final mic = row.readNullable<String>('mic');
+    final stock = mic != null && stored.startsWith('$mic:');
+    return (
+      symbol: stock ? stored.substring(mic.length + 1) : stored,
+      revision: row.read<String>('revision'),
+      provider: stock ? InvestmentPriceProvider.twelveData : InvestmentPriceProvider.coinbase,
+      mic: stock ? mic : null,
+    );
+  }
+
+  Future<void> setInvestmentMarketSource(String id, String? symbol, {String? mic}) =>
+      transaction(() async {
+    if (symbol == null) {
+      await customStatement(
+        'DELETE FROM investment_market_listings WHERE holding_fk = ?', [id],
+      );
+      await customStatement(
+        'DELETE FROM investment_market_sources WHERE holding_fk = ?', [id],
+      );
+      return;
+    }
+    final holding = await customSelect(
+      'SELECT currency FROM investment_holdings WHERE holding_pk = ?',
+      variables: [Variable<String>(id)],
+    ).getSingleOrNull();
+    if (holding == null) throw StateError('Holding not found');
+    final currency = holding.read<String>('currency');
+    final listing = mic == null ? null : StockMarketListing(symbol, mic, currency);
+    // An older build rejects the venue-prefixed value instead of fetching a
+    // potentially unrelated Coinbase instrument with the same stock ticker.
+    final ticker = listing == null
+        ? CoinbaseMarketPair(symbol, currency).symbol : '${listing.mic}:${listing.symbol}';
+    await customStatement(
+      'INSERT INTO investment_market_sources (holding_fk, symbol, revision) '
+      'VALUES (?, ?, ?) ON CONFLICT(holding_fk) DO UPDATE SET '
+      'symbol = excluded.symbol, revision = excluded.revision',
+      [id, ticker, uuid.v4()],
+    );
+    if (listing == null) {
+      await customStatement(
+        'DELETE FROM investment_market_listings WHERE holding_fk = ?', [id],
+      );
+    } else {
+      await customStatement(
+        'INSERT INTO investment_market_listings (holding_fk, mic) VALUES (?, ?) '
+        'ON CONFLICT(holding_fk) DO UPDATE SET mic = excluded.mic',
+        [id, listing.mic],
+      );
+    }
+  });
+
+  Future<bool> saveFetchedInvestmentQuote(
+    String id, String sourceRevision, InvestmentQuote quote,
+  ) => transaction(() async {
+    final source = await getInvestmentMarketSource(id);
+    if (source?.revision != sourceRevision) return false;
+    return await importInvestmentQuotes(id, [quote]) == 1;
+  });
+
+  Future<void> setInvestmentMarketPrice(String id, double price, DateTime date) async {
+    if (!price.isFinite || price < 0) throw ArgumentError('Invalid market price');
+    final timestamp = date.millisecondsSinceEpoch;
+    await transaction(() async {
+      if ((await customSelect(
+        'SELECT holding_pk FROM investment_holdings WHERE holding_pk = ?',
+        variables: [Variable<String>(id)],
+      ).getSingleOrNull()) == null) throw StateError('Holding not found');
+      await customStatement(
+        'INSERT INTO investment_quotes (holding_fk,quoted_at,price) VALUES (?,?,?) '
+        'ON CONFLICT(holding_fk,quoted_at) DO UPDATE SET price=excluded.price',
+        [id, timestamp, price],
+      );
+      await customStatement(
+        'UPDATE investment_holdings SET market_price = ?, market_price_at = ? '
+        'WHERE holding_pk = ? AND (market_price_at IS NULL OR market_price_at <= ?)',
+        [price, timestamp, id, timestamp],
+      );
+    });
+  }
+
+  Future<int> importInvestmentQuotes(String id, List<InvestmentQuote> quotes) {
+    final batch = List<InvestmentQuote>.of(quotes);
+    if (batch.isEmpty || batch.length > 365 ||
+        batch.any((quote) => !quote.price.isFinite || quote.price < 0)) {
+      throw ArgumentError('Invalid quote batch');
+    }
+    return transaction(() async {
+      if ((await customSelect(
+        'SELECT holding_pk FROM investment_holdings WHERE holding_pk = ?',
+        variables: [Variable<String>(id)],
+      ).getSingleOrNull()) == null) throw StateError('Holding not found');
+      var inserted = 0;
+      InvestmentQuote? latest;
+      for (final quote in batch) {
+        final changed = await customUpdate(
+          'INSERT INTO investment_quotes (holding_fk, quoted_at, price) '
+          'VALUES (?, ?, ?) ON CONFLICT(holding_fk, quoted_at) DO NOTHING',
+          variables: [Variable<String>(id),
+            Variable<int>(quote.date.millisecondsSinceEpoch),
+            Variable<double>(quote.price)],
+        );
+        inserted += changed;
+        if (changed > 0 && (latest == null || quote.date.isAfter(latest.date))) {
+          latest = quote;
+        }
+      }
+      if (latest != null) {
+        final timestamp = latest.date.millisecondsSinceEpoch;
+        await customStatement(
+          'UPDATE investment_holdings SET market_price = ?, market_price_at = ? '
+          'WHERE holding_pk = ? AND (market_price_at IS NULL OR market_price_at <= ?)',
+          [latest.price, timestamp, id, timestamp],
+        );
+      }
+      return inserted;
+    });
+  }
+
+  Future<bool> deleteInvestmentQuote(String id, InvestmentQuote quote) =>
+      transaction(() async {
+        final timestamp = quote.date.millisecondsSinceEpoch;
+        final removed = await customUpdate(
+          'DELETE FROM investment_quotes WHERE holding_fk = ? AND quoted_at = ? AND price = ?',
+          variables: [Variable<String>(id), Variable<int>(timestamp),
+            Variable<double>(quote.price)],
+        );
+        if (removed == 0) return false;
+        final latest = await customSelect(
+          'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
+          'ORDER BY quoted_at DESC LIMIT 1',
+          variables: [Variable<String>(id)],
+        ).getSingleOrNull();
+        await customStatement(
+          'UPDATE investment_holdings SET market_price = ?, market_price_at = ? '
+          'WHERE holding_pk = ? AND market_price_at = ?',
+          [latest?.read<double>('price'), latest?.read<int>('quoted_at'), id, timestamp],
+        );
+        return true;
+      });
+
+  Future<List<InvestmentQuote>> getInvestmentPriceHistory(String id,
+      {int limit = 100, int offset = 0}) async {
+    if (limit < 1 || limit > 365 || offset < 0) {
+      throw ArgumentError('Invalid quote history page');
+    }
+    final rows = await customSelect(
+      'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
+      'ORDER BY quoted_at DESC LIMIT ? OFFSET ?',
+      variables: [Variable<String>(id), Variable<int>(limit), Variable<int>(offset)],
+    ).get();
+    return rows.map((row) => (
+      date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('quoted_at')),
+      price: row.read<double>('price'),
+    )).toList();
+  }
+
+  Future<List<InvestmentQuote>> getInvestmentQuotesForExport(String id) async {
+    final rows = await customSelect(
+      'SELECT quoted_at, price FROM investment_quotes WHERE holding_fk = ? '
+      'ORDER BY quoted_at DESC',
+      variables: [Variable<String>(id)],
+    ).get();
+    return rows.map((row) => (
+      date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('quoted_at')),
+      price: row.read<double>('price'),
+    )).toList();
+  }
+
+  Future<List<InvestmentTrade>> getInvestmentTrades(String id) async {
+    final rows = await customSelect(
+      'SELECT * FROM investment_trades WHERE holding_fk = ? ORDER BY traded_at, rowid',
+      variables: [Variable<String>(id)],
+    ).get();
+    return rows.map(_readInvestmentTrade).toList();
+  }
+
+  InvestmentTrade _readInvestmentTrade(QueryRow row) => InvestmentTrade(
+      id: row.read<String>('trade_pk'),
+      date: DateTime.fromMillisecondsSinceEpoch(row.read<int>('traded_at')),
+      buy: row.read<int>('buy') == 1,
+      units: row.read<double>('units'),
+      price: row.read<double>('price'),
+      fees: row.read<double>('fees'),
+    );
+
+  Future<void> addInvestmentTrade(String holdingId, InvestmentTrade trade) =>
+      transaction(() async {
+    final holding = await customSelect(
+      'SELECT holding_pk FROM investment_holdings WHERE holding_pk = ?',
+      variables: [Variable<String>(holdingId)],
+    ).getSingleOrNull();
+    if (holding == null) throw StateError('Holding not found');
+    await customStatement(
+      'INSERT INTO investment_trades (trade_pk, holding_fk, traded_at, buy, units, price, fees) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [trade.id, holdingId, trade.date.millisecondsSinceEpoch,
+       trade.buy ? 1 : 0, trade.units, trade.price, trade.fees],
+    );
+    InvestmentBalance.fromTrades(await getInvestmentTrades(holdingId));
+  });
+
+  Future<void> removeInvestmentTrade(String holdingId, String tradeId) =>
+      transaction(() async {
+    await customStatement(
+      'DELETE FROM investment_trades WHERE holding_fk = ? AND trade_pk = ?',
+      [holdingId, tradeId],
+    );
+    InvestmentBalance.fromTrades(await getInvestmentTrades(holdingId));
+  });
+
+  Future<List<Map<String, dynamic>>> getWealthAssets() async {
+    final rows = await customSelect(
+      'SELECT * FROM wealth_assets ORDER BY liability, name COLLATE NOCASE').get();
+    return rows.map((r) => r.data).toList();
+  }
+
+  Future<({double? total, List<String> missingCurrencies, int unpricedHoldings})>
+      getWealthValuation(
+    String currency, {
+    Map<String, dynamic>? rateSettings,
+    bool includeInvestments = false,
+  }) async {
+    final balances = await customSelect(
+      'SELECT LOWER(TRIM(currency)) AS currency, '
+      'SUM(quantity * unit_value * CASE WHEN liability = 1 THEN -1 ELSE 1 END) '
+      'AS total FROM wealth_assets GROUP BY LOWER(TRIM(currency))',
+    ).get();
+    var hasEntries = balances.isNotEmpty;
+    var total = 0.0;
+    var unpriced = 0;
+    final missing = <String>{};
+    void add(String source, double value) {
+      final ratio = strictCurrencyRatio(source, currency,
+          appStateSettingsPassed: rateSettings);
+      if (ratio == null) {
+        missing.add(source);
+      } else {
+        total += value * ratio;
+      }
+    }
+    for (final row in balances) {
+      add(row.read<String>('currency'), row.read<double>('total'));
+    }
+    if (includeInvestments) {
+      final trades = await customSelect(
+        'SELECT h.currency, h.market_price, t.* FROM investment_trades t '
+        'JOIN investment_holdings h ON h.holding_pk = t.holding_fk '
+        'ORDER BY t.holding_fk, t.traded_at, t.rowid',
+      ).get();
+      final positions = <String, List<QueryRow>>{};
+      for (final row in trades) {
+        (positions[row.read<String>('holding_fk')] ??= []).add(row);
+      }
+      for (final position in positions.values) {
+        final units = InvestmentBalance.fromTrades(position.map(_readInvestmentTrade)).units;
+        if (units == 0) continue;
+        hasEntries = true;
+        final price = position.first.readNullable<double>('market_price');
+        if (price == null) {
+          unpriced++;
+        } else {
+          add(position.first.read<String>('currency'), units * price);
+        }
+      }
+    }
+    return (
+      total: hasEntries && missing.isEmpty && unpriced == 0 && total.isFinite ? total : null,
+      missingCurrencies: missing.toList()..sort(),
+      unpricedHoldings: unpriced,
+    );
+  }
+
+  Future<List<({String type, String currency, bool liability, double value})>>
+      getWealthAllocation() async {
+    final rows = await customSelect(
+      'SELECT asset_type, LOWER(TRIM(currency)) AS currency, liability, '
+      'SUM(quantity * unit_value) AS value FROM wealth_assets '
+      'GROUP BY asset_type, LOWER(TRIM(currency)), liability '
+      'ORDER BY currency, liability, value DESC, asset_type',
+    ).get();
+    return rows.map((row) => (
+      type: row.read<String>('asset_type'),
+      currency: row.read<String>('currency'),
+      liability: row.read<int>('liability') == 1,
+      value: row.read<double>('value'),
+    )).toList();
+  }
+
+  Future<bool> captureWealthSnapshot({
+    required String snapshotPk,
+    required DateTime capturedAt,
+    required String currency,
+    Map<String, dynamic>? rateSettings,
+    bool includeInvestments = false,
+  }) async {
+    final code = currency.trim().toLowerCase();
+    if (!RegExp(r'^[a-z]{3}$').hasMatch(code) || snapshotPk.trim().isEmpty) {
+      throw ArgumentError('Invalid snapshot identity or currency');
+    }
+    return transaction(() async {
+      final value = await getWealthValuation(code, rateSettings: rateSettings, includeInvestments: includeInvestments);
+      if (value.total == null) return false;
+      await customStatement(
+        'INSERT INTO wealth_snapshots '
+        '(snapshot_pk, captured_at, net_worth_primary, breakdown_json) '
+        'VALUES (?, ?, ?, ?) ON CONFLICT(snapshot_pk) DO NOTHING',
+        [snapshotPk, capturedAt.millisecondsSinceEpoch, value.total,
+         jsonEncode({'currency': code, 'includes_investments': includeInvestments})],
+      );
+      return true;
+    });
+  }
+
+  Future<List<({DateTime capturedAt, double total, String? currency, bool includesInvestments})>>
+      getWealthSnapshotHistory() async {
+    final rows = await customSelect(
+      'SELECT captured_at, net_worth_primary, breakdown_json '
+      'FROM wealth_snapshots ORDER BY captured_at DESC, snapshot_pk LIMIT 100',
+    ).get();
+    return rows.map((row) {
+      String? currency;
+      var includesInvestments = false;
+      try {
+        final details = jsonDecode(row.read<String>('breakdown_json'));
+        if (details is Map) {
+          if (details['currency'] is String) currency = details['currency'] as String;
+          includesInvestments = details['includes_investments'] == true;
+        }
+      } on FormatException {
+        // Older snapshots can still be displayed without a currency code.
+      }
+      return (
+        capturedAt: DateTime.fromMillisecondsSinceEpoch(row.read<int>('captured_at')),
+        total: row.read<double>('net_worth_primary'),
+        currency: currency,
+        includesInvestments: includesInvestments,
+      );
+    }).toList();
+  }
+
+  Future<void> deleteWealthAsset(String assetPk) async {
+    await customStatement(
+      'DELETE FROM wealth_assets WHERE asset_pk = ?', [assetPk],
+    );
+  }
+
+  Future<void> saveHouseholdMember({
+    required String memberPk,
+    required String displayName,
+    required String role,
+    bool localOnly = true,
+  }) async {
+    if (memberPk.trim().isEmpty || displayName.trim().isEmpty ||
+        !{'owner','editor','viewer'}.contains(role)) {
+      throw ArgumentError('Invalid household member');
+    }
+    await transaction(() async {
+      await customStatement(
+        'INSERT INTO household_members (member_pk,display_name,role,local_only,created_at) '
+        'VALUES (?,?,?,?,?) ON CONFLICT(member_pk) DO UPDATE SET '
+        'display_name=excluded.display_name,role=excluded.role,local_only=excluded.local_only',
+        [memberPk,displayName.trim(),role,localOnly ? 1 : 0,
+         DateTime.now().millisecondsSinceEpoch],
+      );
+      if (role == 'viewer' && localOnly) {
+        await customStatement(
+          'UPDATE household_account_access SET can_edit = 0 WHERE member_fk = ?',
+          [memberPk],
+        );
+      }
+    });
+  }
+
+  Future<List<({String id, String name, String role})>> getLocalHouseholdMembers() async {
+    final rows = await customSelect(
+      'SELECT member_pk, display_name, role FROM household_members '
+      'WHERE local_only = 1 ORDER BY display_name COLLATE NOCASE, member_pk',
+    ).get();
+    return rows.map((row) => (
+      id: row.read<String>('member_pk'),
+      name: row.read<String>('display_name'),
+      role: row.read<String>('role'),
+    )).toList();
+  }
+
+  Future<void> removeLocalHouseholdMember(String memberPk) async {
+    await transaction(() async {
+      await customStatement(
+        'DELETE FROM household_account_access WHERE member_fk = ? AND EXISTS '
+        '(SELECT 1 FROM household_members WHERE member_pk = ? AND local_only = 1)',
+        [memberPk, memberPk],
+      );
+      await customStatement(
+        'DELETE FROM household_members WHERE member_pk = ? AND local_only = 1', [memberPk],
+      );
+    });
+  }
+
+  Future<void> setHouseholdAccountAccess({
+    required String memberPk,
+    required String walletPk,
+    required bool canView,
+    required bool canEdit,
+  }) async {
+    if (canEdit && !canView) {
+      throw ArgumentError('Edit access requires view access');
+    }
+    await transaction(() async {
+      final person = await customSelect(
+        'SELECT role FROM household_members WHERE member_pk = ? AND local_only = 1',
+        variables: [Variable<String>(memberPk)],
+      ).getSingleOrNull();
+      if (person == null || await getWalletInstanceOrNull(walletPk) == null) {
+        throw StateError('Local member or account not found');
+      }
+      final role = person.read<String>('role');
+      if (canEdit && role == 'viewer') throw ArgumentError('Viewer cannot edit');
+      if (!canView) {
+        await customStatement(
+          'DELETE FROM household_account_access WHERE member_fk = ? AND wallet_fk = ?',
+          [memberPk, walletPk],
+        );
+      } else {
+        await customStatement(
+          'INSERT INTO household_account_access '
+          '(member_fk,wallet_fk,can_view,can_edit) VALUES (?,?,?,?) '
+          'ON CONFLICT(member_fk,wallet_fk) DO UPDATE SET '
+          'can_view=excluded.can_view,can_edit=excluded.can_edit',
+          [memberPk, walletPk, 1, canEdit ? 1 : 0],
+        );
+      }
+    });
+  }
+
+  Future<List<({String id, String name, String? currency, bool canView, bool canEdit})>>
+      getLocalHouseholdAccountAccess(String memberPk) async {
+    final rows = await customSelect(
+      'SELECT w.wallet_pk, w.name, w.currency, '
+      "CASE WHEN m.role = 'owner' THEN 1 ELSE COALESCE(a.can_view, 0) END AS can_view, "
+      "CASE WHEN m.role = 'owner' THEN 1 "
+      "WHEN m.role = 'editor' AND a.can_view = 1 THEN COALESCE(a.can_edit, 0) "
+      'ELSE 0 END AS can_edit '
+      'FROM wallets w JOIN household_members m ON m.member_pk = ? AND m.local_only = 1 '
+      'LEFT JOIN household_account_access a ON a.wallet_fk = w.wallet_pk AND a.member_fk = m.member_pk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'WHERE COALESCE(d.archived, 0) = 0 ORDER BY w."order", w.wallet_pk',
+      variables: [Variable<String>(memberPk)],
+    ).get();
+    return rows.map((row) => (
+      id: row.read<String>('wallet_pk'),
+      name: row.read<String>('name'),
+      currency: row.readNullable<String>('currency'),
+      canView: row.read<int>('can_view') == 1,
+      canEdit: row.read<int>('can_edit') == 1,
+    )).toList();
+  }
+
+  Future<List<({String name, String? currency, double balance})>>
+      previewLocalHouseholdBalances(String memberPk, DateTime asOf) async {
+    final rows = await customSelect(
+      'SELECT w.name, w.currency, COALESCE(SUM(t.amount), 0) AS balance '
+      'FROM wallets w JOIN household_members m ON m.member_pk = ? AND m.local_only = 1 '
+      'LEFT JOIN household_account_access a ON a.wallet_fk = w.wallet_pk AND a.member_fk = m.member_pk '
+      'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk AND t.paid = 1 '
+      'AND t.skip_paid = 0 AND t.date_created <= ? '
+      "WHERE COALESCE(d.archived, 0) = 0 AND (m.role = 'owner' OR a.can_view = 1) "
+      'GROUP BY w.wallet_pk, w.name, w.currency ORDER BY w."order", w.wallet_pk',
+      variables: [Variable<String>(memberPk), Variable<DateTime>(asOf)],
+    ).get();
+    return rows.map((row) => (
+      name: row.read<String>('name'),
+      currency: row.readNullable<String>('currency'),
+      balance: row.read<double>('balance'),
+    )).toList();
+  }
+
+  Future<({String name, String currency, int decimals, double balance})?>
+      previewHouseholdWalletOpening(String walletPk, DateTime asOf) async {
+    final row = await customSelect(
+      'SELECT w.name, UPPER(TRIM(w.currency)) AS currency, w.decimals, '
+      'COALESCE(SUM(t.amount), 0) AS balance '
+      'FROM wallets w LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk AND t.paid = 1 '
+      'AND t.skip_paid = 0 AND t.date_created <= ? '
+      'WHERE w.wallet_pk = ? AND COALESCE(d.archived, 0) = 0 '
+      'GROUP BY w.wallet_pk',
+      variables: [Variable<DateTime>(asOf), Variable<String>(walletPk)],
+    ).getSingleOrNull();
+    final currency = row?.readNullable<String>('currency');
+    final balance = row?.read<double>('balance');
+    if (row == null || currency == null || balance == null || !balance.isFinite ||
+        !RegExp(r'^[A-Z]{3}$').hasMatch(currency)) return null;
+    return (name: row.read<String>('name'), currency: currency,
+      decimals: row.read<int>('decimals').clamp(0, 3), balance: balance);
+  }
+
+  Future<void> recordSyncConflict({
+    required String conflictPk,
+    required String entityType,
+    required String entityPk,
+    required String localJson,
+    required String remoteJson,
+  }) async {
+    if (conflictPk.trim().isEmpty || entityType.trim().isEmpty ||
+        entityPk.trim().isEmpty || localJson == remoteJson) {
+      throw ArgumentError('Invalid sync conflict');
+    }
+    jsonDecode(localJson);
+    jsonDecode(remoteJson);
+    await customStatement(
+      'INSERT OR IGNORE INTO sync_conflicts '
+      '(conflict_pk,entity_type,entity_pk,local_json,remote_json,detected_at) '
+      'VALUES (?,?,?,?,?,?)',
+      [conflictPk,entityType,entityPk,localJson,remoteJson,
+       DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  Future<List<Map<String,dynamic>>> getOpenSyncConflicts() async {
+    final rows = await customSelect(
+      'SELECT * FROM sync_conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC').get();
+    return rows.map((r) => r.data).toList();
+  }
+
+  Future<bool> resolveTransactionSyncConflict(String conflictPk, {required bool useRemote}) =>
+      transaction(() async {
+    final conflict = await customSelect(
+      'SELECT * FROM sync_conflicts WHERE conflict_pk = ? AND resolved_at IS NULL '
+      "AND entity_type IN ('transaction', 'transaction_delete')",
+      variables: [Variable<String>(conflictPk)],
+    ).getSingleOrNull();
+    if (conflict == null) return false;
+    final now = DateTime.now();
+    if (useRemote) {
+      final id = conflict.read<String>('entity_pk');
+      final local = await (select(transactions)
+            ..where((row) => row.transactionPk.equals(id))).getSingleOrNull();
+      if (local == null || jsonEncode(local.toJson()) != conflict.read<String>('local_json')) {
+        throw StateError('Local transaction changed after this conflict');
+      }
+      bool isOrdinary(Transaction row) => row.pairedTransactionFk == null &&
+          row.sharedKey == null && row.sharedReferenceBudgetPk == null &&
+          row.objectiveLoanFk == null && row.objectiveFk == null &&
+          row.categoryFk != '0' && row.type == null;
+      final lastEdit = local.dateTimeModified;
+      final nextEdit = lastEdit != null && !now.isAfter(lastEdit.add(const Duration(seconds: 1)))
+          ? lastEdit.add(const Duration(seconds: 1)) : now;
+      if (conflict.read<String>('entity_type') == 'transaction_delete') {
+        if (!isOrdinary(local)) {
+          throw StateError('Linked transactions require manual review');
+        }
+        final deleted = await (delete(transactions)
+              ..where((row) => row.transactionPk.equals(id))).go();
+        if (deleted != 1) throw StateError('Transaction changed during resolution');
+        await into(deleteLogs).insert(DeleteLogsCompanion.insert(
+          entryPk: id,
+          type: DeleteLogType.Transaction,
+          dateTimeModified: Value(nextEdit),
+        ));
+      } else {
+        final remote = Transaction.fromJson(
+          jsonDecode(conflict.read<String>('remote_json')) as Map<String, dynamic>,
+        );
+        if (remote.transactionPk != id || !isOrdinary(remote) || !isOrdinary(local) ||
+            !remote.amount.isFinite || remote.amount.abs() > 999999999999 ||
+            await getWalletInstanceOrNull(remote.walletFk) == null ||
+            await getCategoryInstanceOrNull(remote.categoryFk) == null ||
+            (remote.subCategoryFk != null &&
+                await getCategoryInstanceOrNull(remote.subCategoryFk!) == null)) {
+          throw StateError('Remote version cannot be applied safely');
+        }
+        final updated = await (update(transactions)
+              ..where((row) => row.transactionPk.equals(id)))
+            .write(remote.copyWith(dateTimeModified: Value(nextEdit)).toCompanion(true));
+        if (updated != 1) throw StateError('Transaction changed during resolution');
+      }
+    }
+    await customStatement(
+      'UPDATE sync_conflicts SET resolved_at = ?, resolution = ? WHERE conflict_pk = ?',
+      [now.millisecondsSinceEpoch, useRemote ? 'remote' : 'local', conflictPk],
+    );
     return true;
+  });
+
+  DeleteLogType? _metadataSyncType(SyncLog log) {
+    final type = log.deleteLogType ?? switch (log.updateLogType) {
+      UpdateLogType.TransactionWallet => DeleteLogType.TransactionWallet,
+      UpdateLogType.TransactionCategory => DeleteLogType.TransactionCategory,
+      UpdateLogType.Budget => DeleteLogType.Budget,
+      UpdateLogType.CategoryBudgetLimit => DeleteLogType.CategoryBudgetLimit,
+      UpdateLogType.TransactionAssociatedTitle => DeleteLogType.TransactionAssociatedTitle,
+      UpdateLogType.ScannerTemplate => DeleteLogType.ScannerTemplate,
+      UpdateLogType.Objective => DeleteLogType.Objective,
+      _ => null,
+    };
+    if (type == DeleteLogType.Transaction || type == DeleteLogType.Unused ||
+        (type == DeleteLogType.TransactionWallet && log.pk == '0')) return null;
+    return type;
+  }
+
+  Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
+    final ordered = syncLogs.toList()..sort(
+      (a, b) => (a.transactionDateTime ?? DateTime(0))
+          .compareTo(b.transactionDateTime ?? DateTime(0)),
+    );
+    return transaction(() async {
+      final transactionIds = ordered
+          .where((log) => log.updateLogType == UpdateLogType.Transaction ||
+              log.deleteLogType == DeleteLogType.Transaction)
+          .map((log) => log.pk).toSet().toList();
+      final current = <String, Transaction>{};
+      final tombstones = <String, DateTime>{};
+      for (var offset = 0; offset < transactionIds.length; offset += 400) {
+        final keys = transactionIds.skip(offset).take(400);
+        final found = await (select(transactions)
+              ..where((row) => row.transactionPk.isIn(keys))).get();
+        current.addEntries(found.map((row) => MapEntry(row.transactionPk, row)));
+        final removed = await (_supportedDeleteLogs()
+              ..where((row) => row.entryPk.isIn(keys) &
+                  row.type.equalsValue(DeleteLogType.Transaction))).get();
+        for (final log in removed) {
+          final previous = tombstones[log.entryPk];
+          if (previous == null || log.dateTimeModified.isAfter(previous)) {
+            tombstones[log.entryPk] = log.dateTimeModified;
+          }
+        }
+      }
+
+      final metadataIds = ordered.where((log) => _metadataSyncType(log) != null)
+          .map((log) => log.pk).toSet().toList();
+      final metadataTombstones = <(DeleteLogType, String), DateTime>{};
+      for (var offset = 0; offset < metadataIds.length; offset += 400) {
+        final keys = metadataIds.skip(offset).take(400);
+        final rows = await (_supportedDeleteLogs()
+              ..where((row) => row.entryPk.isIn(keys) &
+                  row.type.equalsValue(DeleteLogType.Transaction).not())).get();
+        for (final row in rows) {
+          final key = (row.type, row.entryPk);
+          if (metadataTombstones[key]?.isBefore(row.dateTimeModified) ?? true) {
+            metadataTombstones[key] = row.dateTimeModified;
+          }
+        }
+      }
+
+      final metadata = await _readMetadataVersions(ordered);
+      final metadataDeletes = <_MetadataKey, DateTime>{};
+      final transferPairs = await _getTransferSyncPairs(ordered, current);
+      final transferIds = transferPairs.expand((pair) => [pair.$1, pair.$2]).toSet();
+      await batch((batch) async {
+        for (final syncLog in ordered) {
+          if (syncLog.isTransaction && transferIds.contains(syncLog.pk)) continue;
+          final date = syncLog.transactionDateTime ?? DateTime(0);
+          if (syncLog.deleteLogType == DeleteLogType.TransactionWallet &&
+              syncLog.pk == '0') {
+            // Cashew replaces its primary wallet in place when the owner deletes it.
+            continue;
+          }
+          final metadataType = _metadataSyncType(syncLog);
+          if (metadataType != null) {
+            final key = (metadataType, syncLog.pk);
+            final removal = metadataTombstones[key];
+            if (!(removal?.isBefore(date) ?? true)) continue;
+            if (syncLog.deleteLogType != null) {
+              metadataDeletes[key] = date;
+              continue;
+            }
+            final remote = _metadataRow(syncLog.itemToUpdate as DataClass);
+            if (remote.key != key) throw ArgumentError('Metadata sync identifier mismatch');
+            final local = metadata[key];
+            if (local != null && local.revision != null && !date.isAfter(local.revision!)) {
+              if (!_matchesMetadataIgnoringRevision(local, remote)) {
+                await _recordMetadataConflict(local, remote.fields, date, removal);
+              }
+              continue;
+            }
+            if (metadataDeletes[key]?.isBefore(date) ?? false) {
+              metadataDeletes.remove(key);
+            }
+            metadata[key] = remote;
+          }
+          if (syncLog.deleteLogType == DeleteLogType.Transaction) {
+            final local = current[syncLog.pk];
+            final previous = tombstones[syncLog.pk];
+            if (local != null && (local.dateTimeModified ?? DateTime(0)).isAfter(date)) {
+              if (previous == null || date.isAfter(previous)) {
+                final localJson = jsonEncode(local.toJson());
+                await recordSyncConflict(
+                  conflictPk: financialImportFingerprint(
+                    sourceType: 'sync-transaction-delete', sender: syncLog.pk,
+                    rawText: localJson, occurredAt: date,
+                  ),
+                  entityType: 'transaction_delete',
+                  entityPk: syncLog.pk,
+                  localJson: localJson,
+                  remoteJson: 'null',
+                );
+              }
+              continue;
+            }
+            if (local != null) {
+              batch.deleteWhere(transactions, (row) => row.transactionPk.equals(syncLog.pk));
+              current.remove(syncLog.pk);
+            }
+            if (previous == null || date.isAfter(previous)) {
+              tombstones[syncLog.pk] = date;
+              batch.insert(deleteLogs, DeleteLogsCompanion.insert(
+                entryPk: syncLog.pk, type: DeleteLogType.Transaction,
+                dateTimeModified: Value(date),
+              ));
+            }
+          } else if (syncLog.updateLogType == UpdateLogType.TransactionWallet) {
+            batch.update(
+              wallets,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.walletPk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(wallets, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.TransactionCategory) {
+            batch.update(
+              categories,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.categoryPk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(categories, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.Budget) {
+            batch.update(
+              budgets,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.budgetPk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(budgets, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.CategoryBudgetLimit) {
+            batch.update(
+              categoryBudgetLimits,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.categoryLimitPk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(categoryBudgetLimits, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.Transaction) {
+            final remote = syncLog.itemToUpdate as Transaction;
+            if (remote.transactionPk != syncLog.pk) {
+              throw ArgumentError('Transaction sync identifier mismatch');
+            }
+            final removedAt = tombstones[syncLog.pk];
+            if (removedAt != null && !date.isAfter(removedAt)) continue;
+            final local = current[syncLog.pk];
+            if (local != null && local.dateTimeModified != null &&
+                !date.isAfter(local.dateTimeModified!)) {
+              final localJson = jsonEncode(local.toJson());
+              // Revision timestamps alone do not make otherwise identical rows conflict.
+              final sameRevision = remote.copyWith(dateTimeModified: Value(local.dateTimeModified));
+              if (jsonEncode(sameRevision.toJson()) != localJson) {
+                final remoteJson = jsonEncode(remote.toJson());
+                if (remoteJson != localJson) {
+                  await recordSyncConflict(
+                    conflictPk: financialImportFingerprint(
+                      sourceType: 'sync-transaction', sender: syncLog.pk,
+                      rawText: jsonEncode([localJson, remoteJson]), occurredAt: date,
+                    ),
+                    entityType: 'transaction',
+                    entityPk: syncLog.pk,
+                    localJson: localJson,
+                    remoteJson: remoteJson,
+                  );
+                }
+              }
+              continue;
+            }
+            final incoming = remote.copyWith(dateTimeModified: Value(date));
+            if (local == null) {
+              batch.insert(transactions, incoming);
+            } else {
+              batch.update(transactions, incoming,
+                  where: (row) => row.transactionPk.equals(syncLog.pk));
+            }
+            current[syncLog.pk] = incoming;
+          } else if (syncLog.updateLogType ==
+              UpdateLogType.TransactionAssociatedTitle) {
+            batch.update(
+              associatedTitles,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.associatedTitlePk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(associatedTitles, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.ScannerTemplate) {
+            batch.update(
+              scannerTemplates,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.scannerTemplatePk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(scannerTemplates, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          } else if (syncLog.updateLogType == UpdateLogType.Objective) {
+            batch.update(
+              objectives,
+              syncLog.itemToUpdate,
+              where: (tbl) =>
+                  tbl.objectivePk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() |
+                      tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
+            batch.insert(objectives, syncLog.itemToUpdate,
+                mode: InsertMode.insertOrIgnore);
+          }
+        }
+      });
+      await _processTransferSyncPairs(transferPairs, ordered);
+      await _finishMetadataDeletes(metadataDeletes, metadataTombstones);
+      return true;
+    });
   }
 
   // This doesn't handle shared transactions!
@@ -3807,8 +6449,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   Future<bool> updateBatchTransactionsOnly(
       List<Transaction> transactionsInserting) async {
     await batch((batch) {
-      batch.insertAll(transactions, transactionsInserting,
-          mode: InsertMode.insertOrReplace);
+      batch.insertAllOnConflictUpdate(transactions, transactionsInserting);
     });
     return true;
   }
@@ -3834,8 +6475,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   Future<bool> updateBatchWalletsOnly(
       List<TransactionWallet> walletsInserting) async {
     await batch((batch) {
-      batch.insertAll(wallets, walletsInserting,
-          mode: InsertMode.insertOrReplace);
+      batch.insertAllOnConflictUpdate(wallets, walletsInserting);
     });
     return true;
   }
@@ -3843,8 +6483,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   Future<bool> updateBatchCategoriesOnly(
       List<TransactionCategory> categoriesInserting) async {
     await batch((batch) {
-      batch.insertAll(categories, categoriesInserting,
-          mode: InsertMode.insertOrReplace);
+      batch.insertAllOnConflictUpdate(categories, categoriesInserting);
     });
     return true;
   }
@@ -4028,8 +6667,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     }
 
     // We need to ensure the value is set back to null, so insert/replace
-    int result = await into(categories)
-        .insert((companionToInsert), mode: InsertMode.insertOrReplace);
+    int result = await into(categories).insertOnConflictUpdate(companionToInsert);
 
     if (updateSharedEntry)
       updateTransactionOnServerAfterChangingCategoryInformation(category);
@@ -4407,7 +7045,7 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Stream<List<TransactionActivityLog>> watchAllTransactionDeleteActivityLog(
       {int? limit}) {
-    final query = select(deleteLogs)
+    final query = _supportedDeleteLogs()
       ..where((l) => l.type.equals(DeleteLogType.Transaction.index))
       ..limit(limit ?? DEFAULT_LIMIT)
       ..orderBy([(t) => OrderingTerm.desc(deleteLogs.dateTimeModified)]);
@@ -5029,31 +7667,25 @@ class FinanceDatabase extends _$FinanceDatabase {
     return;
   }
 
-  Future deleteCategoryBudgetLimitsInBudget(String budgetPk) async {
-    List<CategoryBudgetLimit> limitsToDelete =
-        await (select(categoryBudgetLimits)
-              ..where((t) => t.budgetFk.equals(budgetPk)))
-            .get();
-    List<String> limitPks =
-        limitsToDelete.map((limit) => limit.categoryLimitPk).toList();
-    await createDeleteLogs(DeleteLogType.TransactionAssociatedTitle, limitPks);
-    return (delete(categoryBudgetLimits)
-          ..where((t) => t.budgetFk.equals(budgetPk)))
-        .go();
-  }
+  Future<int> deleteCategoryBudgetLimitsInBudget(String budgetPk) =>
+      transaction(() async {
+        final limits = await (select(categoryBudgetLimits)
+              ..where((row) => row.budgetFk.equals(budgetPk))).get();
+        await createDeleteLogs(DeleteLogType.CategoryBudgetLimit,
+          limits.map((limit) => limit.categoryLimitPk).toList());
+        return (delete(categoryBudgetLimits)
+              ..where((row) => row.budgetFk.equals(budgetPk))).go();
+      });
 
-  Future deleteCategoryBudgetLimitsInCategory(String categoryPk) async {
-    List<CategoryBudgetLimit> limitsToDelete =
-        await (select(categoryBudgetLimits)
-              ..where((t) => t.categoryFk.equals(categoryPk)))
-            .get();
-    List<String> limitPks =
-        limitsToDelete.map((limit) => limit.categoryLimitPk).toList();
-    await createDeleteLogs(DeleteLogType.TransactionAssociatedTitle, limitPks);
-    return (delete(categoryBudgetLimits)
-          ..where((t) => t.categoryFk.equals(categoryPk)))
-        .go();
-  }
+  Future<int> deleteCategoryBudgetLimitsInCategory(String categoryPk) =>
+      transaction(() async {
+        final limits = await (select(categoryBudgetLimits)
+              ..where((row) => row.categoryFk.equals(categoryPk))).get();
+        await createDeleteLogs(DeleteLogType.CategoryBudgetLimit,
+          limits.map((limit) => limit.categoryLimitPk).toList());
+        return (delete(categoryBudgetLimits)
+              ..where((row) => row.categoryFk.equals(categoryPk))).go();
+      });
 
   //delete wallet given key
   Future deleteWallet(String walletPk, int order) async {
@@ -5684,7 +8316,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         ..where(
           (objectiveType == ObjectiveType.loan
                   ? transactions.objectiveLoanFk.equals(objectivePk)
-                  : transactions.objectiveLoanFk.equals(objectivePk)) &
+                  : transactions.objectiveFk.equals(objectivePk)) &
               transactions.walletFk.equals(wallet.walletPk),
         );
 
@@ -5782,7 +8414,10 @@ class FinanceDatabase extends _$FinanceDatabase {
     if (searchFilters == null) return Constant(true);
 
     Expression<bool> isInWalletPks =
-        onlyShowBasedOnWalletFks(tbl, searchFilters.walletPks);
+        onlyShowBasedOnWalletFks(tbl, searchFilters.walletPks) &
+            (searchFilters.excludedWalletPks.isEmpty
+                ? const Constant(true)
+                : tbl.walletFk.isNotIn(searchFilters.excludedWalletPks));
     Expression<bool> isInCategoryPks =
         onlyShowBasedOnCategoryFks(tbl, searchFilters.categoryPks, null);
     Expression<bool> isInSubcategoryPks =
@@ -7442,7 +10077,7 @@ class FinanceDatabase extends _$FinanceDatabase {
   }
 
   Stream<List<DeleteLog>> watchAllDeleteLogs() {
-    return (select(deleteLogs)).watch();
+    return _supportedDeleteLogs().watch();
   }
 
   Stream<List<TransactionWithCount>> getCommonTransactions() {
@@ -7473,20 +10108,20 @@ class FinanceDatabase extends _$FinanceDatabase {
     bool isOtherIncome = !originalBalanceCorrection.income;
     DateTime otherDateTime = originalBalanceCorrection.dateCreated;
     try {
-      // In the future can take advantage of pairedTransactionFk!
-      Transaction? pairedTransaction = await (select(transactions)
+      if (originalBalanceCorrection.categoryFk != "0") return null;
+      final paired = await (select(transactions)
             ..where((t) =>
-                t.pairedTransactionFk
-                    .equals(originalBalanceCorrection.transactionPk) |
-                t.transactionPk.equals(
-                    originalBalanceCorrection.pairedTransactionFk ?? "")))
-          .getSingleOrNull();
-      if (pairedTransaction != null) {
-        print("Found related transaction with pairing!");
-        return pairedTransaction;
-      }
+                (t.pairedTransactionFk.equals(originalBalanceCorrection.transactionPk) |
+                t.transactionPk.equals(originalBalanceCorrection.pairedTransactionFk ?? "")) &
+                t.transactionPk.equals(originalBalanceCorrection.transactionPk).not() &
+                t.walletFk.equals(originalBalanceCorrection.walletFk).not() &
+                t.categoryFk.equals("0") &
+                t.income.equals(isOtherIncome)))
+          .get();
+      if (paired.length == 1) return paired.single;
+      if (paired.isNotEmpty || originalBalanceCorrection.pairedTransactionFk != null) return null;
 
-      return (await (select(transactions)
+      final candidates = await (select(transactions)
                 ..where(
                   (t) =>
                       t.categoryFk.equals("0") &
@@ -7499,6 +10134,8 @@ class FinanceDatabase extends _$FinanceDatabase {
                       t.transactionPk
                           .equals(originalBalanceCorrection.transactionPk)
                           .not() &
+                      t.walletFk.equals(originalBalanceCorrection.walletFk).not() &
+                      t.pairedTransactionFk.isNull() &
                       t.income.equals(isOtherIncome) &
                       t.dateCreated.isBetweenValues(
                         DateTime(
@@ -7519,8 +10156,8 @@ class FinanceDatabase extends _$FinanceDatabase {
                         ),
                       ),
                 ))
-              .get())
-          .firstOrNull;
+              .get();
+      return candidates.length == 1 ? candidates.single : null;
     } catch (e) {
       print("No relating transfer transaction found");
     }

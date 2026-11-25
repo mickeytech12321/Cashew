@@ -1,14 +1,15 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
     localPropertiesFile.withReader('UTF-8') { reader ->
         localProperties.load(reader)
     }
-}
-
-def flutterRoot = localProperties.getProperty('flutter.sdk')
-if (flutterRoot == null) {
-    throw new GradleException("Flutter SDK not found. Define location with flutter.sdk in the local.properties file.")
 }
 
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
@@ -21,19 +22,29 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
-apply plugin: 'com.android.application'
-apply plugin: 'kotlin-android'
-apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
-apply plugin: 'com.google.gms.google-services'
-
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('key.properties')
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+def testRelease = System.getenv('CASHEW_TEST_RELEASE') == 'true'
+def testKeystore = System.getenv('CASHU_TEST_KEYSTORE')
+def isolatedPreview = System.getenv('CASHEW_ISOLATED_PREVIEW') == 'true'
+def sideBySide = System.getenv('CASHU_SIDE_BY_SIDE_BUILD') == 'true'
+if ((isolatedPreview || sideBySide) && !testRelease) {
+    throw new GradleException('Separate APK packages require CASHEW_TEST_RELEASE')
+}
+if (isolatedPreview && sideBySide) {
+    throw new GradleException('Select only one separate APK package')
+}
+if (sideBySide && !testKeystore) {
+    throw new GradleException('CASHU_SIDE_BY_SIDE_BUILD requires CASHU_TEST_KEYSTORE')
+}
+
 android {
-    compileSdkVersion 34
+    namespace "com.cashu.mickey"
+    compileSdkVersion 36
 
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
@@ -41,12 +52,13 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.budget.tracker_app"
-        minSdkVersion 23
+        applicationId "com.cashu.mickey"
+        minSdkVersion flutter.minSdkVersion
         targetSdkVersion 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+        manifestPlaceholders = [cashewLabel: "CashU"]
     }
 
     lintOptions {
@@ -59,12 +71,15 @@ android {
     compileOptions {
       // Flag to enable support for the new language APIs
       coreLibraryDesugaringEnabled true
-      // Sets Java compatibility to Java 8
-      sourceCompatibility JavaVersion.VERSION_1_8
-      targetCompatibility JavaVersion.VERSION_1_8
+      // Align Android Java bytecode with the Java 17 / Kotlin 2 toolchain.
+      sourceCompatibility JavaVersion.VERSION_17
+      targetCompatibility JavaVersion.VERSION_17
     }
 
     signingConfigs {
+        if (testRelease && testKeystore) {
+            debug { storeFile file(testKeystore) }
+        }
         release {
             keyAlias keystoreProperties['keyAlias']
             keyPassword keystoreProperties['keyPassword']
@@ -74,7 +89,14 @@ android {
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            minifyEnabled false
+            shrinkResources false
+            signingConfig (testRelease ? signingConfigs.debug : signingConfigs.release)
+            if (isolatedPreview) {
+                applicationIdSuffix ".preview"
+            } else if (sideBySide) {
+                applicationIdSuffix ".next"
+            }
         }
     }
 }
@@ -84,8 +106,8 @@ flutter {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.2.2'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib"
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
     implementation platform('com.google.firebase:firebase-bom:31.1.1')
     implementation 'com.google.firebase:firebase-auth'
     implementation 'com.google.firebase:firebase-firestore'

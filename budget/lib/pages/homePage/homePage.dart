@@ -8,14 +8,13 @@ import 'package:budget/pages/homePage/homePageNetWorth.dart';
 import 'package:budget/pages/homePage/homePageObjectives.dart';
 import 'package:budget/pages/homePage/homePagePieChart.dart';
 import 'package:budget/pages/homePage/homePageWalletList.dart';
-import 'package:budget/pages/homePage/homePageWalletSwitcher.dart';
 import 'package:budget/pages/homePage/homeTransactions.dart';
-import 'package:budget/pages/homePage/homePageUsername.dart';
+import 'package:budget/pages/homePage/cashuWalletDashboard.dart';
 import 'package:budget/pages/homePage/homePageBudgets.dart';
 import 'package:budget/pages/homePage/homePageUpcomingTransactions.dart';
 import 'package:budget/pages/homePage/homePageAllSpendingSummary.dart';
 import 'package:budget/pages/editHomePage.dart';
-import 'package:budget/pages/settingsPage.dart';
+import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:budget/pages/homePage/homePageCreditDebts.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
@@ -50,17 +49,13 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => HomePageState();
 }
 
-class HomePageState extends State<HomePage> with TickerProviderStateMixin {
+class HomePageState extends State<HomePage> {
   void refreshState() {
     setState(() {});
   }
 
   void scrollToTop({int duration = 1200}) {
-    // if (_scrollController.offset <= 0) {
-    //   pushRoute(context, EditHomePage());
-    // } else {
-
-    // }
+    if (!_scrollController.hasClients) return;
     _scrollController.animateTo(0,
         duration: Duration(
             milliseconds:
@@ -71,35 +66,11 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
             : Curves.elasticOut);
   }
 
-  bool showElevation = false;
-  late ScrollController _scrollController;
-  late AnimationController _animationControllerHeader;
-  late AnimationController _animationControllerHeader2;
+  final ScrollController _scrollController = ScrollController();
   int selectedSlidingSelector = 1;
-
-  void initState() {
-    super.initState();
-    _animationControllerHeader = AnimationController(vsync: this, value: 1);
-    _animationControllerHeader2 = AnimationController(vsync: this, value: 1);
-
-    _scrollController = ScrollController();
-    _scrollController.addListener(_scrollListener);
-  }
-
-  _scrollListener() {
-    double percent = _scrollController.offset / (200);
-    if (percent <= 1) {
-      double offset = _scrollController.offset;
-      if (percent >= 1) offset = 0;
-      _animationControllerHeader.value = 1 - offset / (200);
-      _animationControllerHeader2.value = 1 - offset * 2 / (200);
-    }
-  }
 
   @override
   void dispose() {
-    _animationControllerHeader.dispose();
-    _animationControllerHeader2.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -120,8 +91,6 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    bool showUsername = appStateSettings["username"] != "";
-    bool showGreeting = appStateSettings["enableGreetingMessage"] == true;
     Widget slidingSelector = GestureDetector(
       onLongPress: () async {
         HapticFeedback.heavyImpact();
@@ -151,6 +120,10 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Padding(
+                    padding: const EdgeInsetsDirectional.symmetric(horizontal: 17),
+                    child: CashuSectionTitle(cashuLabel(context, 'Recent activity', 'أحدث المعاملات')),
+                  ),
                   slidingSelector,
                   SizedBox(height: 8),
                   HomeTransactions(
@@ -177,7 +150,7 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
     Map<String, Widget?> homePageSections = {
       "wallets": isHomeScreenSectionEnabled(context, "showWalletSwitcher")
-          ? HomePageWalletSwitcher()
+          ? CashuAccountStrip(today: DateTime.now())
           : null,
       "walletsList": isHomeScreenSectionEnabled(context, "showWalletList")
           ? HomePageWalletList()
@@ -217,10 +190,6 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
           : null,
       "transactionsList": homePageTransactionsList ?? SizedBox.shrink(),
     };
-    bool showWelcomeBanner =
-        isHomeScreenSectionEnabled(context, "showUsernameWelcomeBanner");
-    bool useSmallBanner = showWelcomeBanner == false;
-
     List<String> homePageSectionsFullScreenCenter = [];
     List<String> homePageSectionsFullScreenLeft = [];
     List<String> homePageSectionsFullScreenRight = [];
@@ -252,81 +221,14 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
             AndroidOnly(child: RenderHomePageWidgets()),
             Scaffold(
               resizeToAvoidBottomInset: false,
+              backgroundColor: CashuColors(context).canvas,
               body: ScrollbarWrap(
                 scrollController: _scrollController,
                 child: ListView(
                   controller: _scrollController,
                   children: [
                     PreviewDemoWarning(),
-                    if (useSmallBanner) SizedBox(height: 13),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        useSmallBanner
-                            ? Expanded(
-                                child: HomePageWelcomeBannerSmall(
-                                  showUsername: showUsername,
-                                  showGreeting: showGreeting,
-                                  username: appStateSettings["username"] ?? "",
-                                ),
-                              )
-                            : SizedBox.shrink(),
-                        Tooltip(
-                          message: "edit-home".tr(),
-                          child: IconButton(
-                            padding: EdgeInsetsDirectional.all(15),
-                            onPressed: () {
-                              pushRoute(context, EditHomePage());
-                            },
-                            icon: Icon(appStateSettings["outlinedIcons"]
-                                ? Icons.more_vert_outlined
-                                : Icons.more_vert_rounded),
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Wipe all remaining pixels off - sometimes graphics artifacts are left behind
-                    Container(
-                        height: 1,
-                        color: Theme.of(context).colorScheme.background),
-
-                    showWelcomeBanner
-                        ? ConstrainedBox(
-                            constraints: BoxConstraints(
-                                minHeight: getExpandedHeaderHeight(
-                                        context, null,
-                                        isHomePageSpace: true) /
-                                    1.34),
-                            child: Container(
-                              // Subtract one (1) here because of the thickness of the wiper above
-                              alignment: AlignmentDirectional.bottomStart,
-                              padding: EdgeInsetsDirectional.only(
-                                  start: 9,
-                                  bottom: enableDoubleColumn(context) ? 10 : 17,
-                                  end: 9),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  HomePageUsername(
-                                    animationControllerHeader:
-                                        _animationControllerHeader,
-                                    animationControllerHeader2:
-                                        _animationControllerHeader2,
-                                    showUsername: showUsername,
-                                    showGreeting: showGreeting,
-                                    enterNameBottomSheet: enterNameBottomSheet,
-                                    username:
-                                        appStateSettings["username"] ?? "",
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : SizedBox(height: 5),
+                    CashuWalletDashboard(today: DateTime.now()),
                     // Not full screen
                     if (enableDoubleColumn(context) != true) ...[
                       KeepAliveClientMixin(child: HomePageRatingBox()),

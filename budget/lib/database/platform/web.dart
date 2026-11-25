@@ -1,3 +1,4 @@
+import 'package:budget/database/backupValidation.dart';
 // web.dart
 import 'dart:typed_data';
 import 'package:budget/database/binary_string_conversion.dart';
@@ -20,7 +21,23 @@ Future<FinanceDatabase> constructDb(String dbName,
   );
 }
 
-Future<DBFileInfo> getCurrentDBFileInfo() async {
+Future<FinanceDatabase> constructHouseholdDb() => constructDb('household-sharing');
+
+Future<T> readCashewSyncSnapshot<T>(
+  Uint8List bytes, Future<T> Function(FinanceDatabase) read,
+) async {
+  validateCashewBackupHeader(bytes);
+  final candidate = CashewRestoreCandidate(
+      WebDatabase.withStorage(InMemoryWebStorage(bytes)));
+  try {
+    await candidate.validate();
+    return await read(candidate);
+  } finally {
+    await candidate.close();
+  }
+}
+
+Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) async {
   Uint8List dbFileBytes;
   late Stream<List<int>> mediaStream;
   bool supportIndexedDb = await DriftWebStorage.supportsIndexedDb();
@@ -28,7 +45,11 @@ Future<DBFileInfo> getCurrentDBFileInfo() async {
   if (supportIndexedDb) {
     DriftWebStorage storage = await DriftWebStorage.indexedDbIfSupported('db');
     await storage.open();
-    dbFileBytes = (await storage.restore()) ?? Uint8List.fromList([]);
+    try {
+      dbFileBytes = (await storage.restore()) ?? Uint8List(0);
+    } finally {
+      await storage.close();
+    }
     mediaStream = Stream.value(List<int>.from(dbFileBytes));
   } else {
     final html.Storage localStorage = html.window.localStorage;
@@ -36,20 +57,46 @@ Future<DBFileInfo> getCurrentDBFileInfo() async {
     mediaStream = Stream.value(dbFileBytes);
   }
 
+  if (omitImportMessageBodies) {
+    final storage = InMemoryWebStorage(dbFileBytes);
+    final backup = FinanceDatabase(WebDatabase.withStorage(storage));
+    try {
+      await backup.omitImportMessageBodiesFromBackup();
+    } finally {
+      await backup.close();
+    }
+    final bytes = await storage.restore();
+    if (bytes == null || bytes.isEmpty) throw StateError('Backup snapshot could not be read');
+    return DBFileInfo(bytes, Stream.value(bytes));
+  }
   return DBFileInfo(dbFileBytes, mediaStream);
 }
 
-Future overwriteDefaultDB(Uint8List dataStore) async {
-  bool supportIndexedDb = await DriftWebStorage.supportsIndexedDb();
-  if (supportIndexedDb) {
-    DriftWebStorage storage = await DriftWebStorage.indexedDbIfSupported('db');
-    await storage.open();
-    await storage.store(dataStore);
-  } else {
-    final html.Storage localStorage = html.window.localStorage;
-    localStorage.clear();
-    localStorage["moor_db_str_db"] =
-        bin2str.encode(Uint8List.fromList(dataStore));
+Future<void> overwriteDefaultDB(Uint8List dataStore) async {
+  validateCashewBackupHeader(dataStore);
+  final memory = InMemoryWebStorage(Uint8List.fromList(dataStore));
+  final candidate = CashewRestoreCandidate(WebDatabase.withStorage(memory));
+  try {
+    await candidate.validate();
+  } finally {
+    await candidate.close();
+  }
+  final bytes = await memory.restore();
+  if (bytes == null || bytes.isEmpty) {
+    throw StateError('Validated backup could not be read');
+  }
+  final indexed = await DriftWebStorage.supportsIndexedDb();
+  final storage = indexed
+      ? DriftWebStorage.indexedDb('db')
+      : DriftWebStorage('db');
+  await storage.open();
+  try {
+    await storage.store(bytes);
+    // Older Drift versions saved the schema version separately from SQLite.
+    // The validated SQLite file now carries the current version.
+    if (!indexed) html.window.localStorage.remove('moor_db_version_db');
+  } finally {
+    await storage.close();
   }
   // we need to be able to sync with others after the restore
   await sharedPreferences.setString("dateOfLastSyncedWithClient", "{}");
@@ -160,3 +207,14 @@ class InMemoryWebStorage implements DriftWebStorage {
 
 // print("QUERY TEST " + (await databaseSync.getAllBudgets()).toString());
 // print(Uint8List.fromList(dataStore).length);
+Future<void> discardPendingDatabaseRestore() async {}
+
+Future<({bool previous, bool rejected})> databaseRestoreStatus() async =>
+    (previous: false, rejected: false);
+
+Future<void> stagePreviousDatabaseRestore() async =>
+    throw UnsupportedError('Local recovery copies are unavailable on web.');
+
+Future<void> dismissRejectedDatabaseRestore() async {}
+
+Future<void> deletePreviousDatabaseRestore() async {}

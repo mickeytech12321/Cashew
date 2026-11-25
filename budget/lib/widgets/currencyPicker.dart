@@ -66,11 +66,9 @@ class _CurrencyPickerState extends State<CurrencyPicker> {
   }
 
   void populateCurrencies() {
-    Future.delayed(Duration(milliseconds: 0), () async {
-      setState(() {
-        currencies = currenciesJSON;
-        searchText = "";
-      });
+    setState(() {
+      currencies = currenciesJSON;
+      searchText = "";
     });
   }
 

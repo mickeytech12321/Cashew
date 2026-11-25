@@ -1,4 +1,4 @@
-import 'dart:async';
+
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -24,12 +24,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:sa3_liquid/sa3_liquid.dart';
 import 'package:budget/widgets/openContainerNavigation.dart';
-import 'package:in_app_purchase/in_app_purchase.dart';
 
-bool premiumPopupEnabled = kIsWeb == false;
-bool tryStoreEnabled = kIsWeb == false && kDebugMode == false;
-StreamSubscription<List<PurchaseDetails>>? purchaseListener;
-Map<String, ProductDetails> storeProducts = {};
+
+// Free edition: no premium upsell prompts.
+bool premiumPopupEnabled = false;
+// Free edition does not initialize the app-store purchase flow.
+bool tryStoreEnabled = false;
+
+
 Map<String, String> productIDs = {
   'yearly': getPlatform(ignoreEmulation: true) == PlatformOS.isIOS
       ? 'cashew.pro.yearly' //iOS
@@ -573,464 +575,32 @@ class ManageSubscription extends StatelessWidget {
   }
 }
 
-void listenToPurchaseUpdated({
-  required List<PurchaseDetails> purchaseDetailsList,
-  required BuildContext context,
-  required bool popRouteWithPurchase,
-}) {
-  // ignore: avoid_function_literals_in_foreach_calls
-  purchaseDetailsList.forEach((PurchaseDetails purchaseDetails) async {
-    if (productIDs.values.toSet().contains(purchaseDetails.productID)) {
-      if (purchaseDetails.status == PurchaseStatus.purchased ||
-          purchaseDetails.status == PurchaseStatus.restored) {
-        updateSettings("purchaseID", purchaseDetails.productID,
-            updateGlobalState: false, pagesNeedingRefresh: [3]);
-        print("Purchased " + purchaseDetails.productID);
-        if (popRouteWithPurchase == true) {
-          popRoute(null, true);
-        }
-      }
+// No purchases, subscription restoration, or store initialization in the free edition.
+Future<Map<String, dynamic>> initializeStoreAndPurchases({required BuildContext context, required bool popRouteWithPurchase}) async => {};
+Future<void> restorePurchases(BuildContext context) async {}
+void showHelpRestorePopup(BuildContext context) {}
 
-      if (purchaseDetails.status == PurchaseStatus.pending) {
-        print("Loading purchase");
-      } else {
-        if (purchaseDetails.status == PurchaseStatus.error ||
-            purchaseDetails.status == PurchaseStatus.canceled) {
-          if (navigatorKey.currentContext != null) {
-            SnackBar snackBar = SnackBar(
-              content: Text('error-processing-order'.tr()),
-            );
-            ScaffoldMessenger.of(navigatorKey.currentContext!)
-                .showSnackBar(snackBar);
-          }
-        } else if (purchaseDetails.status == PurchaseStatus.purchased) {
-          if (navigatorKey.currentContext != null) {
-            SnackBar snackBar = SnackBar(
-              content: Text('order-confirmation'.tr()),
-            );
-            ScaffoldMessenger.of(navigatorKey.currentContext!)
-                .showSnackBar(snackBar);
-          }
-        }
-        if (purchaseDetails.pendingCompletePurchase) {
-          await InAppPurchase.instance.completePurchase(purchaseDetails);
-        }
-      }
-    }
-  });
-}
-
-Future<Map<String, ProductDetails>> initializeStoreAndPurchases(
-    {required BuildContext context, required bool popRouteWithPurchase}) async {
-  if (tryStoreEnabled == true) {
-    print("Loading Store");
-    final bool available = await InAppPurchase.instance.isAvailable();
-    if (available) {
-      //Reset any purchases if we can connect to the store, they will be restored if a purchase was made
-      updateSettings("purchaseID", null, updateGlobalState: false);
-
-      Stream<List<PurchaseDetails>> purchaseUpdated =
-          InAppPurchase.instance.purchaseStream;
-      purchaseListener?.cancel();
-      purchaseListener = purchaseUpdated.listen(
-        (purchaseDetailsList) {
-          listenToPurchaseUpdated(
-            purchaseDetailsList: purchaseDetailsList,
-            context: context,
-            popRouteWithPurchase: popRouteWithPurchase,
-          );
-        },
-        onDone: () {
-          purchaseListener?.cancel();
-          purchaseListener = null;
-        },
-        onError: (error) {
-          print(error);
-          purchaseListener = null;
-        },
-      );
-      final ProductDetailsResponse response = await InAppPurchase.instance
-          .queryProductDetails(productIDs.values.toSet());
-      if (response.notFoundIDs.isNotEmpty) {
-        print("Some products not found...");
-      } else {
-        storeProducts = {
-          for (var product in response.productDetails) product.id: product
-        };
-        print("Products Loaded");
-        print(storeProducts);
-      }
-      print("Restoring any purchases");
-      await InAppPurchase.instance.restorePurchases();
-      return storeProducts;
-    }
-  }
-
-  // Can't connect to store, don't show popup
-  premiumPopupEnabled = false;
-  return {};
-}
-
-Future restorePurchases(BuildContext context) async {
-  if (storeProducts.isEmpty) {
-    SnackBar snackBar = SnackBar(
-      content: Text('error-processing-order'.tr()),
-    );
-    ScaffoldMessenger.of(context).showSnackBar(snackBar);
-  } else {
-    await InAppPurchase.instance.restorePurchases();
-    SnackBar snackBar = SnackBar(
-      content: Text('any-previous-purchases-restored'.tr()),
-      action: getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid
-          ? SnackBarAction(
-              label: "help".tr().capitalizeFirst,
-              onPressed: () {
-                showHelpRestorePopup(context);
-              })
-          : null,
-    );
-    ScaffoldMessenger.of(context).showSnackBar(snackBar);
-  }
-}
-
-showHelpRestorePopup(BuildContext context) {
-  openPopup(
-    context,
-    icon: appStateSettings["outlinedIcons"]
-        ? Icons.shop_2_outlined
-        : Icons.shop_2_rounded,
-    title: "restore-purchases".tr(),
-    description: "restore-purchases-help".tr(),
-    onCancel: () => popRoute(context),
-    onCancelLabel: "close".tr(),
-    onSubmitLabel: "contact".tr(),
-    onSubmit: () async {
-      bool openResult = await openUrl('mailto:dapperappdeveloper@gmail.com');
-      if (openResult == false) copyToClipboard("dapperappdeveloper@gmail.com");
-    },
-    onExtra: () =>
-        openUrl("https://cashewapp.web.app/faq.html#restoring-purchases"),
-    onExtraLabel: "FAQ".tr(),
-  );
-}
-
-bool hidePremiumPopup() {
-  return premiumPopupEnabled == false ||
-      appStateSettings["purchaseID"] != null ||
-      appStateSettings["previewDemo"] == true;
-}
-
-Future<bool> premiumPopupPushRoute(BuildContext context) async {
-  if (hidePremiumPopup()) return true;
-  dynamic result = await pushRoute(
-    context,
-    PremiumPage(
-      popRouteWithPurchase: true,
-    ),
-  );
-  if (result == true) {
-    return true;
-  } else {
-    return false;
-  }
-}
-
-Future<bool> premiumPopupBudgets(BuildContext context) async {
-  if (hidePremiumPopup()) return true;
-  if ((await database.getAllBudgets()).length > 0) {
-    if (await premiumPopupPushRoute(context) == true) {
-      return true;
-    } else {
-      popRoute(context);
-      return false;
-    }
-  } else {
-    return true;
-  }
-}
-
+// Free edition: preserve existing call sites without enforcing purchases.
+bool hidePremiumPopup() => true;
+Future<bool> premiumPopupPushRoute(BuildContext context) async => true;
+Future<bool> premiumPopupBudgets(BuildContext context) async => true;
 Future<bool> premiumPopupObjectives(BuildContext context,
-    {required ObjectiveType objectiveType}) async {
-  if (hidePremiumPopup()) return true;
-  if ((await database.getAllObjectives(objectiveType: objectiveType)).length >
-      0) {
-    if (await premiumPopupPushRoute(context) == true) {
-      return true;
-    } else {
-      popRoute(context);
-      return false;
-    }
-  } else {
-    return true;
-  }
-}
+    {required ObjectiveType objectiveType}) async => true;
+Future<bool> premiumPopupPastBudgets(BuildContext context) async => true;
+Future<bool> premiumPopupAddTransaction(BuildContext context) async => true;
 
-Future<bool> premiumPopupPastBudgets(BuildContext context) async {
-  if (hidePremiumPopup()) return true;
-  if (await premiumPopupPushRoute(context) == true) {
-    return true;
-  } else {
-    popRoute(context);
-    return false;
-  }
-}
-
-Future premiumPopupAddTransaction(BuildContext context) async {
-  if (hidePremiumPopup()) return true;
-
-  print("Checking premium before adding transaction - " +
-      appStateSettings["premiumPopupAddTransactionCount"].toString());
-
-  try {
-    DateTime.parse(appStateSettings["premiumPopupAddTransactionLastShown"]);
-  } catch (e) {
-    print("Error parsing date for premium popup, resetting...");
-    updateSettings(
-        "premiumPopupAddTransactionLastShown", DateTime.now().toString(),
-        updateGlobalState: false);
-  }
-
-  if (DateTime.parse(appStateSettings["premiumPopupAddTransactionLastShown"])
-          .add(Duration(days: 1))
-          .isBefore(DateTime.now()) &&
-      appStateSettings["premiumPopupAddTransactionCount"] > 5) {
-    updateSettings("premiumPopupAddTransactionCount", 0,
-        updateGlobalState: false);
-    updateSettings(
-        "premiumPopupAddTransactionLastShown", DateTime.now().toString(),
-        updateGlobalState: false);
-    await pushRoute(
-      context,
-      PremiumPage(
-        popRouteWithPurchase: true,
-        canDismiss: true,
-      ),
-    );
-  }
-
-  // Always return true, this is not an enforced feature
-  return true;
-}
-
+// Store UI is intentionally absent in the free edition.
 class Products extends StatefulWidget {
   const Products({this.popRouteWithPurchase = false, super.key});
   final bool popRouteWithPurchase;
-
   @override
   State<Products> createState() => ProductsState();
 }
-
 class ProductsState extends State<Products> {
-  bool hasProducts = storeProducts.isNotEmpty;
-  bool loading = true;
-  bool animateHighlightProducts = false;
-
-  void refreshState() {
-    print("refresh products");
-    setState(() {});
-  }
-
-  void highlightProducts() {
-    print("highlight products");
-    setState(() {
-      animateHighlightProducts = true;
-    });
-  }
-
+  void highlightProducts() {}
+  void refreshState() {}
   @override
-  void initState() {
-    Future.delayed(Duration.zero, () async {
-      Map<String, ProductDetails> products = await initializeStoreAndPurchases(
-        context: context,
-        popRouteWithPurchase: widget.popRouteWithPurchase,
-      );
-      setState(() {
-        hasProducts = products.isNotEmpty;
-        loading = false;
-      });
-    });
-    Future.delayed(Duration(milliseconds: 3500), () async {
-      if (loading)
-        setState(() {
-          loading = false;
-        });
-    });
-    super.initState();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedSwitcher(
-      duration: Duration(milliseconds: 700),
-      child: appStateSettings["purchaseID"] != null
-          ? ManageSubscription()
-          : kIsWeb || hasProducts == false
-              ? loading == true
-                  ? SizedBox.shrink()
-                  : StatusBox(
-                      title: "error-getting-products".tr(),
-                      description: "error-getting-products-description".tr() +
-                          (kDebugMode && tryStoreEnabled == false
-                              ? " Store disabled in debug mode! Enable `tryStoreEnabled`"
-                              : ""),
-                      icon: appStateSettings["outlinedIcons"]
-                          ? Icons.warning_outlined
-                          : Icons.warning_rounded,
-                      color: Theme.of(context).colorScheme.error,
-                      onTap: () {
-                        initializeStoreAndPurchases(
-                          context: context,
-                          popRouteWithPurchase: widget.popRouteWithPurchase,
-                        );
-                      },
-                      forceDark: true,
-                    )
-              : Padding(
-                  padding: EdgeInsetsDirectional.symmetric(
-                      horizontal:
-                          getHorizontalPaddingConstrained(context) + 28),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: 300),
-                    child: Column(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadiusDirectional.circular(20),
-                          child: FlashingContainer(
-                            isAnimating: animateHighlightProducts,
-                            backgroundColor:
-                                Theme.of(context).colorScheme.primary,
-                            loopCount: 2,
-                            flashDuration: Duration(milliseconds: 650),
-                            child: Container(
-                              color: dynamicPastel(
-                                context,
-                                Theme.of(context).colorScheme.primaryContainer,
-                                amountDark: 0.2,
-                                amountLight: 0.6,
-                              ).withOpacity(0.45),
-                              child: Column(
-                                children: [
-                                  Builder(
-                                    builder: (context) {
-                                      if (storeProducts[productIDs["yearly"]] ==
-                                              null ||
-                                          storeProducts[
-                                                  productIDs["monthly"]] ==
-                                              null) {
-                                        return SizedBox.shrink();
-                                      }
-                                      final double monthlyPrice =
-                                          storeProducts[productIDs["monthly"]]!
-                                              .rawPrice;
-                                      final double monthlyPriceForYear =
-                                          (monthlyPrice * 12);
-                                      return storeProducts[
-                                                  productIDs["yearly"]] ==
-                                              null
-                                          ? SizedBox.shrink()
-                                          : SubscriptionOption(
-                                              label:
-                                                  "yearly".tr().capitalizeFirst,
-                                              price: storeProducts[
-                                                      productIDs["yearly"]]!
-                                                  .price,
-                                              extraPadding:
-                                                  EdgeInsetsDirectional.only(
-                                                      top: 13 / 2),
-                                              onTap: () {
-                                                InAppPurchase.instance
-                                                    .buyNonConsumable(
-                                                  purchaseParam: PurchaseParam(
-                                                    productDetails:
-                                                        storeProducts[
-                                                            productIDs[
-                                                                "yearly"]]!,
-                                                  ),
-                                                );
-                                              },
-                                              originalPrice: storeProducts[
-                                                          productIDs["yearly"]]!
-                                                      .currencySymbol +
-                                                  monthlyPriceForYear
-                                                      .toStringAsFixed(2),
-                                            );
-                                    },
-                                  ),
-                                  storeProducts[productIDs["monthly"]] == null
-                                      ? SizedBox.shrink()
-                                      : SubscriptionOption(
-                                          label: "monthly".tr().capitalizeFirst,
-                                          price: storeProducts[
-                                                  productIDs["monthly"]]!
-                                              .price,
-                                          onTap: () {
-                                            InAppPurchase.instance
-                                                .buyNonConsumable(
-                                              purchaseParam: PurchaseParam(
-                                                productDetails: storeProducts[
-                                                    productIDs["monthly"]]!,
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                  storeProducts[productIDs["lifetime"]] == null
-                                      ? SizedBox.shrink()
-                                      : SubscriptionOption(
-                                          label:
-                                              "lifetime".tr().capitalizeFirst,
-                                          price: storeProducts[
-                                                  productIDs["lifetime"]]!
-                                              .price,
-                                          extraPadding:
-                                              EdgeInsetsDirectional.only(
-                                                  bottom: 13 / 2),
-                                          onTap: () {
-                                            InAppPurchase.instance
-                                                .buyNonConsumable(
-                                              purchaseParam: PurchaseParam(
-                                                productDetails: storeProducts[
-                                                    productIDs["lifetime"]]!,
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: EdgeInsetsDirectional.symmetric(
-                              horizontal: 10, vertical: 4),
-                          child: Tappable(
-                            borderRadius: 15,
-                            color: dynamicPastel(
-                              context,
-                              Theme.of(context).colorScheme.primaryContainer,
-                              amountDark: 0.2,
-                              amountLight: 0.6,
-                            ).withOpacity(0.45),
-                            onTap: () async {
-                              restorePurchases(context);
-                            },
-                            child: Container(
-                              padding: EdgeInsetsDirectional.symmetric(
-                                  vertical: 6, horizontal: 13),
-                              child: TextFont(
-                                text: "restore-purchases".tr(),
-                                fontSize: 12,
-                                textColor:
-                                    getColor(context, "black").withOpacity(0.5),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-    );
-  }
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 class SubscriptionFeature extends StatelessWidget {
@@ -1195,22 +765,10 @@ class LockedFeature extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget child = IgnorePointer(child: this.child);
-    if (showLock)
-      child = Stack(
-        alignment: AlignmentDirectional.center,
-        children: [
-          IgnorePointer(child: this.child),
-          Icon(appStateSettings["outlinedIcons"]
-              ? Icons.lock_outlined
-              : Icons.lock_rounded),
-        ],
-      );
+    // Free edition: preserve the original follow-up action without gating.
+    if (actionAfter == null) return child;
     return Tappable(
-      onTap: () async {
-        bool result = await premiumPopupPushRoute(context);
-        if (actionAfter != null && result == true) actionAfter!();
-      },
+      onTap: () => actionAfter!(),
       borderRadius: 20,
       color: Colors.transparent,
       child: child,

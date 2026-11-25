@@ -1,3 +1,4 @@
+import 'package:budget/struct/googleServiceConfiguration.dart';
 import 'dart:io';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
@@ -109,12 +110,9 @@ Future<String?> uploadFileToDrive({
   required Uint8List fileBytes,
   required String fileName,
 }) async {
-  if (googleUser == null) {
-    await signInGoogle(drivePermissionsAttachments: true);
-  }
+  if (!await signInGoogle(drivePermissionsAttachments: true)) return null;
 
-  final authHeaders = await googleUser!.authHeaders;
-  final authenticateClient = GoogleAuthClient(authHeaders);
+  final authenticateClient = await getGoogleAuthorizedClient(googleAttachmentScopes);
   final driveApi = drive.DriveApi(authenticateClient);
 
   String folderName = "Cashew";

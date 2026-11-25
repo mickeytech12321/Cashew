@@ -1,3 +1,5 @@
+import 'package:budget/struct/googleServiceConfiguration.dart';
+import 'package:budget/struct/bankNotificationInbox.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:budget/colors.dart';
@@ -73,13 +75,27 @@ class InitializeNotificationService extends StatefulWidget {
 }
 
 class _InitializeNotificationServiceState
-    extends State<InitializeNotificationService> {
+    extends State<InitializeNotificationService> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     Future.delayed(Duration.zero, () async {
+      if (!mounted) return;
       initNotificationScanning();
+      bankNotificationInbox.refresh();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) bankNotificationInbox.refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   @override
@@ -423,8 +439,7 @@ Future<void> parseEmailsInBackground(context,
           appStateSettings["EmailAutoTransactions-amountOfEmails"] ?? 10;
       int newEmailCount = 0;
 
-      final authHeaders = await googleUser!.authHeaders;
-      final authenticateClient = GoogleAuthClient(authHeaders);
+      final authenticateClient = await getGoogleAuthorizedClient(googleMailScopes);
       gMail.GmailApi gmailApi = gMail.GmailApi(authenticateClient);
       gMail.ListMessagesResponse results = await gmailApi.users.messages
           .list(googleUser!.id.toString(), maxResults: amountOfEmails);
@@ -661,8 +676,7 @@ class _GmailApiScreenState extends State<GmailApiScreen> {
     loading = true;
     if (googleUser != null) {
       try {
-        final authHeaders = await googleUser!.authHeaders;
-        final authenticateClient = GoogleAuthClient(authHeaders);
+        final authenticateClient = await getGoogleAuthorizedClient(googleMailScopes);
         gMail.GmailApi gmailApi = gMail.GmailApi(authenticateClient);
         gMail.ListMessagesResponse results = await gmailApi.users.messages
             .list(googleUser!.id.toString(), maxResults: amountOfEmails);

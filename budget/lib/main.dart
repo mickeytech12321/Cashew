@@ -34,6 +34,7 @@ import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'firebase_options.dart';
+import 'struct/cloudConfiguration.dart';
 import 'package:easy_localization/easy_localization.dart';
 
 // Requires hot restart when changed
@@ -44,9 +45,13 @@ bool allowDangerousDebugFlags = kDebugMode;
 void main() async {
   captureLogs(() async {
     WidgetsFlutterBinding.ensureInitialized();
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    // Free-edition preview: keep cloud services off until a dedicated
+    // Firebase project is configured. Local storage works without Google.
+    if (enableCashewCloudServices) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
     await EasyLocalization.ensureInitialized();
     sharedPreferences = await SharedPreferences.getInstance();
     database = await constructDb('db');
@@ -56,7 +61,7 @@ void main() async {
     await loadLanguageNamesJSON();
     await initializeSettings();
     tz.initializeTimeZones();
-    final String? locationName = await FlutterTimezone.getLocalTimezone();
+    final String? locationName = (await FlutterTimezone.getLocalTimezone()).identifier;
     tz.setLocalLocation(tz.getLocation(locationName ?? "America/New_York"));
     iconObjects.sort((a, b) => (a.mostLikelyCategoryName ?? a.icon)
         .compareTo((b.mostLikelyCategoryName ?? b.icon)));
@@ -113,7 +118,7 @@ class App extends StatelessWidget {
       themeAnimationDuration: Duration(milliseconds: 400),
       themeAnimationCurve: CustomDelayedCurve(),
       key: ValueKey('CashewAppMain'),
-      title: 'Cashew',
+      title: 'CashU',
       theme: getLightTheme(),
       darkTheme: getDarkTheme(),
       scrollBehavior: ScrollBehaviorOverride(),
@@ -150,6 +155,9 @@ class App extends StatelessWidget {
           updateGlobalAppLifecycleState: true,
           onAppResume: () async {
             await setHighRefreshRate();
+            if (entireAppLoaded && context.mounted) {
+              await postDueBankCertificatePayouts(context);
+            }
           },
           child: InitializeBiometrics(
             child: InitializeNotificationService(

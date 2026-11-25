@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:budget/main.dart';
+import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/widgets/navigationFramework.dart';
 import 'package:flutter/material.dart';
 
@@ -22,10 +25,11 @@ class _WatchForDayChangeState extends State<WatchForDayChange> {
 
   void _startTimer() {
     Future.delayed(Duration(seconds: 1), () {
-      if (DateTime.now().day != _currentDate.day) {
-        setState(() {
-          _currentDate = DateTime.now();
-        });
+      if (!mounted) return;
+      final now = DateTime.now();
+      if (!DateUtils.isSameDay(now, _currentDate)) {
+        _currentDate = now;
+        if (entireAppLoaded) unawaited(postDueBankCertificatePayouts(context));
         appStateKey.currentState?.refreshAppState();
         homePageStateKey.currentState?.refreshState();
         transactionsListPageStateKey.currentState?.refreshState();

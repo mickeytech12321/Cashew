@@ -8,7 +8,6 @@ import 'package:budget/widgets/notificationsSettings.dart';
 import 'package:budget/widgets/periodCyclePicker.dart';
 import 'package:budget/widgets/selectAmount.dart';
 import 'package:drift/drift.dart' show Value;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -17,8 +16,8 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
   return {
     "databaseJustImported": false,
     "backupLimit": 20,
-    "backupSync": true,
-    "syncEveryChange": kIsWeb,
+    "backupSync": false,
+    "syncEveryChange": false,
     "devicesHaveBeenSynced": 1,
     "numBackups": 1,
     "theme": "system", //system, light, dark
@@ -29,7 +28,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "showExtraInfoText": true,
     "selectedWalletPk": "0",
     "selectedSubscriptionType": 0,
-    "accentColor": toHexString(Color(0xFF1B447A)),
+    "accentColor": toHexString(Color(0xFF286047)),
     "accentSystemColor": await systemColorByDefault(),
     "widgetOpacity": 1,
     "widgetTheme": "system", //system, light, dark
@@ -75,6 +74,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "homePageOrder": [
       "wallets",
       "walletsList",
+      "transactionsList",
       "budgets",
       "objectives",
       "allSpendingSummary",
@@ -85,7 +85,6 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
       "spendingGraph",
       "pieChart",
       "heatMap",
-      "transactionsList",
     ],
     "homePageOrderFullScreen": [
       "wallets",
@@ -130,7 +129,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "accountColorfulAmountsWithArrows": false,
     "netTotalsColorful": false,
     "EmailAutoTransactions-amountOfEmails": 10,
-    "autoBackups": true,
+    "autoBackups": false,
     "autoBackupsFrequency": 3, //in days
     "hasSignedIn": false,
     "lastBackup": DateTime.now().subtract(Duration(days: 1)).toString(),

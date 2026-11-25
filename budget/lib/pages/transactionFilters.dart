@@ -26,6 +26,7 @@ import 'package:budget/widgets/amountRangeSlider.dart';
 class SearchFilters {
   SearchFilters({
     this.walletPks = const [],
+    this.excludedWalletPks = const {},
     this.categoryPks = const [],
     this.subcategoryPks = const [],
     this.budgetPks = const [],
@@ -69,6 +70,8 @@ class SearchFilters {
   //if the value is empty, it means all/ignore
   // think of it, if the tag is added it will be considered in the search
   List<String> walletPks;
+  // Report scope survives edits to the user-facing search filters.
+  final Set<String> excludedWalletPks;
   List<String> categoryPks;
   List<String>?
       subcategoryPks; // if this is null, it means any transaction WITHOUT a subcategory (blank list means all)
@@ -112,6 +115,7 @@ class SearchFilters {
   }) {
     return SearchFilters(
       walletPks: walletPks ?? this.walletPks,
+      excludedWalletPks: excludedWalletPks,
       categoryPks: categoryPks ?? this.categoryPks,
       subcategoryPks: subcategoryPks ?? this.subcategoryPks,
       budgetPks: budgetPks ?? this.budgetPks,

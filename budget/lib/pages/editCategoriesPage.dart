@@ -1,3 +1,4 @@
+import 'package:budget/widgets/cashuSurfaces.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -41,6 +42,7 @@ class _EditCategoriesPageState extends State<EditCategoriesPage> {
   bool dragDownToDismissEnabled = true;
   int currentReorder = -1;
   String searchValue = "";
+  bool _searchOpen = false;
 
   @override
   void initState() {
@@ -54,9 +56,10 @@ class _EditCategoriesPageState extends State<EditCategoriesPage> {
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: () async {
-        if (searchValue != "") {
+        if (_searchOpen) {
           setState(() {
             searchValue = "";
+            _searchOpen = false;
           });
           return false;
         } else {
@@ -64,6 +67,7 @@ class _EditCategoriesPageState extends State<EditCategoriesPage> {
         }
       },
       child: PageFramework(
+        backgroundColor: CashuColors(context).canvas,
         horizontalPaddingConstrained: true,
         dragDownToDismiss: true,
         dragDownToDismissEnabled: dragDownToDismissEnabled,
@@ -78,6 +82,17 @@ class _EditCategoriesPageState extends State<EditCategoriesPage> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: _searchOpen
+                ? cashuLabel(context, 'Close search', 'اقفل البحث')
+                : cashuLabel(context, 'Search categories', 'ابحث في التصنيفات'),
+            icon:
+                Icon(_searchOpen ? Icons.close_rounded : Icons.search_rounded),
+            onPressed: () => setState(() {
+              _searchOpen = !_searchOpen;
+              if (!_searchOpen) searchValue = '';
+            }),
+          ),
           CustomPopupMenuButton(
             showButtons: true,
             keepOutFirst: true,
@@ -110,28 +125,29 @@ class _EditCategoriesPageState extends State<EditCategoriesPage> {
           ),
         ],
         slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsetsDirectional.only(bottom: 8.0),
-              child: TextInput(
-                labelText: "search-categories-placeholder".tr(),
-                icon: appStateSettings["outlinedIcons"]
-                    ? Icons.search_outlined
-                    : Icons.search_rounded,
-                onSubmitted: (value) {
-                  setState(() {
-                    searchValue = value;
-                  });
-                },
-                onChanged: (value) {
-                  setState(() {
-                    searchValue = value;
-                  });
-                },
-                autoFocus: false,
+          if (_searchOpen)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsetsDirectional.only(bottom: 8.0),
+                child: TextInput(
+                  labelText: "search-categories-placeholder".tr(),
+                  icon: appStateSettings["outlinedIcons"]
+                      ? Icons.search_outlined
+                      : Icons.search_rounded,
+                  onSubmitted: (value) {
+                    setState(() {
+                      searchValue = value;
+                    });
+                  },
+                  onChanged: (value) {
+                    setState(() {
+                      searchValue = value;
+                    });
+                  },
+                  autoFocus: true,
+                ),
               ),
             ),
-          ),
           StreamBuilder<Map<String, List<TransactionCategory>>>(
               stream: database.watchAllSubCategoriesIndexedByMainCategoryPk(),
               builder: (context, snapshotSubCategories) {
