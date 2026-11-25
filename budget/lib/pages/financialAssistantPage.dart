@@ -3,12 +3,14 @@ import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialAssistant.dart';
+import 'package:budget/struct/openAiFinancialAssistant.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 class FinancialAssistantPage extends StatefulWidget {
   const FinancialAssistantPage({super.key});
@@ -27,6 +29,164 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
   static const _speech = MethodChannel('cashew/assistant_speech');
   late final Future<bool> _voiceAvailable = _supportsVoice();
   bool _listening = false;
+  bool _requestingAi = false;
+  bool _aiSuggested = false;
+  String? _sessionKey;
+  static const _apiKey = MethodChannel('cashew/assistant_key');
+
+  bool get _canStoreApiKey =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  Future<String?> _readApiKey() async => _canStoreApiKey
+      ? await _apiKey.invokeMethod<String>('read')
+      : _sessionKey;
+
+  void _assistantMessage(String english, String arabic) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(_label(english, arabic))),
+    );
+  }
+
+  Future<void> _editAiSettings() async {
+    var hasKey = false;
+    try {
+      hasKey = (await _readApiKey()) != null;
+    } catch (_) {
+      // The settings dialog still allows clearing or replacing an unreadable key.
+    }
+    if (!mounted) return;
+    var replacement = '';
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title:
+            Text(_label('Optional OpenAI assistant', 'مساعد OpenAI الاختياري')),
+        scrollable: true,
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(_canStoreApiKey
+              ? _label(
+                  'Your API key is protected by Android Keystore on this device.',
+                  'يحمي Android Keystore مفتاح API على هذا الجهاز.')
+              : _label(
+                  'Your API key stays in memory until you leave this screen.',
+                  'يبقى مفتاح API في الذاكرة حتى تغادر هذه الشاشة.')),
+          TextField(
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            maxLength: 300,
+            textDirection: TextDirection.ltr,
+            onChanged: (value) => replacement = value.trim(),
+            decoration: InputDecoration(
+              labelText: _label('OpenAI API key', 'مفتاح OpenAI API'),
+              helperText: hasKey
+                  ? _label('A key is configured.', 'تم إعداد مفتاح.')
+                  : null,
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(_label('Cancel', 'إلغاء')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ''),
+            child: Text(_label('Remove key', 'حذف المفتاح')),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (RegExp(r'^[A-Za-z0-9_-]{12,300}$').hasMatch(replacement)) {
+                Navigator.pop(context, replacement);
+              } else {
+                _assistantMessage(
+                    'Enter a valid API key.', 'أدخل مفتاح API صالحًا.');
+              }
+            },
+            child: Text(_label('Save', 'حفظ')),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return;
+    try {
+      if (_canStoreApiKey) {
+        await _apiKey.invokeMethod<void>(
+            choice.isEmpty ? 'clear' : 'save', choice.isEmpty ? null : choice);
+      } else {
+        _sessionKey = choice.isEmpty ? null : choice;
+      }
+      _assistantMessage(
+        choice.isEmpty ? 'API key removed.' : 'API key saved.',
+        choice.isEmpty ? 'تم حذف مفتاح API.' : 'تم حفظ مفتاح API.',
+      );
+    } catch (_) {
+      _assistantMessage(
+          'Could not update the protected key.', 'تعذّر تحديث المفتاح المحمي.');
+    }
+  }
+
+  Future<void> _interpretOnline() async {
+    if (_requestingAi || _listening) return;
+    final command = _input.text.trim();
+    if (command.isEmpty) {
+      _assistantMessage('Enter a command to continue.', 'أدخل طلبًا للمتابعة.');
+      return;
+    }
+    setState(() => _requestingAi = true);
+    http.Client? client;
+    try {
+      final key = await _readApiKey();
+      if (!mounted) return;
+      if (key == null) {
+        _assistantMessage('Add an API key in AI settings first.',
+            'أضف مفتاح API من إعدادات الذكاء الاصطناعي أولًا.');
+        return;
+      }
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(_label(
+              'Send this text to OpenAI?', 'إرسال هذا النص إلى OpenAI؟')),
+          scrollable: true,
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(_label(
+              'OpenAI receives the text below and your API key. Usage may incur API charges.',
+              'تستقبل OpenAI النص أدناه ومفتاح API. قد تُحتسب رسوم لاستخدام الخدمة.',
+            )),
+            const SizedBox(height: 12),
+            SelectableText(command),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(_label('Cancel', 'إلغاء')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(_label('Send text', 'إرسال النص')),
+            ),
+          ],
+        ),
+      );
+      if (accepted != true || !mounted || _input.text.trim() != command) return;
+      client = http.Client();
+      final suggestion = await OpenAiFinancialAssistant(client, key)
+          .interpret(command)
+          .timeout(const Duration(seconds: 30));
+      if (mounted && _input.text.trim() == command) {
+        _applyIntent(suggestion, aiSuggested: true);
+      }
+    } catch (_) {
+      _assistantMessage(
+          'OpenAI could not interpret this request. You can continue offline.',
+          'تعذّر تفسير الطلب باستخدام OpenAI. يمكنك المتابعة دون اتصال.');
+    } finally {
+      client?.close();
+      if (mounted) setState(() => _requestingAi = false);
+    }
+  }
 
   Future<bool> _supportsVoice() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
@@ -83,13 +243,17 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
     }
   }
 
-  void _interpret() {
-    final intent = const FinancialAssistant().parse(_input.text);
+  void _interpret() =>
+      _applyIntent(const FinancialAssistant().parse(_input.text));
+
+  void _applyIntent(FinancialAssistantIntent intent,
+      {bool aiSuggested = false}) {
     final spending = intent.type == FinancialAssistantIntentType.querySpending;
     final now = DateTime.now();
     final period = intent.spendingPeriod.range(now);
     setState(() {
       _intent = intent;
+      _aiSuggested = aiSuggested;
       _wallet = null;
       _accountTotals =
           spending || intent.type == FinancialAssistantIntentType.queryBalance
@@ -118,16 +282,22 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(spending
-                  ? _label('Paid expenses by account', 'المصروفات المدفوعة حسب الحساب')
+                  ? _label('Paid expenses by account',
+                      'المصروفات المدفوعة حسب الحساب')
                   : _label('Paid balance by account',
                       'رصيد المعاملات المدفوعة حسب الحساب')),
               if (spending)
                 Text(switch (_intent!.spendingPeriod) {
-                  SpendingPeriod.currentWeek => _label('This week', 'هذا الأسبوع'),
-                  SpendingPeriod.previousWeek => _label('Last week', 'الأسبوع الماضي'),
-                  SpendingPeriod.currentMonth => _label('This month', 'هذا الشهر'),
-                  SpendingPeriod.previousMonth => _label('Last month', 'الشهر الماضي'),
-                  SpendingPeriod.currentYear => _label('This year', 'هذا العام'),
+                  SpendingPeriod.currentWeek =>
+                    _label('This week', 'هذا الأسبوع'),
+                  SpendingPeriod.previousWeek =>
+                    _label('Last week', 'الأسبوع الماضي'),
+                  SpendingPeriod.currentMonth =>
+                    _label('This month', 'هذا الشهر'),
+                  SpendingPeriod.previousMonth =>
+                    _label('Last month', 'الشهر الماضي'),
+                  SpendingPeriod.currentYear =>
+                    _label('This year', 'هذا العام'),
                 }),
               for (final row in snapshot.data!)
                 ListTile(
@@ -167,6 +337,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
             children: [
               TextField(
                 controller: _input,
+                enabled: !_requestingAi,
                 maxLength: 250,
                 decoration: InputDecoration(
                   labelText: _label(
@@ -185,7 +356,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
                 future: _voiceAvailable,
                 builder: (context, snapshot) => snapshot.data == true
                     ? OutlinedButton.icon(
-                        onPressed: _dictate,
+                        onPressed: _requestingAi ? null : _dictate,
                         icon: Icon(_listening ? Icons.stop : Icons.mic_none),
                         label: Text(_listening
                             ? _label('Cancel dictation', 'إلغاء الإملاء')
@@ -194,9 +365,24 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
                     : const SizedBox.shrink(),
               ),
               FilledButton(
-                onPressed: _listening ? null : _interpret,
+                onPressed: _listening || _requestingAi ? null : _interpret,
                 child: Text(_label('Continue', 'متابعة')),
               ),
+              Wrap(spacing: 8, children: [
+                OutlinedButton(
+                  onPressed:
+                      _requestingAi || _listening ? null : _interpretOnline,
+                  child: Text(_label('Use OpenAI', 'استخدام OpenAI')),
+                ),
+                TextButton(
+                  onPressed: _requestingAi ? null : _editAiSettings,
+                  child:
+                      Text(_label('AI settings', 'إعدادات الذكاء الاصطناعي')),
+                ),
+              ]),
+              if (_requestingAi) const LinearProgressIndicator(),
+              if (intent != null && _aiSuggested)
+                Text(_label('OpenAI suggestion', 'اقتراح OpenAI')),
               if (_accountTotals != null)
                 _queryResult(
                     intent!.type == FinancialAssistantIntentType.querySpending)
@@ -287,6 +473,7 @@ class _FinancialAssistantPageState extends State<FinancialAssistantPage> {
                         builder: (_) => AddTransactionPage(
                           selectedIncome: income,
                           selectedAmount: income ? amount : -amount,
+                          selectedTitle: intent.merchantOrTitle,
                           selectedWallet: wallet,
                           startInitialAddTransactionSequence: false,
                           routesToPopAfterDelete: RoutesToPopAfterDelete.None,

@@ -75,6 +75,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
   int? statementDay;
   int? dueDay;
   double? minimumPayment;
+  double? minimumPercent;
+  double? lateFee;
   double? aprPercent;
   String? cardLastFour;
   String? linkedBankWalletPk;
@@ -86,12 +88,13 @@ class _AddWalletPageState extends State<AddWalletPage> {
   String _accountLabel(String english, String arabic) =>
       Localizations.localeOf(context).languageCode == 'ar' ? arabic : english;
 
-  String? _validateCreditNumber(String? value, {bool day = false}) {
+  String? _validateCreditNumber(String? value, {bool day = false, double? max}) {
     if (value == null || value.trim().isEmpty) return null;
     final normalized = FinancialMessageParser.normalize(value.trim());
     final number = day ? int.tryParse(normalized) : double.tryParse(normalized);
     if (number != null && number.isFinite &&
-        (day ? number >= 1 && number <= 31 : number >= 0)) {
+        (day ? number >= 1 && number <= 31 : number >= 0) &&
+        (max == null || number <= max)) {
       return null;
     }
     return _accountLabel('Enter a valid number', 'أدخل رقمًا صالحًا');
@@ -144,6 +147,7 @@ class _AddWalletPageState extends State<AddWalletPage> {
                   final credits = snapshot.data?['statement_credits'] as num?;
                   final charges = snapshot.data?['charges_after_statement'] as num?;
                   final minimum = snapshot.data?['estimated_minimum_remaining'] as num?;
+                  final fee = snapshot.data?['estimated_late_fee'] as num?;
                   final overdue = snapshot.data?['estimated_statement_overdue'] == true;
                   final dates = MaterialLocalizations.of(context);
                   String amount(num value) =>
@@ -159,6 +163,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
                       '${statementRemaining.toStringAsFixed(selectedDecimals)} $currency',
                     if (minimum != null)
                       '${_accountLabel('Estimated minimum remaining', 'المتبقي من الحد الأدنى التقديري')} ${amount(minimum)}',
+                    if (fee != null)
+                      '${_accountLabel('Estimated late fee', 'رسوم التأخير التقديرية')} ${amount(fee)}',
                     if (credits != null && credits > 0)
                       '${_accountLabel('Credits since closing', 'المبالغ الدائنة بعد الإقفال')} ${amount(credits)}',
                     if (charges != null && charges > 0)
@@ -278,6 +284,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
           statementDay: statementDay,
           dueDay: dueDay,
           minimumPayment: minimumPayment,
+          minimumPercent: minimumPercent,
+          lateFee: lateFee,
           aprPercent: aprPercent,
           lastFour: cardLastFour,
           linkedBankWalletFk: linkedBankWalletPk,
@@ -373,6 +381,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
                 dueDay = credit['due_day'] as int?;
                 minimumPayment =
                     (credit['minimum_payment'] as num?)?.toDouble();
+                minimumPercent = (credit['minimum_percent'] as num?)?.toDouble();
+                lateFee = (credit['late_fee'] as num?)?.toDouble();
                 aprPercent = (credit['apr_percent'] as num?)?.toDouble();
                 cardLastFour = credit['last_four'] as String?;
                 linkedBankWalletPk = credit['linked_bank_wallet_fk'] as String?;
@@ -739,9 +749,33 @@ class _AddWalletPageState extends State<AddWalletPage> {
                     TextFormField(
                       initialValue: minimumPayment?.toString(),
                       keyboardType: TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(labelText: _accountLabel('Minimum payment', 'الحد الأدنى للسداد')),
+                      decoration: InputDecoration(labelText: _accountLabel('Fixed minimum or floor', 'مبلغ الحد الأدنى الثابت')),
                       validator: _validateCreditNumber,
                       onChanged: (v) => minimumPayment = double.tryParse(FinancialMessageParser.normalize(v.trim())),
+                    ),
+                    TextFormField(
+                      initialValue: minimumPercent?.toString(),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: _accountLabel('Minimum as % of statement', 'نسبة الحد الأدنى من الكشف'),
+                        helperText: _accountLabel('Uses the higher of this percentage and the fixed minimum.',
+                            'يُحتسب الأكبر بين النسبة والمبلغ الثابت.'),
+                        helperMaxLines: 2,
+                      ),
+                      validator: (value) => _validateCreditNumber(value, max: 100),
+                      onChanged: (v) => minimumPercent = double.tryParse(FinancialMessageParser.normalize(v.trim())),
+                    ),
+                    TextFormField(
+                      initialValue: lateFee?.toString(),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: _accountLabel('Flat late fee (estimate)', 'رسوم التأخير الثابتة (تقديرية)'),
+                        helperText: _accountLabel('Shown if the minimum was missed by the due date.',
+                            'تظهر عند عدم سداد الحد الأدنى بحلول تاريخ الاستحقاق.'),
+                        helperMaxLines: 2,
+                      ),
+                      validator: (value) => _validateCreditNumber(value, max: 999999999999),
+                      onChanged: (v) => lateFee = double.tryParse(FinancialMessageParser.normalize(v.trim())),
                     ),
                     TextFormField(
                       initialValue: aprPercent?.toString(),

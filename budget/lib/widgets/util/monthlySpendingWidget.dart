@@ -69,7 +69,8 @@ class _PublisherState extends State<MonthlySpendingWidgetPublisher>
   @override
   void didUpdateWidget(covariant MonthlySpendingWidgetPublisher oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.wallet?.currency != widget.wallet?.currency ||
+    if (oldWidget.wallet?.walletPk != widget.wallet?.walletPk ||
+        oldWidget.wallet?.currency != widget.wallet?.currency ||
         oldWidget.wallet?.decimals != widget.wallet?.decimals) _refresh();
   }
 
@@ -95,6 +96,7 @@ class _PublisherState extends State<MonthlySpendingWidgetPublisher>
     final wallet = widget.wallet;
     final currency = wallet?.currency;
     if (!monthlySpendingWidgetEnabled.value ||
+        wallet == null ||
         currency == null ||
         currency.isEmpty) {
       _save(version, null);
@@ -105,18 +107,20 @@ class _PublisherState extends State<MonthlySpendingWidgetPublisher>
     final midnight = DateTime(date.year, date.month, date.day + 1);
     _rollover = Timer(midnight.difference(date), _refresh);
     final month = '${date.year}-${date.month.toString().padLeft(2, '0')}';
-    final digits = wallet!.decimals.clamp(0, 12);
-    _subscription =
-        database.watchMonthlySpendingInCurrency(currency, date).listen(
-              (amount) => _save(
-                  version,
-                  jsonEncode({
-                    'month': month,
-                    'amount':
-                        '${amount.toStringAsFixed(digits)} ${currency.toUpperCase()}',
-                  })),
-              onError: (Object _) => _save(version, null),
-            );
+    final digits = wallet.decimals.clamp(0, 12);
+    _subscription = database
+        .watchMonthlySpendingInCurrency(currency, date,
+            walletPk: wallet.walletPk)
+        .listen(
+          (amount) => _save(
+              version,
+              jsonEncode({
+                'month': month,
+                'amount':
+                    '${amount.toStringAsFixed(digits)} ${currency.toUpperCase()}',
+              })),
+          onError: (Object _) => _save(version, null),
+        );
   }
 
   void _save(int version, String? snapshot) {

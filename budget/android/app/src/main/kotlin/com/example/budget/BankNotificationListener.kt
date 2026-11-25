@@ -1,6 +1,8 @@
 package com.mickey.cashew
 
 import android.app.Notification
+import android.database.ContentObserver
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
 import android.service.notification.NotificationListenerService
@@ -8,22 +10,59 @@ import android.service.notification.StatusBarNotification
 import io.flutter.plugin.common.EventChannel
 
 class BankNotificationListener : NotificationListenerService() {
+    private val retained by lazy { BankNotificationRetention(this) }
+    private val permissionObserver = object : ContentObserver(main) {
+        override fun onChange(selfChange: Boolean) {
+            if (!BankNotificationRetention.hasAccess(this@BankNotificationListener)) {
+                runCatching { retained.revoke() }
+            }
+        }
+    }
+    private val expireOldRecords = object : Runnable {
+        override fun run() {
+            runCatching { retained.read() }
+            main.postDelayed(this, 3_600_000L)
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        contentResolver.registerContentObserver(
+            Settings.Secure.getUriFor("enabled_notification_listeners"), false, permissionObserver,
+        )
+        main.post(expireOldRecords)
+    }
+
     override fun onListenerConnected() {
         super.onListenerConnected()
         main.post {
             connected = this
+            replayRetained()
             replayActive()
         }
     }
 
     override fun onListenerDisconnected() {
-        main.post { if (connected === this) connected = null }
+        main.post {
+            if (connected === this) connected = null
+            if (!BankNotificationRetention.hasAccess(this)) runCatching { retained.revoke() }
+        }
         super.onListenerDisconnected()
     }
 
     override fun onDestroy() {
         if (connected === this) connected = null
+        contentResolver.unregisterContentObserver(permissionObserver)
+        main.removeCallbacks(expireOldRecords)
+        if (!BankNotificationRetention.hasAccess(this)) runCatching { retained.revoke() }
         super.onDestroy()
+    }
+
+    private fun replayRetained() {
+        val target = sink ?: return
+        runCatching { retained.read() }.getOrNull().orEmpty()
+            .filter { it.packageName in allowedPackages && it.postedAt >= since }
+            .forEach { target.success(it.event()) }
     }
 
     private fun replayActive() {
@@ -41,29 +80,32 @@ class BankNotificationListener : NotificationListenerService() {
             .take(100)
             .toList()
             .asReversed()
-            .forEach(::send)
+            .forEach { send(it, retain = false) }
     }
 
     override fun onNotificationPosted(posted: StatusBarNotification) {
-        main.post { if (connected === this) send(posted) }
+        main.post { if (connected === this) send(posted, retain = true) }
     }
 
-    private fun send(posted: StatusBarNotification) {
-        if (posted.packageName !in allowedPackages || posted.packageName == packageName ||
-            posted.postTime < since) return
-        val target = sink ?: return
+    private fun send(posted: StatusBarNotification, retain: Boolean) {
+        if (posted.packageName == packageName ||
+            !BankNotificationRetention.hasAccess(this)) return
         val notification = posted.notification
         if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         val extras = notification.extras ?: return
         val content = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
             ?: extras.getCharSequence(Notification.EXTRA_TEXT)
-        target.success(mapOf(
-            "id" to posted.key,
-            "packageName" to posted.packageName,
-            "postedAt" to posted.postTime,
-            "title" to extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
-            "content" to content?.toString(),
-        ))
+        val event = BankNotificationRecord(
+            id = posted.key,
+            packageName = posted.packageName,
+            postedAt = posted.postTime,
+            title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+            content = content?.toString(),
+        )
+        val saved = if (retain) runCatching { retained.enqueue(event) }.getOrNull() else null
+        if (posted.packageName in allowedPackages && posted.postTime >= since) {
+            sink?.success((saved ?: event).event())
+        }
     }
 
     companion object {
@@ -78,6 +120,7 @@ class BankNotificationListener : NotificationListenerService() {
             allowedPackages = packages
             since = from
             sink = events
+            connected?.replayRetained()
             connected?.replayActive()
         }
 

@@ -5,8 +5,22 @@ import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:flutter/material.dart';
 
+typedef _InsightRow = ({
+  String currency,
+  String? category,
+  double income,
+  double expenses,
+});
+
+typedef _InsightReport = ({
+  DateTime month,
+  String? account,
+  List<_InsightRow> rows
+});
+
 class FinancialInsightsPage extends StatefulWidget {
-  const FinancialInsightsPage({super.key});
+  const FinancialInsightsPage({super.key, this.initialWalletPk});
+  final String? initialWalletPk;
 
   @override
   State<FinancialInsightsPage> createState() => _FinancialInsightsPageState();
@@ -14,9 +28,8 @@ class FinancialInsightsPage extends StatefulWidget {
 
 class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
   int _monthsBack = 0;
-  String? _account;
+  late String? _account = widget.initialWalletPk;
   late final _accounts = database.getFinancialInsightsAccounts();
-  late DateTime _reportMonth;
   late var _insights = _load();
 
   String _label(String english, String arabic) =>
@@ -25,46 +38,45 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
   DateTime _month(DateTime today, int offset) =>
       DateTime(today.year, today.month - offset);
 
-  Future<
-      List<
-          ({
-            String currency,
-            String? category,
-            double income,
-            double expenses
-          })>> _load() {
+  Future<_InsightReport> _load() async {
     final today = DateTime.now();
-    _reportMonth = _month(today, _monthsBack);
-    return database.getFinancialInsights(
-      _reportMonth,
-      _monthsBack == 0
+    final monthsBack = _monthsBack;
+    final requestedAccount = _account;
+    final month = _month(today, monthsBack);
+    final account = requestedAccount != null &&
+            (await _accounts).any((entry) => entry.id == requestedAccount)
+        ? requestedAccount
+        : null;
+    final rows = await database.getFinancialInsights(
+      month,
+      monthsBack == 0
           ? DateTime(today.year, today.month, today.day + 1)
-          : _month(today, _monthsBack - 1),
-      walletPk: _account,
+          : _month(today, monthsBack - 1),
+      walletPk: account,
     );
+    return (month: month, account: account, rows: rows);
   }
 
   String _amount(double value, String code) =>
       '${value.toStringAsFixed(2)} ${code.toUpperCase()}'.trim();
 
-  Future<void> _copyReport(
-    List<({String currency, String? category, double income, double expenses})>
-        rows,
-  ) async {
+  Future<void> _copyReport(_InsightReport report) async {
     final csv = exportFinancialInsightsCsv(
-      month: _reportMonth,
-      account: _account,
-      rows: rows,
+      month: report.month,
+      account: report.account,
+      rows: report.rows,
     );
     try {
       await Clipboard.setData(ClipboardData(text: csv));
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
         _label('Report copied as CSV.', 'تم نسخ التقرير بصيغة CSV.'),
       )));
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
         _label('Could not copy report.', 'تعذّر نسخ التقرير.'),
       )));
     }
@@ -79,17 +91,22 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
             ValueListenableBuilder<bool>(
               valueListenable: monthlySpendingWidgetEnabled,
               builder: (context, enabled, _) => SwitchListTile(
-                title: Text(_label('Show spending on Android home screen', 'عرض المصروفات على شاشة أندرويد الرئيسية')),
-                subtitle: Text(_label('Add the Monthly spending widget in your launcher.',
-                    'أضف ويدجت مصروفات الشهر من إعدادات الشاشة الرئيسية.')),
+                title: Text(_label('Show spending on Android home screen',
+                    'عرض المصروفات على شاشة أندرويد الرئيسية')),
+                subtitle: Text(_label(
+                    'The Monthly spending widget shows this month’s spending for the selected home account.',
+                    'يعرض ويدجت مصروفات الشهر إنفاق هذا الشهر للحساب المحدد في الصفحة الرئيسية.')),
                 value: enabled,
                 onChanged: (value) async {
                   try {
                     await setMonthlySpendingVisibility(value);
                   } catch (_) {
-                    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(_label('Could not update the widget.', 'تعذّر تحديث الويدجت.'))),
-                    );
+                    if (context.mounted)
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                            content: Text(_label('Could not update the widget.',
+                                'تعذّر تحديث الويدجت.'))),
+                      );
                   }
                 },
               ),
@@ -105,12 +122,15 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: DropdownButton<String>(
                   isExpanded: true,
-                  value: _account,
-                  hint: Text(_label('All active accounts', 'كل الحسابات النشطة')),
+                  value: accounts.any((account) => account.id == _account)
+                      ? _account
+                      : null,
+                  hint:
+                      Text(_label('All active accounts', 'كل الحسابات النشطة')),
                   items: [
                     DropdownMenuItem<String>(
-                      child: Text(_label(
-                          'All active accounts', 'كل الحسابات النشطة')),
+                      child: Text(
+                          _label('All active accounts', 'كل الحسابات النشطة')),
                     ),
                     for (final account in accounts)
                       DropdownMenuItem(
@@ -164,7 +184,8 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
                     title: Text(
                   _label('Could not load insights.', 'تعذّر تحميل التحليلات.'),
                 ));
-              final rows = snapshot.data!;
+              final report = snapshot.data!;
+              final rows = report.rows;
               if (rows.isEmpty)
                 return ListTile(
                     title: Text(
@@ -175,9 +196,10 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
               return Column(
                 children: [
                   TextButton.icon(
-                    onPressed: () => _copyReport(rows),
+                    onPressed: () => _copyReport(report),
                     icon: const Icon(Icons.copy_outlined),
-                    label: Text(_label('Copy report as CSV', 'نسخ التقرير بصيغة CSV')),
+                    label: Text(
+                        _label('Copy report as CSV', 'نسخ التقرير بصيغة CSV')),
                   ),
                   for (final currency in currencies)
                     Builder(builder: (context) {
@@ -188,7 +210,12 @@ class _FinancialInsightsPageState extends State<FinancialInsightsPage> {
                       final expense =
                           entries.fold(0.0, (sum, row) => sum + row.expenses);
                       return ExpansionTile(
-                        key: PageStorageKey(('insight', _account, _monthsBack, currency)),
+                        key: PageStorageKey((
+                          'insight',
+                          report.account,
+                          report.month,
+                          currency
+                        )),
                         initiallyExpanded: true,
                         title: Text(currency.isEmpty
                             ? _label('Currency unspecified', 'العملة غير محددة')

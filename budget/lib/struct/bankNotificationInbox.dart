@@ -8,13 +8,19 @@ import 'package:flutter/services.dart';
 
 class BankNotification {
   const BankNotification(
-      {this.id, this.packageName, this.title, this.content, this.postedAt});
+      {this.id,
+      this.packageName,
+      this.title,
+      this.content,
+      this.postedAt,
+      this.receipt});
 
   final String? id;
   final String? packageName;
   final String? title;
   final String? content;
   final DateTime? postedAt;
+  final String? receipt;
 }
 
 const _access = MethodChannel('cashew/bank_notifications/settings');
@@ -22,6 +28,7 @@ const _events = EventChannel('cashew/bank_notifications/events');
 const _packagesKey = 'bankNotificationAllowedPackages';
 const _captureSinceKey = 'bankNotificationCaptureSince';
 const _enabledKey = 'bankNotificationImportEnabled';
+const _backgroundKey = 'bankNotificationBackgroundEnabled';
 final bankNotificationInbox = BankNotificationInbox();
 
 class BankNotificationInbox {
@@ -29,11 +36,14 @@ class BankNotificationInbox {
   final _recent = <String, DateTime>{};
   final revision = ValueNotifier<int>(0);
   int _configuration = 0;
+  Future<void> _deliveries = Future.value();
 
   static bool get supported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   bool get enabled => sharedPreferences.getBool(_enabledKey) ?? false;
+  bool get backgroundEnabled =>
+      sharedPreferences.getBool(_backgroundKey) ?? false;
   List<String> get packages =>
       sharedPreferences.getStringList(_packagesKey) ?? const [];
 
@@ -74,11 +84,14 @@ class BankNotificationInbox {
       _access.invokeMethod<void>('openAccessSettings');
 
   Future<void> configure(
-      {required bool enabled, required List<String> packages}) async {
+      {required bool enabled,
+      required List<String> packages,
+      bool background = false}) async {
     final validated = parsePackages(packages.join(' '));
     if (enabled && validated.isEmpty)
       throw const FormatException('Select an app');
     final changed = this.enabled != enabled ||
+        backgroundEnabled != (enabled && background) ||
         !listEquals(this.packages, validated);
     if (changed &&
         !await sharedPreferences.setInt(
@@ -86,34 +99,42 @@ class BankNotificationInbox {
       throw StateError('Could not save notification capture start');
     }
     if (!await sharedPreferences.setStringList(_packagesKey, validated) ||
-        !await sharedPreferences.setBool(_enabledKey, enabled)) {
+        !await sharedPreferences.setBool(_enabledKey, enabled) ||
+        !await sharedPreferences.setBool(
+            _backgroundKey, enabled && background)) {
       throw StateError('Could not save notification settings');
     }
-    await refresh();
+    await refresh(throwOnError: true);
   }
 
-  Future<void> refresh() async {
+  Future<void> refresh({bool throwOnError = false}) async {
     final configuration = ++_configuration;
     final previous = _subscription;
     _subscription = null;
     await previous?.cancel();
-    if (configuration != _configuration ||
-        !supported ||
-        !enabled ||
-        packages.isEmpty) return;
-    final allowed = packages.toSet();
+    if (!supported || configuration != _configuration) return;
+    final allowed = enabled ? packages.toSet() : <String>{};
     try {
       final permitted = await hasAccess();
-      if (!permitted || configuration != _configuration) return;
+      if (configuration != _configuration) return;
       final now = DateTime.now();
-      final cutoff = now.subtract(const Duration(days: 1)).millisecondsSinceEpoch;
+      final cutoff =
+          now.subtract(const Duration(days: 1)).millisecondsSinceEpoch;
       var since = sharedPreferences.getInt(_captureSinceKey);
-      if (since == null) {
-        // Existing opt-ins start recovery from their first launch with this version.
+      if (since == null && permitted && allowed.isNotEmpty) {
         since = now.millisecondsSinceEpoch;
         if (!await sharedPreferences.setInt(_captureSinceKey, since)) return;
         if (configuration != _configuration) return;
       }
+      await _access.invokeMethod<void>('configureRetention', {
+        'packages':
+            permitted && backgroundEnabled ? allowed.toList() : <String>[],
+        'since': permitted && backgroundEnabled ? since ?? 0 : 0,
+      });
+      if (!permitted ||
+          allowed.isEmpty ||
+          since == null ||
+          configuration != _configuration) return;
       _subscription = _events.receiveBroadcastStream({
         'packages': allowed.toList(),
         'since': since < cutoff ? cutoff : since,
@@ -121,26 +142,25 @@ class BankNotificationInbox {
         (data) {
           if (data is! Map) return;
           final timestamp = data['postedAt'];
-          unawaited(_receive(
-            BankNotification(
-              id: data['id'] as String?,
-              packageName: data['packageName'] as String?,
-              title: data['title'] as String?,
-              content: data['content'] as String?,
-              postedAt: timestamp is int && timestamp > 0
-                  ? DateTime.fromMillisecondsSinceEpoch(timestamp)
-                  : null,
-            ),
-            allowed,
-            configuration,
-          ));
+          final event = BankNotification(
+            id: data['id'] as String?,
+            packageName: data['packageName'] as String?,
+            title: data['title'] as String?,
+            content: data['content'] as String?,
+            receipt: data['receipt'] as String?,
+            postedAt: timestamp is int && timestamp > 0
+                ? DateTime.fromMillisecondsSinceEpoch(timestamp)
+                : null,
+          );
+          _deliveries =
+              _deliveries.then((_) => _receive(event, allowed, configuration));
         },
         onError: (Object _) {},
       );
     } on PlatformException {
-      // Notification access can change independently in Android settings.
+      if (throwOnError) rethrow;
     } on MissingPluginException {
-      // The app can still use manual imports on unsupported builds.
+      if (throwOnError) rethrow;
     }
   }
 
@@ -153,6 +173,9 @@ class BankNotificationInbox {
     try {
       if (await stageNotification(database, event, allowed, DateTime.now())) {
         revision.value++;
+      }
+      if (event.receipt != null && configuration == _configuration) {
+        await _access.invokeMethod<void>('acknowledge', event.receipt);
       }
     } catch (_) {
       // Notification content must never be included in diagnostics.

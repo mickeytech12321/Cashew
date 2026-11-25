@@ -1,9 +1,6 @@
 package com.mickey.cashew
 
-import android.app.NotificationManager
-import android.content.ComponentName
 import android.content.Intent
-import android.os.Build
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -11,6 +8,7 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterFragmentActivity() {
+    private var assistantKeyMethods: MethodChannel? = null
     private var assistantSpeech: AssistantSpeechBridge? = null
     private var notificationMethods: MethodChannel? = null
     private var notificationEvents: EventChannel? = null
@@ -19,10 +17,52 @@ class MainActivity : FlutterFragmentActivity() {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
         assistantSpeech = AssistantSpeechBridge(this, messenger)
+        val assistantKey = LocalEncryptedFile(this, "assistant-api-key")
+        assistantKeyMethods = MethodChannel(messenger, "cashew/assistant_key")
+        assistantKeyMethods?.setMethodCallHandler { call, result ->
+            try {
+                when (call.method) {
+                    "read" -> result.success(assistantKey.read())
+                    "save" -> {
+                        val value = call.arguments as? String
+                        if (value == null || value.isEmpty() || value.length > 300) {
+                            result.error("invalid", "Invalid API key", null)
+                        } else {
+                            assistantKey.write(value)
+                            result.success(null)
+                        }
+                    }
+                    "clear" -> {
+                        assistantKey.clear()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            } catch (_: Exception) {
+                result.error("storage", "Could not access protected storage", null)
+            }
+        }
+        val retained = BankNotificationRetention(this)
         notificationMethods = MethodChannel(messenger, "cashew/bank_notifications/settings")
         notificationMethods?.setMethodCallHandler { call, result ->
             when (call.method) {
-                "hasAccess" -> result.success(hasBankNotificationAccess())
+                "hasAccess" -> result.success(BankNotificationRetention.hasAccess(this))
+                "configureRetention", "acknowledge" -> {
+                    try {
+                        if (call.method == "configureRetention") {
+                            val packages = call.argument<List<String>>("packages").orEmpty()
+                                .filter { it != packageName && it.length <= 255 }
+                                .take(20).toSet()
+                            val since = call.argument<Number>("since")?.toLong() ?: 0L
+                            retained.configure(packages, since)
+                        } else {
+                            call.arguments?.let { retained.acknowledge(it as String) }
+                        }
+                        result.success(null)
+                    } catch (_: Exception) {
+                        result.error("storage", "Could not access notification retention", null)
+                    }
+                }
                 "listApps" -> {
                     val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                     @Suppress("DEPRECATION")
@@ -49,7 +89,7 @@ class MainActivity : FlutterFragmentActivity() {
         notificationEvents = EventChannel(messenger, "cashew/bank_notifications/events")
         notificationEvents?.setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
-                if (!hasBankNotificationAccess()) return
+                if (!BankNotificationRetention.hasAccess(this@MainActivity)) return
                 val options = arguments as? Map<*, *> ?: return
                 val packages = (options["packages"] as? List<*>)
                     ?.filterIsInstance<String>()?.toSet().orEmpty()
@@ -65,6 +105,8 @@ class MainActivity : FlutterFragmentActivity() {
         clearBankNotificationStream()
         assistantSpeech?.dispose()
         assistantSpeech = null
+        assistantKeyMethods?.setMethodCallHandler(null)
+        assistantKeyMethods = null
         notificationMethods?.setMethodCallHandler(null)
         notificationEvents?.setStreamHandler(null)
         notificationMethods = null
@@ -90,13 +132,4 @@ class MainActivity : FlutterFragmentActivity() {
         BankNotificationListener.stopStream()
     }
 
-    private fun hasBankNotificationAccess(): Boolean {
-        val component = ComponentName(this, BankNotificationListener::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            return getSystemService(NotificationManager::class.java)
-                ?.isNotificationListenerAccessGranted(component) == true
-        }
-        val enabled = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        return enabled.orEmpty().split(':').any { ComponentName.unflattenFromString(it) == component }
-    }
 }

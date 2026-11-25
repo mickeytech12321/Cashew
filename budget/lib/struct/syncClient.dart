@@ -157,6 +157,8 @@ class SyncLog {
     required this.transactionDateTime,
     required this.pk,
     this.itemToUpdate,
+    this.sourceSnapshot,
+    this.transferPeer,
   });
 
   DeleteLogType? deleteLogType;
@@ -164,10 +166,15 @@ class SyncLog {
   DateTime? transactionDateTime;
   String pk;
   dynamic itemToUpdate;
+  final String? sourceSnapshot;
+  final String? transferPeer;
+
+  bool get isTransaction => updateLogType == UpdateLogType.Transaction ||
+      deleteLogType == DeleteLogType.Transaction;
 
   @override
   String toString() {
-    return "SyncLog(deleteLogType: $deleteLogType, updateLogType: $updateLogType, transactionDateTime: $transactionDateTime, pk: $pk, itemToUpdate: $itemToUpdate)";
+    return "SyncLog(deleteLogType: $deleteLogType, updateLogType: $updateLogType, transactionDateTime: $transactionDateTime, pk: $pk, entry present: ${itemToUpdate != null})";
   }
 }
 
@@ -312,7 +319,6 @@ Future<bool> _syncData(BuildContext context) async {
 
     String? fileId = file.id;
     if (fileId == null) continue;
-    print("SYNCING WITH " + (file.name ?? ""));
     filesSyncing.add(file);
 
     List<int> dataStore = [];
@@ -372,8 +378,6 @@ Future<bool> _syncData(BuildContext context) async {
           transactionDateTime: newEntry.dateTimeModified,
         ));
       }
-      print("NEW WALLETS");
-      print(newWallets);
 
       List<TransactionCategory> newCategories =
           await databaseSync.getAllNewCategories(lastSynced);
@@ -386,8 +390,6 @@ Future<bool> _syncData(BuildContext context) async {
           transactionDateTime: newEntry.dateTimeModified,
         ));
       }
-      print("NEW CATEGORIES");
-      print(newCategories);
 
       List<Budget> newBudgets = await databaseSync.getAllNewBudgets(lastSynced);
       for (Budget newEntry in newBudgets) {
@@ -399,8 +401,6 @@ Future<bool> _syncData(BuildContext context) async {
           transactionDateTime: newEntry.dateTimeModified,
         ));
       }
-      print("NEW BUDGETS");
-      print(newBudgets);
 
       List<CategoryBudgetLimit> newCategoryBudgetLimits =
           await databaseSync.getAllNewCategoryBudgetLimits(lastSynced);
@@ -413,8 +413,6 @@ Future<bool> _syncData(BuildContext context) async {
           transactionDateTime: newEntry.dateTimeModified,
         ));
       }
-      print("NEW CATEGORY LIMITS");
-      print(newCategoryBudgetLimits);
 
       List<Transaction> newTransactions =
           await databaseSync.getAllNewTransactions(lastSynced);
@@ -425,10 +423,9 @@ Future<bool> _syncData(BuildContext context) async {
           pk: newEntry.transactionPk,
           itemToUpdate: newEntry,
           transactionDateTime: newEntry.dateTimeModified,
+          sourceSnapshot: fileId,
         ));
       }
-      print("NEW TRANSACTIONS");
-      print(newTransactions);
 
       List<TransactionAssociatedTitle> newTitles =
           await databaseSync.getAllNewAssociatedTitles(lastSynced);
@@ -441,8 +438,6 @@ Future<bool> _syncData(BuildContext context) async {
           transactionDateTime: newEntry.dateTimeModified,
         ));
       }
-      print("NEW TITLES");
-      print(newTitles);
 
       for (ScannerTemplate newEntry
           in (await databaseSync.getAllNewScannerTemplates(lastSynced))) {
@@ -466,25 +461,27 @@ Future<bool> _syncData(BuildContext context) async {
           transactionDateTime: newEntry.dateTimeModified,
         ));
       }
-      print("NEW OBJECTIVES");
-      print(newObjectives);
 
       List<DeleteLog> deleteLogs =
           await databaseSync.getAllNewDeleteLogs(lastSynced);
 
+      final transferPeers = await databaseSync.getJournaledTransferPeers(
+        [for (final log in deleteLogs)
+          if (log.type == DeleteLogType.Transaction) log.entryPk],
+      );
       for (DeleteLog deleteLog in deleteLogs) {
         syncLogs.add(SyncLog(
           deleteLogType: deleteLog.type,
           updateLogType: null,
           pk: deleteLog.entryPk,
           transactionDateTime: deleteLog.dateTimeModified,
+          sourceSnapshot: fileId,
+          transferPeer: transferPeers[deleteLog.entryPk],
         ));
       }
 
-      print("DELETE LOGS");
-      print(deleteLogs);
     } catch (e) {
-      print("Syncing error and failed: " + e.toString());
+      print("Sync failed: ${e.runtimeType}");
       filesSyncing.remove(file);
       await databaseSync.close();
       loadingProgressKey.currentState?.setProgressPercentage(1);

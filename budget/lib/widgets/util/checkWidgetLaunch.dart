@@ -90,7 +90,9 @@ class _CheckWidgetLaunchState extends State<CheckWidgetLaunch> {
         ),
       );
     } else if (widgetPayload == "monthlySpendingWidget") {
-      pushRoute(context, const FinancialInsightsPage());
+      pushRoute(context, FinancialInsightsPage(
+        initialWalletPk: appStateSettings['selectedWalletPk'] as String?,
+      ));
     } else if (widgetPayload == "netWorthLaunchWidget") {
       try {
         final pins =

@@ -1,3 +1,4 @@
+import 'package:budget/struct/investmentMarketPrices.dart';
 import 'package:budget/struct/creditStatementCsv.dart' show BankStatementLine;
 import 'package:budget/struct/investmentLedger.dart';
 import 'package:budget/struct/investmentQuoteCsv.dart' show InvestmentQuote;
@@ -29,6 +30,7 @@ import 'package:budget/pages/activityPage.dart';
 
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
+part 'transferSync.dart';
 
 int schemaVersionGlobal = 47;
 
@@ -846,6 +848,11 @@ class FinanceDatabase extends _$FinanceDatabase {
       last_four TEXT CHECK (last_four IS NULL OR length(last_four) = 4),
       linked_bank_wallet_fk TEXT REFERENCES wallets(wallet_pk) ON DELETE SET NULL
     )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS credit_card_payment_rules (
+      wallet_fk TEXT PRIMARY KEY NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
+      minimum_percent REAL CHECK (minimum_percent BETWEEN 0 AND 100),
+      late_fee REAL CHECK (late_fee >= 0)
+    )''');
     await customStatement('''CREATE TABLE IF NOT EXISTS credit_card_statements (
       wallet_fk TEXT NOT NULL REFERENCES wallets(wallet_pk) ON DELETE CASCADE,
       closes_at INTEGER NOT NULL,
@@ -936,6 +943,11 @@ class FinanceDatabase extends _$FinanceDatabase {
       currency TEXT NOT NULL,
       market_price REAL,
       market_price_at INTEGER
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS investment_market_sources (
+      holding_fk TEXT PRIMARY KEY NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
+      symbol TEXT NOT NULL,
+      revision TEXT NOT NULL
     )''');
     await customStatement('''CREATE TABLE IF NOT EXISTS investment_quotes (
       holding_fk TEXT NOT NULL REFERENCES investment_holdings(holding_pk) ON DELETE CASCADE,
@@ -2763,12 +2775,22 @@ class FinanceDatabase extends _$FinanceDatabase {
         .get();
   }
 
-  Future<List<Transaction>> getAllNewTransactions(DateTime lastSynced) {
-    return (select(transactions)
+  Future<List<Transaction>> getAllNewTransactions(DateTime lastSynced) async {
+    final changed = await (select(transactions)
           ..where((tbl) =>
               tbl.dateTimeModified.isBiggerOrEqualValue(lastSynced) |
               tbl.dateTimeModified.isNull()))
         .get();
+    final found = {for (final row in changed) row.transactionPk};
+    final peers = changed.where(_isTransferLeg)
+        .map((row) => row.pairedTransactionFk!)
+        .where((id) => !found.contains(id)).toSet().toList();
+    for (var offset = 0; offset < peers.length; offset += 400) {
+      changed.addAll(await (select(transactions)
+        ..where((row) => row.transactionPk.isIn(peers.skip(offset).take(400))))
+          .get());
+    }
+    return changed;
   }
 
   Future<List<TransactionWithCategory>>
@@ -4117,7 +4139,9 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Future<Map<String, dynamic>?> getCreditCardDetails(String walletPk) async {
     final row = await customSelect(
-      'SELECT * FROM credit_card_details WHERE wallet_fk = ?',
+      'SELECT c.*, r.minimum_percent, r.late_fee FROM credit_card_details c '
+      'LEFT JOIN credit_card_payment_rules r ON r.wallet_fk = c.wallet_fk '
+      'WHERE c.wallet_fk = ?',
       variables: [Variable<String>(walletPk)],
     ).getSingleOrNull();
     return row?.data;
@@ -4129,6 +4153,8 @@ class FinanceDatabase extends _$FinanceDatabase {
     int? statementDay,
     int? dueDay,
     double? minimumPayment,
+    double? minimumPercent,
+    double? lateFee,
     double? aprPercent,
     String? lastFour,
     String? linkedBankWalletFk,
@@ -4136,34 +4162,52 @@ class FinanceDatabase extends _$FinanceDatabase {
     if ((creditLimit != null && (!creditLimit.isFinite || creditLimit < 0)) ||
         (minimumPayment != null &&
             (!minimumPayment.isFinite || minimumPayment < 0)) ||
+        (minimumPercent != null && (!minimumPercent.isFinite ||
+            minimumPercent < 0 || minimumPercent > 100)) ||
+        (lateFee != null && (!lateFee.isFinite || lateFee < 0 ||
+            lateFee > 999999999999)) ||
         (aprPercent != null && (!aprPercent.isFinite || aprPercent < 0)) ||
         (statementDay != null && (statementDay < 1 || statementDay > 31)) ||
         (dueDay != null && (dueDay < 1 || dueDay > 31)) ||
         (lastFour != null && !RegExp(r'^[0-9]{4}$').hasMatch(lastFour))) {
       throw ArgumentError('Invalid credit card details');
     }
-    final account = await getAccountDetails(walletPk);
-    if (account == null || account['account_type'] != 'credit') {
-      throw StateError('Wallet is not a credit card account');
-    }
-    if (linkedBankWalletFk == walletPk) {
-      throw ArgumentError('Credit card cannot link to itself');
-    }
-    if (linkedBankWalletFk != null &&
-        await getWalletInstanceOrNull(linkedBankWalletFk) == null) {
-      throw StateError('Linked bank account does not exist');
-    }
-    await customStatement(
-      'INSERT INTO credit_card_details '
-      '(wallet_fk, credit_limit, statement_day, due_day, minimum_payment, apr_percent, last_four, linked_bank_wallet_fk) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
-      'credit_limit=excluded.credit_limit, statement_day=excluded.statement_day, '
-      'due_day=excluded.due_day, minimum_payment=excluded.minimum_payment, '
-      'apr_percent=excluded.apr_percent, last_four=excluded.last_four, '
-      'linked_bank_wallet_fk=excluded.linked_bank_wallet_fk',
-      [walletPk, creditLimit, statementDay, dueDay, minimumPayment,
-       aprPercent, lastFour, linkedBankWalletFk],
-    );
+    await transaction(() async {
+      final account = await getAccountDetails(walletPk);
+      if (account == null || account['account_type'] != 'credit') {
+        throw StateError('Wallet is not a credit card account');
+      }
+      if (linkedBankWalletFk == walletPk) {
+        throw ArgumentError('Credit card cannot link to itself');
+      }
+      if (linkedBankWalletFk != null &&
+          await getWalletInstanceOrNull(linkedBankWalletFk) == null) {
+        throw StateError('Linked bank account does not exist');
+      }
+      await customStatement(
+        'INSERT INTO credit_card_details '
+        '(wallet_fk, credit_limit, statement_day, due_day, minimum_payment, apr_percent, last_four, linked_bank_wallet_fk) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
+        'credit_limit=excluded.credit_limit, statement_day=excluded.statement_day, '
+        'due_day=excluded.due_day, minimum_payment=excluded.minimum_payment, '
+        'apr_percent=excluded.apr_percent, last_four=excluded.last_four, '
+        'linked_bank_wallet_fk=excluded.linked_bank_wallet_fk',
+        [walletPk, creditLimit, statementDay, dueDay, minimumPayment,
+         aprPercent, lastFour, linkedBankWalletFk],
+      );
+      if (minimumPercent == null && lateFee == null) {
+        await customStatement(
+          'DELETE FROM credit_card_payment_rules WHERE wallet_fk = ?', [walletPk],
+        );
+      } else {
+        await customStatement(
+          'INSERT INTO credit_card_payment_rules (wallet_fk, minimum_percent, late_fee) '
+          'VALUES (?, ?, ?) ON CONFLICT(wallet_fk) DO UPDATE SET '
+          'minimum_percent = excluded.minimum_percent, late_fee = excluded.late_fee',
+          [walletPk, minimumPercent, lateFee],
+        );
+      }
+    });
   }
 
   Future<List<({String currency, String? category, double income, double expenses})>>
@@ -4209,7 +4253,8 @@ class FinanceDatabase extends _$FinanceDatabase {
     )).toList();
   }
 
-  Stream<double> watchMonthlySpendingInCurrency(String currency, DateTime day) {
+  Stream<double> watchMonthlySpendingInCurrency(
+      String currency, DateTime day, {String? walletPk}) {
     final start = DateTime(day.year, day.month);
     final end = DateTime(day.year, day.month, day.day + 1);
     return customSelect(
@@ -4218,9 +4263,11 @@ class FinanceDatabase extends _$FinanceDatabase {
       'LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
       "WHERE LOWER(TRIM(w.currency)) = ? AND t.paid = 1 AND t.skip_paid = 0 "
       "AND COALESCE(d.archived, 0) = 0 AND t.amount < 0 AND t.category_fk != '0' "
-      'AND t.date_created >= ? AND t.date_created < ?',
+      'AND t.date_created >= ? AND t.date_created < ? '
+      '${walletPk == null ? '' : 'AND w.wallet_pk = ?'}',
       variables: [Variable<String>(currency.trim().toLowerCase()),
-        Variable<DateTime>(start), Variable<DateTime>(end)],
+        Variable<DateTime>(start), Variable<DateTime>(end),
+        if (walletPk != null) Variable<String>(walletPk)],
       readsFrom: {transactions, wallets},
     ).watchSingle().map((row) => row.read<double>('amount')).distinct();
   }
@@ -4257,9 +4304,8 @@ class FinanceDatabase extends _$FinanceDatabase {
   Future<Map<String, dynamic>> getCreditCardSummary(String walletPk, {DateTime? asOf}) async {
     final details = await getCreditCardDetails(walletPk);
     if (details == null) throw StateError('Credit card details not found');
-    if (await getWalletInstanceOrNull(walletPk) == null) {
-      throw StateError('Wallet not found');
-    }
+    final wallet = await getWalletInstanceOrNull(walletPk);
+    if (wallet == null) throw StateError('Wallet not found');
 
     final now = asOf ?? DateTime.now();
     DateTime monthDay(int year, int month, int day) {
@@ -4293,12 +4339,16 @@ class FinanceDatabase extends _$FinanceDatabase {
       'SELECT COALESCE(SUM(amount), 0) AS balance, '
       'COALESCE(SUM(CASE WHEN date_created <= ? THEN amount ELSE 0 END), 0) AS closing_balance, '
       'COALESCE(SUM(CASE WHEN date_created > ? AND amount > 0 THEN amount ELSE 0 END), 0) AS later_credits, '
-      'COALESCE(SUM(CASE WHEN date_created > ? AND amount < 0 THEN -amount ELSE 0 END), 0) AS later_charges '
+      'COALESCE(SUM(CASE WHEN date_created > ? AND amount < 0 THEN -amount ELSE 0 END), 0) AS later_charges, '
+      'COALESCE(SUM(CASE WHEN date_created > ? AND date_created <= ? '
+      'AND amount > 0 THEN amount ELSE 0 END), 0) AS credits_by_due '
       'FROM transactions WHERE wallet_fk = ? AND paid = 1 AND skip_paid = 0 AND date_created <= ?',
       variables: [
         Variable<DateTime>(closing),
         Variable<DateTime>(closing),
         Variable<DateTime>(closing),
+        Variable<DateTime>(closing),
+        Variable<DateTime>(statementDue),
         Variable<String>(walletPk),
         Variable<DateTime>(now),
       ],
@@ -4309,8 +4359,19 @@ class FinanceDatabase extends _$FinanceDatabase {
     final endingDebt = (-balances.read<double>('closing_balance')).clamp(0.0, double.infinity);
     final remaining = (endingDebt - balances.read<double>('later_credits'))
         .clamp(0.0, endingDebt);
-    final minimum = (details['minimum_payment'] as num?)?.toDouble();
+    final floor = (details['minimum_payment'] as num?)?.toDouble();
+    final percent = (details['minimum_percent'] as num?)?.toDouble();
+    final proportional = percent == null ? 0.0 : endingDebt * percent / 100;
+    final decimals = wallet.decimals.clamp(0, 12);
+    final configuredMinimum = proportional > (floor ?? 0) ? proportional : (floor ?? 0.0);
+    final minimum = closing == null || (floor == null && percent == null) ? null
+        : double.parse(configuredMinimum.toStringAsFixed(decimals)).clamp(0.0, endingDebt);
     final credited = balances.read<double>('later_credits');
+    final lateFee = (details['late_fee'] as num?)?.toDouble();
+    final missedMinimum = minimum != null && statementDue != null &&
+        now.isAfter(statementDue) &&
+        double.parse(balances.read<double>('credits_by_due').toStringAsFixed(decimals)) <
+            double.parse(minimum.toStringAsFixed(decimals));
     return {
       ...details,
       'current_balance': balance,
@@ -4320,8 +4381,9 @@ class FinanceDatabase extends _$FinanceDatabase {
       'over_limit_amount': limit == null ? null : (outstanding - limit).clamp(0.0, double.infinity),
       'statement_credits': closing == null ? null : credited,
       'charges_after_statement': closing == null ? null : balances.read<double>('later_charges'),
-      'estimated_minimum_remaining': closing == null || minimum == null
-          ? null : (minimum.clamp(0.0, endingDebt) - credited).clamp(0.0, remaining),
+      'estimated_minimum_remaining': minimum == null
+          ? null : (minimum - credited).clamp(0.0, remaining),
+      'estimated_late_fee': missedMinimum ? lateFee : null,
       'estimated_statement_overdue': statementDue != null && now.isAfter(statementDue) && remaining > 0,
       'next_statement_date': nextStatement,
       'next_due_date': nextDue,
@@ -4997,7 +5059,8 @@ class FinanceDatabase extends _$FinanceDatabase {
       date.year, date.month, date.day + days, date.hour, date.minute,
       date.second, date.millisecond, date.microsecond,
     );
-    final horizon = advanceDays(base, scenario.data['horizon_days'] as int);
+    final horizon = DateTime(base.year, base.month,
+        base.day + (scenario.data['horizon_days'] as int) + 1);
     final startingBalance = (scenario.data['starting_balance'] as num).toDouble();
     var balance = startingBalance;
     final points = <Map<String, dynamic>>[];
@@ -5021,7 +5084,7 @@ class FinanceDatabase extends _$FinanceDatabase {
       }
       final signed = (data['amount'] as num).toDouble() *
           (data['direction'] == 'income' ? 1 : -1);
-      while (!date.isAfter(horizon) && !date.isAfter(end)) {
+      while (date.isBefore(horizon) && !date.isAfter(end)) {
         points.add({
           'date': date,
           'item_pk': data['item_pk'],
@@ -5046,7 +5109,8 @@ class FinanceDatabase extends _$FinanceDatabase {
                 row.walletFk.isIn(scheduledAccounts) &
                 row.paid.equals(false) &
                 row.skipPaid.equals(false) &
-                row.dateCreated.isBetweenValues(base, horizon) &
+                row.dateCreated.isBiggerOrEqualValue(base) &
+                row.dateCreated.isSmallerThanValue(horizon) &
                 row.type.isInValues([
                   TransactionSpecialType.upcoming,
                   TransactionSpecialType.subscription,
@@ -5098,7 +5162,7 @@ class FinanceDatabase extends _$FinanceDatabase {
         var date = entry.dateCreated;
         while (true) {
           final next = nextRecurringDate(date, entry.reoccurrence, entry.periodLength);
-          if (next == null || !next.isAfter(date) || next.isAfter(horizon) ||
+          if (next == null || !next.isAfter(date) || !next.isBefore(horizon) ||
               (entry.endDate?.isBefore(next) ?? false)) break;
           addOccurrence(next, projected: true);
           date = next;
@@ -5116,7 +5180,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           .getSingleOrNull();
       final deadline = goal?.endDate;
       if (scenarioCurrency != null && goal != null && deadline != null &&
-          !deadline.isBefore(base) && !deadline.isAfter(horizon)) {
+          !deadline.isBefore(base) && deadline.isBefore(horizon)) {
         double convert(double amount, String? currency) {
           if (amount == 0) return 0;
           final ratio = strictCurrencyRatio(currency, scenarioCurrency,
@@ -5239,6 +5303,45 @@ class FinanceDatabase extends _$FinanceDatabase {
       );
     }).toList();
   }
+
+  Future<({String symbol, String revision})?> getInvestmentMarketSource(String id) async {
+    final row = await customSelect(
+      'SELECT symbol, revision FROM investment_market_sources WHERE holding_fk = ?',
+      variables: [Variable<String>(id)],
+    ).getSingleOrNull();
+    return row == null ? null
+        : (symbol: row.read<String>('symbol'), revision: row.read<String>('revision'));
+  }
+
+  Future<void> setInvestmentMarketSource(String id, String? symbol) =>
+      transaction(() async {
+    if (symbol == null) {
+      await customStatement(
+        'DELETE FROM investment_market_sources WHERE holding_fk = ?', [id],
+      );
+      return;
+    }
+    final holding = await customSelect(
+      'SELECT currency FROM investment_holdings WHERE holding_pk = ?',
+      variables: [Variable<String>(id)],
+    ).getSingleOrNull();
+    if (holding == null) throw StateError('Holding not found');
+    final pair = CoinbaseMarketPair(symbol, holding.read<String>('currency'));
+    await customStatement(
+      'INSERT INTO investment_market_sources (holding_fk, symbol, revision) '
+      'VALUES (?, ?, ?) ON CONFLICT(holding_fk) DO UPDATE SET '
+      'symbol = excluded.symbol, revision = excluded.revision',
+      [id, pair.symbol, uuid.v4()],
+    );
+  });
+
+  Future<bool> saveFetchedInvestmentQuote(
+    String id, String sourceRevision, InvestmentQuote quote,
+  ) => transaction(() async {
+    final source = await getInvestmentMarketSource(id);
+    if (source?.revision != sourceRevision) return false;
+    return await importInvestmentQuotes(id, [quote]) == 1;
+  });
 
   Future<void> setInvestmentMarketPrice(String id, double price, DateTime date) async {
     if (!price.isFinite || price < 0) throw ArgumentError('Invalid market price');
@@ -5774,8 +5877,11 @@ class FinanceDatabase extends _$FinanceDatabase {
         }
       }
 
+      final transferPairs = await _getTransferSyncPairs(ordered, current);
+      final transferIds = transferPairs.expand((pair) => [pair.$1, pair.$2]).toSet();
       await batch((batch) async {
         for (final syncLog in ordered) {
+          if (syncLog.isTransaction && transferIds.contains(syncLog.pk)) continue;
           final date = syncLog.transactionDateTime ?? DateTime(0);
           if (syncLog.deleteLogType == DeleteLogType.TransactionWallet) {
             batch.deleteWhere(
@@ -5984,6 +6090,7 @@ class FinanceDatabase extends _$FinanceDatabase {
           }
         }
       });
+      await _processTransferSyncPairs(transferPairs, ordered);
       return true;
     });
   }

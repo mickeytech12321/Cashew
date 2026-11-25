@@ -990,6 +990,7 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
   late final _packages =
       TextEditingController(text: bankNotificationInbox.packages.join('\n'));
   late bool _enabled = bankNotificationInbox.enabled;
+  late bool _background = bankNotificationInbox.backgroundEnabled;
   bool _busy = false;
   String? _error;
 
@@ -1020,7 +1021,7 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
       }
       if (!mounted) return;
       await bankNotificationInbox.configure(
-          enabled: _enabled, packages: packages);
+          enabled: _enabled, packages: packages, background: _background);
       if (mounted) Navigator.pop(context);
     } on FormatException {
       if (mounted)
@@ -1094,8 +1095,8 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(_label(
-              'Matching transactions appear for review. When you reopen Cashew, it can recover notifications from the past day that are still visible in Android and arrived after you enabled this setting. Cashew stores parsed details locally.',
-              'تظهر المعاملات المطابقة للمراجعة. عند إعادة فتح Cashew، يمكنه قراءة إشعارات آخر يوم إذا كانت لا تزال ظاهرة في أندرويد ووصلت بعد تفعيل الإعداد. يحفظ Cashew البيانات المستخرجة محليًا.',
+              'Matching notifications from selected apps appear for review. Cashew can also read recent alerts that are still visible when you reopen it.',
+              'تظهر الإشعارات المطابقة من التطبيقات المحددة للمراجعة. يمكن لـ Cashew أيضًا قراءة التنبيهات الحديثة التي ما زالت ظاهرة عند فتحه مجددًا.',
             )),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -1105,6 +1106,18 @@ class _BankNotificationSettingsState extends State<_BankNotificationSettings> {
               onChanged:
                   _busy ? null : (value) => setState(() => _enabled = value),
             ),
+            if (_enabled)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_label('Capture while Cashew is closed',
+                    'الالتقاط أثناء إغلاق Cashew')),
+                subtitle: Text(_label(
+                  'Android can retain up to 100 matching alerts in encrypted storage for up to 24 hours. The pending text is cleared after review staging or when capture is disabled.',
+                  'يمكن لأندرويد الاحتفاظ بما يصل إلى ١٠٠ تنبيه مطابق مشفّرًا ولمدة تصل إلى ٢٤ ساعة. يُحذف النص بعد إرساله للمراجعة أو تعطيل الالتقاط.',
+                )),
+                value: _background,
+                onChanged: _busy ? null : (value) => setState(() => _background = value),
+              ),
             TextField(
               controller: _packages,
               enabled: !_busy,

@@ -19,7 +19,8 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
   String _label(String en, String ar) =>
       Localizations.localeOf(context).languageCode == 'ar' ? ar : en;
 
-  Widget _version(Transaction transaction, String heading, String? account, String? category) {
+  Widget _version(Transaction transaction, String heading, String? account,
+      String? category) {
     final date = MaterialLocalizations.of(context)
         .formatMediumDate(transaction.dateCreated);
     return ListTile(
@@ -41,20 +42,34 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
   Future<void> _review(Map<String, dynamic> conflict) async {
     setState(() => _busy = true);
     try {
-      final local = Transaction.fromJson(
-        jsonDecode(conflict['local_json'] as String) as Map<String, dynamic>,
-      );
-      final isDeletion = conflict['entity_type'] == 'transaction_delete';
-      final remote = isDeletion ? null : Transaction.fromJson(
-        jsonDecode(conflict['remote_json'] as String) as Map<String, dynamic>,
-      );
+      final transfer = conflict['entity_type'] == 'transfer';
+      final before =
+          jsonDecode(conflict['local_json'] as String) as Map<String, dynamic>;
+      final incoming = jsonDecode(conflict['remote_json'] as String);
+      final local = transfer
+          ? (before['rows'] as List)
+              .cast<Map<String, dynamic>>()
+              .map(Transaction.fromJson)
+          : [Transaction.fromJson(before)];
+      final isDeletion = transfer
+          ? incoming['deletion'] == true
+          : conflict['entity_type'] == 'transaction_delete';
+      final canApply = !transfer || incoming['complete'] == true;
+      final remote = transfer
+          ? (incoming['rows'] as List)
+              .cast<Map<String, dynamic>>()
+              .map(Transaction.fromJson)
+          : isDeletion
+              ? <Transaction>[]
+              : [Transaction.fromJson(incoming as Map<String, dynamic>)];
       final accounts = {
         for (final wallet in await database.getAllWallets())
           wallet.walletPk:
               '${wallet.name} ${wallet.currency?.toUpperCase() ?? ''}'.trim(),
       };
       final categories = {
-        for (final category in await database.getAllCategories(includeSubCategories: true))
+        for (final category
+            in await database.getAllCategories(includeSubCategories: true))
           category.categoryPk: category.name,
       };
       if (!mounted) return;
@@ -64,17 +79,28 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
           title: Text(_label('Review sync conflict', 'مراجعة تعارض المزامنة')),
           scrollable: true,
           content: Column(mainAxisSize: MainAxisSize.min, children: [
-            _version(
-                local,
+            for (final row in local)
+              _version(
+                row,
                 _label('Local version at detection',
                     'النسخة المحلية وقت اكتشاف التعارض'),
-                accounts[local.walletFk], categories[local.categoryFk]),
-            if (remote == null)
-              Text(_label('Another device deleted this transaction.',
-                  'جهاز آخر حذف هذه المعاملة.'))
-            else
-              _version(remote, _label('Incoming version', 'النسخة الواردة'),
-                  accounts[remote.walletFk], categories[remote.categoryFk]),
+                accounts[row.walletFk],
+                categories[row.categoryFk],
+              ),
+            if (transfer && !canApply)
+              Text(_label(
+                'The incoming change could not be verified as a complete transfer.',
+                'تعذّر التحقق من أن التغيير الوارد يمثل تحويلاً كاملاً.',
+              )),
+            if (isDeletion && canApply)
+              Text(transfer
+                  ? _label('Another device deleted both transfer entries.',
+                      'جهاز آخر حذف طرفي التحويل.')
+                  : _label('Another device deleted this transaction.',
+                      'جهاز آخر حذف هذه المعاملة.')),
+            for (final row in remote)
+              _version(row, _label('Incoming version', 'النسخة الواردة'),
+                  accounts[row.walletFk], categories[row.categoryFk]),
           ]),
           actions: [
             TextButton(
@@ -83,18 +109,25 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
             TextButton(
                 onPressed: () => Navigator.pop(context, false),
                 child: Text(_label('Keep current', 'الاحتفاظ بالحالي'))),
-            FilledButton(
+            if (canApply)
+              FilledButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: Text(isDeletion ? _label('Delete transaction', 'حذف المعاملة')
-                    : _label('Use incoming', 'استخدام الوارد'))),
+                child: Text(isDeletion
+                    ? transfer
+                        ? _label('Delete both entries', 'حذف الطرفين')
+                        : _label('Delete transaction', 'حذف المعاملة')
+                    : _label('Use incoming', 'استخدام الوارد')),
+              ),
           ],
         ),
       );
       if (useRemote == null || !mounted) return;
-      await database.resolveTransactionSyncConflict(
-        conflict['conflict_pk'] as String,
-        useRemote: useRemote,
-      );
+      final id = conflict['conflict_pk'] as String;
+      if (transfer) {
+        await database.resolveTransferSyncConflict(id, useRemote: useRemote);
+      } else {
+        await database.resolveTransactionSyncConflict(id, useRemote: useRemote);
+      }
       if (mounted) setState(() => _conflicts = database.getOpenSyncConflicts());
     } catch (_) {
       if (mounted) {
@@ -125,8 +158,11 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
                   _label('Could not load conflicts.', 'تعذّر تحميل التعارضات.'),
                 ));
               final conflicts = snapshot.data!
-                  .where((row) => const {'transaction', 'transaction_delete'}
-                      .contains(row['entity_type']))
+                  .where((row) => const {
+                        'transaction',
+                        'transaction_delete',
+                        'transfer'
+                      }.contains(row['entity_type']))
                   .toList();
               if (conflicts.isEmpty)
                 return ListTile(
@@ -137,9 +173,12 @@ class _SyncConflictsPageState extends State<SyncConflictsPage> {
               return Column(children: [
                 for (final conflict in conflicts)
                   ListTile(
-                    title: Text(conflict['entity_type'] == 'transaction_delete'
-                        ? _label('Deletion conflict', 'تعارض حذف')
-                        : _label('Transaction conflict', 'تعارض معاملة')),
+                    title: Text(switch (conflict['entity_type']) {
+                      'transfer' => _label('Transfer conflict', 'تعارض تحويل'),
+                      'transaction_delete' =>
+                        _label('Deletion conflict', 'تعارض حذف'),
+                      _ => _label('Transaction conflict', 'تعارض معاملة'),
+                    }),
                     subtitle:
                         Text(MaterialLocalizations.of(context).formatMediumDate(
                       DateTime.fromMillisecondsSinceEpoch(

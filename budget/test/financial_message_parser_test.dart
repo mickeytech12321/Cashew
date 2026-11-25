@@ -20,7 +20,9 @@ void main() {
       expect((cashIn.amount, cashIn.direction), (300.0, 'credit'));
       final cashOut = FinancialMessageParser.parse('Cash out EGP 40');
       expect((cashOut.amount, cashOut.direction), (40.0, 'debit'));
-      expect(FinancialMessageParser.parse('لم يكتمل التحويل ٣٠٠ جنيه').confidence, 0);
+      expect(
+          FinancialMessageParser.parse('لم يكتمل التحويل ٣٠٠ جنيه').confidence,
+          0);
     });
     test('parses English EGP debit', () {
       final p = FinancialMessageParser.parse(
@@ -118,6 +120,58 @@ void main() {
           (250.50, 'egp', 'credit'));
       final sent = FinancialMessageParser.parse('تم تحويل ٢٥٠ جنيه لرقم آخر');
       expect((sent.amount, sent.direction), (250.0, 'debit'));
+    });
+    test(
+        'reads a Vodafone Cash style receipt with a separately labelled balance',
+        () {
+      final received = FinancialMessageParser.parse(
+          'تم استلام مبلغ ٥٠٠٫٠٠ جنيه من رقم مثال. رصيد محفظتك الحالي هو ٦٥٠٠٫٥٠ جنيه. رقم العملية: EXAMPLE');
+      expect((received.amount, received.currency, received.direction),
+          (500.0, 'egp', 'credit'));
+      final balanceFirst = FinancialMessageParser.parse(
+          'Current balance EGP 900. Purchase EGP 30 at Shop');
+      expect((balanceFirst.amount, balanceFirst.direction), (30.0, 'debit'));
+    });
+    test(
+        'accepts a debit with an explicit, matching total and rejects mismatches',
+        () {
+      final receipt = FinancialMessageParser.parse(
+          'تم تحويل ٢٠٠ جنيه لرقم مثال. رسوم التحويل: ١ جنيه. إجمالي المبلغ: ٢٠١ جنيه. الرصيد المتاح: ٨٠٠ جنيه');
+      expect((receipt.amount, receipt.currency, receipt.direction),
+          (201.0, 'egp', 'debit'));
+      for (final text in [
+        'You sent EGP 200. Transfer fee: EGP 1. Total debited: EGP 209',
+        'You sent EGP 200. Transfer fee: USD 1. Total debited: EGP 201',
+        'You sent EGP 200. Transfer fee: EGP 1',
+      ]) {
+        expect(FinancialMessageParser.parse(text).amount, isNull);
+      }
+    });
+    test('reads card purchase phrasing and explicit foreign billing amounts',
+        () {
+      final cib = FinancialMessageParser.parse(
+        'Purchase of EGP 450.00 at Example Market with card ending 4571',
+      );
+      expect((cib.amount, cib.lastFour, cib.merchant, cib.direction),
+          (450.0, '4571', 'Example Market', 'debit'));
+      final billing = FinancialMessageParser.parse(
+        'Card ending 1234 was charged. Transaction amount: USD 25. Billing amount: EGP 1259.50',
+      );
+      expect((
+        billing.amount,
+        billing.currency,
+        billing.lastFour,
+        billing.direction
+      ), (
+        1259.5,
+        'egp',
+        '1234',
+        'debit'
+      ));
+      final ambiguous = FinancialMessageParser.parse(
+        'Card ending 1234 was charged. Transaction amount: EGP 25. Billing amount: EGP 30',
+      );
+      expect(ambiguous.amount, isNull);
     });
     test('rejects Arabic activation codes and unsuccessful transfers', () {
       for (final message in [

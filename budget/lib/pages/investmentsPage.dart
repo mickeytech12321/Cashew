@@ -2,10 +2,12 @@ import 'package:budget/database/tables.dart' show NAME_LIMIT;
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
 import 'package:budget/struct/investmentLedger.dart';
+import 'package:budget/struct/investmentMarketPrices.dart';
 import 'package:budget/struct/investmentQuoteCsv.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 typedef _Holding = ({
   String id,
@@ -26,6 +28,7 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
   late var _holdings = database.getInvestmentHoldings();
   Future<List<InvestmentTrade>>? _trades;
   Future<List<InvestmentQuote>>? _prices;
+  Future<({String symbol, String revision})?>? _marketSource;
   int _quoteOffset = 0;
   static const _quotePageSize = 25;
   String? _selected;
@@ -136,10 +139,104 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
 
   void _loadQuotePage(String? id, int offset) {
     _quoteOffset = offset;
+    if (offset == 0) {
+      _marketSource = id == null ? null : database.getInvestmentMarketSource(id);
+    }
     _prices = id == null ? null : database.getInvestmentPriceHistory(
       id, offset: offset, limit: _quotePageSize + 1,
     );
   }
+
+  void _marketMessage(String english, String arabic) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_label(english, arabic))),
+      );
+    }
+  }
+
+  Future<void> _configureMarketSource(_Holding holding, String? current) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (_) => _MarketSourceDialog(
+        currency: holding.currency, initialSymbol: current, label: _label,
+      ),
+    );
+    if (choice == null || !mounted || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await database.setInvestmentMarketSource(
+        holding.id, choice.isEmpty ? null : choice,
+      );
+      if (mounted && _selected == holding.id) {
+        setState(() => _marketSource = database.getInvestmentMarketSource(holding.id));
+      }
+    } catch (_) {
+      _marketMessage('Could not save the price source.', 'تعذّر حفظ مصدر السعر.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _refreshMarketPrice(
+    _Holding holding, ({String symbol, String revision}) source,
+  ) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final client = http.Client();
+    try {
+      final pair = CoinbaseMarketPair(source.symbol, holding.currency);
+      final quote = await CoinbaseMarketPrices(client).fetch(pair, DateTime.now())
+          .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      final added = await database.saveFetchedInvestmentQuote(
+        holding.id, source.revision, quote,
+      );
+      if (mounted && _selected == holding.id) {
+        setState(() {
+          _holdings = database.getInvestmentHoldings();
+          _loadQuotePage(holding.id, 0);
+        });
+      }
+      if (!added) {
+        _marketMessage('No new quote was saved.', 'لم يُحفظ سعر جديد.');
+      }
+    } catch (_) {
+      _marketMessage('Coinbase price unavailable. Check the trading pair and try again.',
+          'سعر Coinbase غير متاح. راجع زوج التداول وحاول مرة أخرى.');
+    } finally {
+      client.close();
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _priceSource(_Holding holding) => FutureBuilder(
+    key: ValueKey(('market-source', holding.id)),
+    future: _marketSource,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const LinearProgressIndicator();
+      }
+      if (snapshot.hasError) {
+        return Text(_label('Could not load the price source.', 'تعذّر تحميل مصدر السعر.'));
+      }
+      final source = snapshot.data;
+      return ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: TextButton(
+          onPressed: _busy ? null : () => _configureMarketSource(holding, source?.symbol),
+          child: Text(source == null
+              ? _label('Connect Coinbase price', 'ربط السعر من Coinbase')
+              : 'Coinbase · ${source.symbol}-${holding.currency.toUpperCase()}'),
+        ),
+        trailing: source == null ? null : IconButton(
+          tooltip: _label('Fetch latest price', 'جلب أحدث سعر'),
+          onPressed: _busy ? null : () => _refreshMarketPrice(holding, source),
+          icon: const Icon(Icons.refresh),
+        ),
+      );
+    },
+  );
 
   Future<void> _removeQuote(_Holding holding, InvestmentQuote quote) async {
     final confirmed = await showDialog<bool>(
@@ -378,6 +475,7 @@ class _InvestmentsPageState extends State<InvestmentsPage> {
                   onPressed: _busy ? null : () => _copyQuotes(holding),
                   child: Text(_label('Copy price history', 'نسخ سجل الأسعار'))),
             ]),
+            _priceSource(holding),
             FutureBuilder(
               key: ValueKey(('prices', holding.id)),
               future: _prices,
@@ -655,6 +753,79 @@ class _InvestmentEditorState extends State<_InvestmentEditor> {
                   ));
             },
             child: Text(label('Save', 'حفظ'))),
+      ],
+    );
+  }
+}
+
+
+class _MarketSourceDialog extends StatefulWidget {
+  const _MarketSourceDialog({
+    required this.currency, required this.initialSymbol, required this.label,
+  });
+
+  final String currency;
+  final String? initialSymbol;
+  final String Function(String, String) label;
+
+  @override
+  State<_MarketSourceDialog> createState() => _MarketSourceDialogState();
+}
+
+class _MarketSourceDialogState extends State<_MarketSourceDialog> {
+  final _form = GlobalKey<FormState>();
+  late String _symbol = widget.initialSymbol ?? '';
+
+  @override
+  Widget build(BuildContext context) {
+    final label = widget.label;
+    return AlertDialog(
+      title: Text(label('Coinbase Exchange price', 'سعر Coinbase Exchange')),
+      scrollable: true,
+      content: Form(
+        key: _form,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(label(
+            'Refreshing sends the trading pair to Coinbase. The quote currency must match the holding currency.',
+            'عند التحديث يُرسل زوج التداول إلى Coinbase. يجب أن تطابق عملة التسعير عملة الأصل.',
+          )),
+          TextFormField(
+            initialValue: _symbol,
+            textDirection: TextDirection.ltr,
+            textCapitalization: TextCapitalization.characters,
+            decoration: InputDecoration(
+              labelText: label('Asset symbol', 'رمز الأصل'),
+              hintText: 'BTC',
+              suffixText: '-${widget.currency.toUpperCase()}',
+            ),
+            onChanged: (value) => _symbol = value,
+            validator: (value) {
+              try {
+                CoinbaseMarketPair(value ?? '', widget.currency);
+                return null;
+              } on FormatException {
+                return label('Enter a valid asset symbol.', 'أدخل رمز أصل صالحًا.');
+              }
+            },
+          ),
+        ]),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(label('Cancel', 'إلغاء')),
+        ),
+        if (widget.initialSymbol != null)
+          TextButton(
+            onPressed: () => Navigator.pop(context, ''),
+            child: Text(label('Disconnect', 'إلغاء الربط')),
+          ),
+        FilledButton(
+          onPressed: () {
+            if (_form.currentState!.validate()) Navigator.pop(context, _symbol.trim());
+          },
+          child: Text(label('Save', 'حفظ')),
+        ),
       ],
     );
   }
