@@ -29,7 +29,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "showExtraInfoText": true,
     "selectedWalletPk": "0",
     "selectedSubscriptionType": 0,
-    "accentColor": toHexString(Color(0xFF1B447A)),
+    "accentColor": toHexString(Color(0xFF286047)),
     "accentSystemColor": await systemColorByDefault(),
     "widgetOpacity": 1,
     "widgetTheme": "system", //system, light, dark
@@ -75,6 +75,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "homePageOrder": [
       "wallets",
       "walletsList",
+      "transactionsList",
       "budgets",
       "objectives",
       "allSpendingSummary",
@@ -85,7 +86,6 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
       "spendingGraph",
       "pieChart",
       "heatMap",
-      "transactionsList",
     ],
     "homePageOrderFullScreen": [
       "wallets",

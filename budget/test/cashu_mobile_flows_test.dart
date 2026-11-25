@@ -1,6 +1,8 @@
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/pages/addWalletPage.dart';
+import 'package:budget/pages/cashuAddAssetPage.dart';
+import 'package:budget/pages/homePage/cashuWalletDashboard.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/widgets/openPopup.dart' show RoutesToPopAfterDelete;
 import 'package:budget/pages/settingsPage.dart';
@@ -170,6 +172,42 @@ void main() {
     await tester.tap(find.text('Link card'));
     await tester.pumpAndSettle();
     expect(await database.suggestImportedCardWallet('1234', 'egp'), 'checking');
+    await disposeFixture(tester);
+  });
+
+  testWidgets('dashboard opens certificates, and dark mode is accessible from its toolbar', (tester) async {
+    final checking = await wallet('checking', 'Checking', 0);
+    await mount(tester, Scaffold(body: CashuWalletDashboard(today: DateTime(2026, 11, 25))), [checking]);
+    expect(find.text('My wallet'), findsOneWidget);
+    expect(find.text('All EGP accounts'), findsOneWidget);
+    await tester.tap(find.byTooltip('Appearance'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dark'));
+    await tester.pumpAndSettle();
+    expect(appStateSettings['theme'], 'dark');
+    await tester.tap(find.text('Certificates'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add a certificate'), findsOneWidget);
+    await disposeFixture(tester);
+  });
+
+  testWidgets('add-to-CashU opens a certificate directly and previews monthly interest', (tester) async {
+    final checking = await wallet('checking', 'Checking', 0);
+    await mount(tester, const CashuAddAssetPage(), [checking]);
+    await tester.tap(find.text('Bank certificate'));
+    await tester.pumpAndSettle();
+    final principal = find.widgetWithText(TextFormField, 'Principal');
+    await tester.ensureVisible(principal);
+    await tester.enterText(principal, '100000');
+    final mode = find.widgetWithText(SwitchListTile, 'Calculate from annual rate');
+    await tester.ensureVisible(mode);
+    await tester.tap(mode);
+    await tester.pumpAndSettle();
+    final rate = find.widgetWithText(TextFormField, 'Annual rate');
+    await tester.ensureVisible(rate);
+    await tester.enterText(rate, '21.5');
+    await tester.pumpAndSettle();
+    expect(find.text('1,791.67 EGP'), findsOneWidget);
     await disposeFixture(tester);
   });
 

@@ -4,6 +4,12 @@
 > Rule: no APK build and no merge to `main` until explicitly requested.
 > DONE records a completed milestone. TESTED records an implemented path with automated verification. CODED indicates implementation with additional verification pending. PARTIAL and TODO indicate incomplete work.
 
+## CashU wallet redesign
+
+- **Phase 02 / 03 / 08 · TESTED.** The mobile and desktop home surface now combines a month and account selection, validated balances, spending, and banking shortcuts. A dedicated picker routes to account types, certificates, assets, debt and investments. The new account carousel respects the home widget and pin controls. Existing finance and settings routes are available.
+- **Phase 02 / 04 · TESTED.** Certificate entry separates terms, payout destination and recording mode. It previews either a user-entered payout or a fixed annual rate estimate for the selected frequency. Amounts round to piastres and continue through the existing certificate writer. The wealth screen displays account balances separately from asset valuations and graphs saved snapshots with matching currency and investment scope.
+- **Phase 08 / 09 · TESTED.** CashU uses a black wallet icon and a green palette with textured summary panels. Appearance can be set from Home in addition to Settings. Web, Android and iOS icon assets are checked in. Flutter 3.50.1 passed all 132 tests, including the dashboard, RTL certificate entry, wallet filtering and payout calculations. There is no database migration. This batch targets the web preview and did not build an APK.
+
 ## CashU browser preview
 
 - **Phase 08 · TESTED.** [CashU on Vercel](https://cashu-gamma.vercel.app/) serves commit `4ff8681e` from `feature/free-edition`. Vercel built the release with Flutter 3.50.1. The live app loaded and opened the Data Backup page. A local Chromium run at mobile width completed onboarding, reopened the saved browser profile and reached Bank certificates.

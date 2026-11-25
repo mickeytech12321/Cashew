@@ -2,6 +2,7 @@ import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/financialMessageParser.dart';
 import 'package:flutter/material.dart';
+import 'package:budget/widgets/cashuSurfaces.dart';
 import 'package:intl/intl.dart' show NumberFormat;
 
 typedef _PayoutAccount = ({String id, String name, String currency});
@@ -21,7 +22,9 @@ Future<List<_PayoutAccount>> _loadAccounts() async =>
         .toList();
 
 class BankCertificatesPage extends StatefulWidget {
-  const BankCertificatesPage({super.key});
+  const BankCertificatesPage({super.key, this.openForm = false});
+
+  final bool openForm;
 
   @override
   State<BankCertificatesPage> createState() => _BankCertificatesPageState();
@@ -33,6 +36,16 @@ class _BankCertificatesPageState extends State<BankCertificatesPage> {
   void _reload() =>
       setState(() => _certificates = database.getBankCertificates());
 
+  @override
+  void initState() {
+    super.initState();
+    if (widget.openForm) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _add();
+      });
+    }
+  }
+
   Future<void> _add() async {
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => const _CertificateForm()),
@@ -42,7 +55,9 @@ class _BankCertificatesPageState extends State<BankCertificatesPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
+        backgroundColor: CashuColors(context).canvas,
         appBar: AppBar(
+            backgroundColor: CashuColors(context).canvas,
             title:
                 Text(_label(context, 'Bank certificates', 'الشهادات البنكية'))),
         body: SafeArea(
@@ -66,12 +81,40 @@ class _BankCertificatesPageState extends State<BankCertificatesPage> {
                 child: ListView(
                   padding: const EdgeInsets.all(20),
                   children: [
-                    FilledButton.icon(
-                      onPressed: _add,
-                      icon: const Icon(Icons.add),
-                      label: Text(
-                          _label(context, 'Add a certificate', 'إضافة شهادة')),
-                    ),
+                    CashuGreenPanel(
+                        child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.workspace_premium_outlined,
+                            color: Color(0xffb4edb8), size: 32),
+                        const SizedBox(height: 10),
+                        Text(
+                            _label(context, 'Certificate portfolio',
+                                'شهاداتك البنكية'),
+                            style: const TextStyle(
+                                color: Color(0xfff3faf4),
+                                fontSize: 24,
+                                fontWeight: FontWeight.w800)),
+                        if (rows.isNotEmpty)
+                          Text(
+                              _label(
+                                  context,
+                                  '${rows.length} recorded certificates',
+                                  '${rows.length} شهادة مسجّلة'),
+                              style: const TextStyle(color: Color(0xffc4dace))),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xffb4edb8),
+                            foregroundColor: const Color(0xff183127),
+                          ),
+                          onPressed: _add,
+                          icon: const Icon(Icons.add),
+                          label: Text(_label(
+                              context, 'Add a certificate', 'إضافة شهادة')),
+                        ),
+                      ],
+                    )),
                     const SizedBox(height: 16),
                     if (rows.isEmpty)
                       Padding(
@@ -83,28 +126,31 @@ class _BankCertificatesPageState extends State<BankCertificatesPage> {
                         ),
                       ),
                     for (final item in rows)
-                      Card(
-                        elevation: 0,
-                        color:
-                            Theme.of(context).colorScheme.surfaceContainerLow,
-                        child: ListTile(
-                          leading: const CircleAvatar(
-                              child: Icon(Icons.savings_outlined)),
-                          title: Text(item.name),
-                          subtitle: Text([
-                            if (item.bank.isNotEmpty) item.bank,
-                            _amount(context, item.principalMinor),
-                            _date(context, item.maturityDay),
-                          ].join(' · ')),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () async {
-                            await Navigator.of(context)
-                                .push<void>(MaterialPageRoute(
-                              builder: (_) => _CertificateDetails(id: item.id),
-                            ));
-                            if (mounted) _reload();
-                          },
-                        ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: CashuPanel(
+                            padding: EdgeInsets.zero,
+                            child: ListTile(
+                              leading: const CashuIconTile(
+                                  Icons.lock_clock_outlined),
+                              title: Text(item.name),
+                              subtitle: Text([
+                                if (item.bank.isNotEmpty) item.bank,
+                                _date(context, item.maturityDay),
+                              ].join(' · ')),
+                              trailing: Text(
+                                  _amount(context, item.principalMinor),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700)),
+                              onTap: () async {
+                                await Navigator.of(context)
+                                    .push<void>(MaterialPageRoute(
+                                  builder: (_) =>
+                                      _CertificateDetails(id: item.id),
+                                ));
+                                if (mounted) _reload();
+                              },
+                            )),
                       ),
                   ],
                 ),
@@ -127,6 +173,8 @@ class _CertificateFormState extends State<_CertificateForm> {
   final _bank = TextEditingController();
   final _principal = TextEditingController();
   final _returnAmount = TextEditingController();
+  final _rate = TextEditingController();
+  bool _estimateFromRate = false;
   final _id = uuid.v4();
   final _form = GlobalKey<FormState>();
   late var _accounts = _loadAccounts();
@@ -140,7 +188,7 @@ class _CertificateFormState extends State<_CertificateForm> {
 
   @override
   void dispose() {
-    for (final controller in [_name, _bank, _principal, _returnAmount]) {
+    for (final controller in [_name, _bank, _principal, _returnAmount, _rate]) {
       controller.dispose();
     }
     super.dispose();
@@ -175,8 +223,26 @@ class _CertificateFormState extends State<_CertificateForm> {
     }
   }
 
+  int? get _payoutMinor {
+    if (!_estimateFromRate || _months == 0) return _minor(_returnAmount.text);
+    final principal = _minor(_principal.text);
+    final basisPoints = _minor(_rate.text);
+    if (principal == null || basisPoints == null || basisPoints > 10000)
+      return null;
+    return estimateCertificatePayoutMinor(principal, basisPoints, _months);
+  }
+
   Future<void> _save() async {
     if (_saving || !_form.currentState!.validate()) return;
+    final payout = _payoutMinor;
+    if (payout == null || payout < 1) {
+      setState(() => _error = _label(
+            context,
+            'Enter a payout of at least one piastre.',
+            'أدخل عائد لا يقل عن قرش واحد.',
+          ));
+      return;
+    }
     final maturity = _maturity;
     final first = _months == 0 ? maturity : _first;
     if (_account == null ||
@@ -203,7 +269,7 @@ class _CertificateFormState extends State<_CertificateForm> {
         walletPk: _account!,
         currency: 'egp',
         principalMinor: _minor(_principal.text)!,
-        payoutMinor: _minor(_returnAmount.text)!,
+        payoutMinor: payout,
         firstPayoutDay: certificateDay(first),
         maturityDay: certificateDay(maturity),
         intervalMonths: _months,
@@ -224,43 +290,76 @@ class _CertificateFormState extends State<_CertificateForm> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = CashuColors(context);
     String label(String en, String ar) => _label(context, en, ar);
+    final estimate = _payoutMinor;
+    final useRate = _estimateFromRate && _months != 0;
+    final inputBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(13),
+      borderSide: BorderSide(color: colors.border),
+    );
+    InputDecoration decoration(String title, {String? suffix}) =>
+        InputDecoration(
+          labelText: title,
+          filled: true,
+          fillColor: colors.canvas,
+          suffixText: suffix,
+          border: inputBorder,
+          enabledBorder: inputBorder,
+        );
     String? validateAmount(String? value) => _minor(value ?? '') == null
-        ? label('Enter an amount in EGP with up to two decimals',
-            'اكتب مبلغًا بالجنيه حتى منزلتين عشريتين')
+        ? label('Enter a positive amount with up to two decimals',
+            'أدخل مبلغًا موجبًا حتى منزلتين عشريتين')
         : null;
     Widget input(TextEditingController controller, String title,
-            {bool amount = false}) =>
+            {bool amount = false, bool rate = false}) =>
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: TextFormField(
             controller: controller,
             enabled: !_saving,
-            maxLength: amount
+            maxLength: amount || rate
                 ? null
                 : controller == _name
                     ? NAME_LIMIT - 32
                     : NAME_LIMIT,
-            keyboardType: amount
+            keyboardType: amount || rate
                 ? const TextInputType.numberWithOptions(decimal: true)
                 : null,
-            decoration: InputDecoration(
-                labelText: title, border: const OutlineInputBorder()),
-            validator: amount
-                ? validateAmount
-                : controller == _name
-                    ? (value) => value?.trim().isNotEmpty == true
+            decoration: decoration(title,
+                suffix: rate
+                    ? '%'
+                    : amount
+                        ? 'EGP'
+                        : null),
+            onChanged: amount || rate ? (_) => setState(() {}) : null,
+            validator: rate
+                ? (value) {
+                    final percent = _minor(value ?? '');
+                    return percent != null && percent <= 10000
                         ? null
-                        : label('Enter a name', 'اكتب اسم الشهادة')
-                    : null,
+                        : label('Enter a rate above 0% and up to 100%',
+                            'أدخل نسبة أكبر من صفر وحتى ١٠٠٪');
+                  }
+                : amount
+                    ? validateAmount
+                    : controller == _name
+                        ? (value) => value?.trim().isNotEmpty == true
+                            ? null
+                            : label('Enter a name', 'اكتب اسم الشهادة')
+                        : null,
           ),
         );
+
     return Scaffold(
-      appBar: AppBar(title: Text(label('Add a certificate', 'إضافة شهادة'))),
+      backgroundColor: colors.canvas,
+      appBar: AppBar(
+          backgroundColor: colors.canvas,
+          title: Text(label('Add a certificate', 'إضافة شهادة'))),
       body: SafeArea(
           child: Center(
               child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
+        constraints: const BoxConstraints(maxWidth: 700),
         child: FutureBuilder<List<_PayoutAccount>>(
           future: _accounts,
           builder: (context, snapshot) {
@@ -274,117 +373,237 @@ class _CertificateFormState extends State<_CertificateForm> {
             if (!snapshot.hasData)
               return const Center(child: CircularProgressIndicator());
             final accounts = snapshot.data!;
-            if (accounts.isEmpty) {
+            if (accounts.isEmpty)
               return Center(
-                  child: Text(label('Add an active EGP account first.',
-                      'أضف حسابًا نشطًا بالجنيه الأول.')));
-            }
-            return Form(
-              key: _form,
-              child: ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  input(_name, label('Certificate name', 'اسم الشهادة')),
-                  input(_bank,
-                      label('Bank name (optional)', 'اسم البنك (اختياري)')),
-                  input(
-                      _principal,
-                      label(
-                          'Certificate principal (EGP)', 'قيمة الشهادة (جنيه)'),
-                      amount: true),
-                  input(
-                      _returnAmount,
-                      label('Amount per payout (EGP)',
-                          'قيمة العائد في كل دفعة (جنيه)'),
-                      amount: true),
-                  DropdownButtonFormField<String>(
-                    initialValue: _account,
-                    isExpanded: true,
-                    decoration: InputDecoration(
-                        labelText: label(
-                            'Deposit the return into', 'العائد ينزل على حساب')),
-                    items: [
-                      for (final account in accounts)
-                        DropdownMenuItem(
-                            value: account.id,
-                            child: Text(account.name,
-                                overflow: TextOverflow.ellipsis)),
-                    ],
-                    onChanged: _saving
-                        ? null
-                        : (value) => setState(() => _account = value),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    initialValue: _months,
-                    decoration: InputDecoration(
-                        labelText: label('Payout schedule', 'دورية الصرف')),
-                    items: [
-                      DropdownMenuItem(
-                          value: 1, child: Text(label('Monthly', 'شهري'))),
-                      DropdownMenuItem(
-                          value: 3,
-                          child: Text(label('Quarterly', 'ربع سنوي'))),
-                      DropdownMenuItem(
-                          value: 6,
-                          child: Text(label('Semiannual', 'نصف سنوي'))),
-                      DropdownMenuItem(
-                          value: 12, child: Text(label('Yearly', 'سنوي'))),
-                      DropdownMenuItem(
-                          value: 0,
-                          child: Text(label('At maturity', 'عند الاستحقاق'))),
-                    ],
-                    onChanged: _saving
-                        ? null
-                        : (value) => setState(() => _months = value!),
-                  ),
-                  if (_months != 0)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.event_available_outlined),
-                      title: Text(label('First payout', 'تاريخ أول عائد')),
-                      subtitle: _first == null
-                          ? null
-                          : Text(_date(context, certificateDay(_first!))),
-                      onTap: _saving ? null : () => _pickDate(maturity: false),
-                    ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.event_outlined),
-                    title:
-                        Text(label('Maturity date', 'تاريخ استحقاق الشهادة')),
-                    subtitle: _maturity == null
-                        ? null
-                        : Text(_date(context, certificateDay(_maturity!))),
-                    onTap: _saving ? null : () => _pickDate(maturity: true),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(label('Automatically log future payouts',
-                        'سجّل العوائد القادمة تلقائيًا')),
-                    subtitle: Text(label(
-                      'CashU logs scheduled amounts when you open the app. Leave off to confirm each deposit.',
-                      'CashU بيسجّل المبلغ حسب الجدول وقت فتح التطبيق. اقفل الاختيار لو عايز تأكد كل دفعة بنفسك.',
-                    )),
-                    value: _automatic,
-                    onChanged: _saving
-                        ? null
-                        : (value) => setState(() => _automatic = value),
-                  ),
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Text(_error!,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error)),
-                    ),
-                  const SizedBox(height: 12),
-                  FilledButton(
+                  child: Text(label(
+                'Add an active EGP account first.',
+                'أضف حسابًا نشطًا بالجنيه الأول.',
+              )));
+            return Column(children: [
+              Expanded(
+                  child: Form(
+                key: _form,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        CashuGreenPanel(
+                            child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.workspace_premium_outlined,
+                                color: Color(0xffb4edb8)),
+                            const SizedBox(height: 8),
+                            Text(
+                                label('Return per payout', 'العائد في كل دفعة'),
+                                style:
+                                    const TextStyle(color: Color(0xffc4dace))),
+                            Text(
+                                estimate == null
+                                    ? '—'
+                                    : _amount(context, estimate),
+                                style: const TextStyle(
+                                  color: Color(0xfff1faf3),
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.w800,
+                                )),
+                          ],
+                        )),
+                        CashuSectionTitle(
+                            label('Certificate terms', 'بيانات الشهادة')),
+                        CashuPanel(
+                            child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            input(_name,
+                                label('Certificate name', 'اسم الشهادة')),
+                            input(
+                                _bank,
+                                label('Bank name (optional)',
+                                    'اسم البنك (اختياري)')),
+                            input(
+                                _principal, label('Principal', 'قيمة الشهادة'),
+                                amount: true),
+                            Text(label('Payout frequency', 'دورية الصرف'),
+                                style: TextStyle(
+                                    color: colors.ink,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 5),
+                            Wrap(spacing: 7, runSpacing: 5, children: [
+                              for (final (months, title) in [
+                                (1, label('Monthly', 'شهري')),
+                                (3, label('Quarterly', 'ربع سنوي')),
+                                (6, label('Semiannual', 'نصف سنوي')),
+                                (12, label('Yearly', 'سنوي')),
+                                (0, label('At maturity', 'عند الاستحقاق')),
+                              ])
+                                ChoiceChip(
+                                  label: Text(title),
+                                  selected: _months == months,
+                                  onSelected: _saving
+                                      ? null
+                                      : (_) => setState(() => _months = months),
+                                ),
+                            ]),
+                            if (_months != 0)
+                              SwitchListTile(
+                                title: Text(label('Calculate from annual rate',
+                                    'احسبه من العائد السنوي')),
+                                contentPadding: EdgeInsets.zero,
+                                value: _estimateFromRate,
+                                onChanged: _saving
+                                    ? null
+                                    : (value) => setState(
+                                        () => _estimateFromRate = value),
+                              ),
+                            const SizedBox(height: 8),
+                            if (useRate) ...[
+                              input(_rate,
+                                  label('Annual rate', 'نسبة العائد السنوي'),
+                                  rate: true),
+                              Text(
+                                  label(
+                                      'Fixed-rate estimate. Enter the exact payout if your bank uses a different schedule or calculation.',
+                                      'ده تقدير لعائد ثابت. أدخل مبلغ الدفعة الفعلي لو البنك بيحسب العائد بطريقة مختلفة.'),
+                                  style: TextStyle(color: colors.muted)),
+                            ] else
+                              input(
+                                  _returnAmount,
+                                  label('Amount per payout (EGP)',
+                                      'قيمة العائد في كل دفعة (جنيه)'),
+                                  amount: true),
+                          ],
+                        )),
+                        CashuSectionTitle(label('Schedule and destination',
+                            'المواعيد وحساب العائد')),
+                        CashuPanel(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                DropdownButtonFormField<String>(
+                                  initialValue: _account,
+                                  isExpanded: true,
+                                  decoration: decoration(label(
+                                      'Deposit the return into',
+                                      'العائد ينزل على حساب')),
+                                  items: [
+                                    for (final account in accounts)
+                                      DropdownMenuItem(
+                                          value: account.id,
+                                          child: Text(account.name,
+                                              overflow: TextOverflow.ellipsis)),
+                                  ],
+                                  onChanged: _saving
+                                      ? null
+                                      : (value) =>
+                                          setState(() => _account = value),
+                                ),
+                                if (_months != 0)
+                                  ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: const Icon(
+                                        Icons.event_available_outlined),
+                                    title: Text(label(
+                                        'First payout', 'تاريخ أول عائد')),
+                                    subtitle: _first == null
+                                        ? null
+                                        : Text(_date(
+                                            context, certificateDay(_first!))),
+                                    onTap: _saving
+                                        ? null
+                                        : () => _pickDate(maturity: false),
+                                  ),
+                                ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: const Icon(Icons.event_outlined),
+                                  title: Text(label('Maturity date',
+                                      'تاريخ استحقاق الشهادة')),
+                                  subtitle: _maturity == null
+                                      ? null
+                                      : Text(_date(
+                                          context, certificateDay(_maturity!))),
+                                  onTap: _saving
+                                      ? null
+                                      : () => _pickDate(maturity: true),
+                                ),
+                              ]),
+                        ),
+                        CashuSectionTitle(
+                            label('Record the return', 'طريقة تسجيل العائد')),
+                        for (final (automatic, icon, title, detail) in [
+                          (
+                            false,
+                            Icons.touch_app_outlined,
+                            label(
+                                'Confirm when received', 'أكّد الاستلام بنفسك'),
+                            label('Record income when it reaches your account.',
+                                'سجّل العائد لما ينزل في الحساب.')
+                          ),
+                          (
+                            true,
+                            Icons.event_repeat_outlined,
+                            label('Record on schedule', 'سجّل حسب المواعيد'),
+                            label('CashU posts due payouts when the app opens.',
+                                'CashU بيسجّل الدفعات المستحقة وقت فتح التطبيق.')
+                          ),
+                        ])
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: CashuPanel(
+                              highlighted: _automatic == automatic,
+                              onTap: _saving
+                                  ? null
+                                  : () =>
+                                      setState(() => _automatic = automatic),
+                              child: Row(children: [
+                                CashuIconTile(icon, size: 36),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                    child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                      Text(title,
+                                          style: TextStyle(
+                                              color: colors.ink,
+                                              fontWeight: FontWeight.w700)),
+                                      Text(detail,
+                                          style:
+                                              TextStyle(color: colors.muted)),
+                                    ])),
+                                Icon(
+                                    _automatic == automatic
+                                        ? Icons.check_circle
+                                        : Icons.circle_outlined,
+                                    size: 20,
+                                    color: colors.accent),
+                              ]),
+                            ),
+                          ),
+                      ]),
+                ),
+              )),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(_error!,
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.error)),
+                      ),
+                    FilledButton(
                       onPressed: _saving ? null : _save,
-                      child: Text(label('Save certificate', 'حفظ الشهادة'))),
-                ],
+                      child: Text(label('Save certificate', 'حفظ الشهادة')),
+                    ),
+                  ],
+                ),
               ),
-            );
+            ]);
           },
         ),
       ))),

@@ -1,3 +1,4 @@
+import 'package:budget/pages/cashuAddAssetPage.dart';
 import 'package:budget/struct/accountTypes.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
@@ -82,9 +83,7 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
         floatingActionButton: AnimateFABDelayed(
           fab: AddFAB(
             tooltip: "add-account".tr(),
-            openPage: AddWalletPage(
-              routesToPopAfterDelete: RoutesToPopAfterDelete.None,
-            ),
+            openPage: const CashuAddAssetPage(),
           ),
         ),
         actions: [
@@ -101,9 +100,7 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
                 action: () {
                   pushRoute(
                     context,
-                    AddWalletPage(
-                      routesToPopAfterDelete: RoutesToPopAfterDelete.None,
-                    ),
+                    const CashuAddAssetPage(),
                   );
                 },
               ),

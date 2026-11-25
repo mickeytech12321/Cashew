@@ -602,6 +602,11 @@ class CategoryWithDetails {
   });
 }
 
+typedef CashuOverviewAccount = ({
+  String id, String name, String currency, String type, double balance,
+  double spent, bool excludeFromNetWorth,
+});
+
 class WalletWithDetails {
   final TransactionWallet wallet;
   final double? totalSpent;
@@ -4397,6 +4402,44 @@ class FinanceDatabase extends _$FinanceDatabase {
       name: row.read<String>('name'),
       currency: row.readNullable<String>('currency') ?? '',
     )).toList();
+  }
+
+  Stream<List<CashuOverviewAccount>> watchCashuOverviewAccounts(
+      DateTime month, DateTime now) {
+    final start = DateTime(month.year, month.month);
+    final end = DateTime(month.year, month.month + 1);
+    final dayEnd = DateTime(now.year, now.month, now.day + 1);
+    return customSelect(
+      'SELECT w.wallet_pk, w.name, w.currency, '
+      "COALESCE(d.account_type, 'unspecified') AS account_type, "
+      'COALESCE(d.exclude_from_net_worth, 0) AS exclude_from_net_worth, '
+      'COALESCE(SUM(CASE WHEN t.date_created < ? THEN t.amount ELSE 0 END), 0) AS balance, '
+      'COALESCE(SUM(CASE WHEN t.date_created >= ? AND t.date_created < ? '
+      'AND t.date_created < ? AND t.amount < 0 AND t.skip_paid = 0 '
+      "AND t.category_fk != '0' THEN -t.amount ELSE 0 END), 0) AS spent "
+      'FROM wallets w LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk AND t.paid = 1 '
+      'WHERE COALESCE(d.archived, 0) = 0 '
+      'GROUP BY w.wallet_pk ORDER BY w."order", w.wallet_pk',
+      variables: [
+        Variable<DateTime>(dayEnd),
+        Variable<DateTime>(start),
+        Variable<DateTime>(end),
+        Variable<DateTime>(dayEnd),
+      ],
+      readsFrom: {wallets, transactions},
+    ).watch().map((rows) => [
+      for (final row in rows)
+        (
+          id: row.read<String>('wallet_pk'),
+          name: row.read<String>('name'),
+          currency: row.readNullable<String>('currency')?.trim().toLowerCase() ?? '',
+          type: row.read<String>('account_type'),
+          balance: row.read<double>('balance'),
+          spent: row.read<double>('spent'),
+          excludeFromNetWorth: row.read<int>('exclude_from_net_worth') == 1,
+        ),
+    ]);
   }
 
   Stream<double> watchMonthlySpendingInCurrency(

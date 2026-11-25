@@ -74,6 +74,55 @@ void main() {
   tearDown(() => db.close());
 
   test(
+      'overview separates currency balances and excludes archived and future entries',
+      () async {
+    final dbDate = DateTime(2026, 11, 25);
+    await db.setAccountArchived(_secondWallet, true);
+    await db.setAccountExcludedFromNetWorth('foreign', true);
+    final spending = _payment(amount: -200).copyWith(dateCreated: dbDate);
+    await db.batch((batch) => batch.insertAll(db.transactions, [
+      spending,
+      spending.copyWith(
+          transactionPk: 'old',
+          amount: -50,
+          dateCreated: DateTime(2026, 10, 21)),
+      spending.copyWith(
+          transactionPk: 'principal', categoryFk: '0', amount: 1000),
+      spending.copyWith(
+          transactionPk: 'future',
+          amount: -70,
+          dateCreated: DateTime(2026, 11, 30)),
+      spending.copyWith(transactionPk: 'unpaid', amount: -80, paid: false),
+      spending.copyWith(
+          transactionPk: 'hidden-spend', amount: -10, skipPaid: true),
+      spending.copyWith(transactionPk: 'archived', walletFk: _secondWallet),
+      spending.copyWith(transactionPk: 'usd', walletFk: 'foreign', amount: -5),
+    ]));
+    final current = await db.watchCashuOverviewAccounts(dbDate, dbDate).first;
+    expect(
+        current.map((row) => (
+              row.id,
+              row.currency,
+              row.balance,
+              row.spent,
+              row.excludeFromNetWorth
+            )),
+        [(_wallet, 'egp', 740, 200, false), ('foreign', 'usd', -5, 5, true)]);
+    final previous =
+        await db.watchCashuOverviewAccounts(DateTime(2026, 10), dbDate).first;
+    expect((previous.first.balance, previous.first.spent), (740, 50));
+  });
+
+  test('certificate rate estimate rounds in piastres for each payout period',
+      () {
+    expect(estimateCertificatePayoutMinor(10000000, 2150, 1), 179167);
+    expect(estimateCertificatePayoutMinor(10000000, 2150, 3), 537500);
+    expect(estimateCertificatePayoutMinor(10000000, 2150, 6), 1075000);
+    expect(estimateCertificatePayoutMinor(99999999999900, 10000, 12),
+        99999999999900);
+  });
+
+  test(
       'a person-to-person InstaPay expense charges once and keeps editable principal',
       () async {
     final draft = _payment();

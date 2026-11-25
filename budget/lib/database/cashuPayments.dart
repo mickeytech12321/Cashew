@@ -168,6 +168,18 @@ int certificateDay(DateTime date) =>
 DateTime certificateDate(int day) =>
     DateTime(day ~/ 10000, day ~/ 100 % 100, day % 100);
 
+int estimateCertificatePayoutMinor(
+  int principalMinor,
+  int annualRateBasisPoints,
+  int intervalMonths,
+) {
+  final divisor = BigInt.from(120000);
+  final numerator = BigInt.from(principalMinor) *
+      BigInt.from(annualRateBasisPoints) *
+      BigInt.from(intervalMonths);
+  return ((numerator + (divisor ~/ BigInt.two)) ~/ divisor).toInt();
+}
+
 class BankCertificate {
   const BankCertificate({
     required this.id,
