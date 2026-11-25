@@ -1,3 +1,4 @@
+import 'package:budget/database/backupValidation.dart';
 import 'package:budget/database/platform/stagedNativeRestore.dart';
 // native.dart
 import 'package:budget/database/tables.dart';
@@ -6,6 +7,7 @@ import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:drift/drift.dart';
+import 'package:flutter/services.dart';
 import 'dart:io';
 
 Future<FinanceDatabase> constructDb(String dbName,
@@ -22,6 +24,45 @@ Future<FinanceDatabase> constructDb(String dbName,
     return MultiExecutor(read: foregroundExecutor, write: backgroundExecutor);
   });
   return FinanceDatabase(db);
+}
+
+Future<FinanceDatabase> constructHouseholdDb() async {
+  final Directory folder;
+  if (Platform.isAndroid) {
+    const storage = MethodChannel('cashew/household_storage');
+    final path = await storage.invokeMethod<String>('directory');
+    if (path == null || path.isEmpty) {
+      throw StateError('Household storage directory is unavailable');
+    }
+    folder = Directory(path);
+  } else {
+    folder = await getApplicationSupportDirectory();
+  }
+  final file = File(p.join(folder.path, 'household-sharing.sqlite'));
+  return FinanceDatabase(NativeDatabase.createInBackground(file));
+}
+
+Future<T> readCashewSyncSnapshot<T>(
+  Uint8List bytes, Future<T> Function(FinanceDatabase) read, {
+  Directory? scratch,
+}) async {
+  validateCashewBackupHeader(bytes);
+  final root = scratch ?? await getTemporaryDirectory();
+  final folder = await root.createTemp('cashew-sync-');
+  FinanceDatabase? candidate;
+  try {
+    final file = File(p.join(folder.path, 'snapshot.sqlite'));
+    await file.writeAsBytes(bytes);
+    candidate = FinanceDatabase(NativeDatabase.createInBackground(file));
+    await validateCashewBackupDatabase(candidate);
+    return await read(candidate);
+  } finally {
+    try {
+      await candidate?.close();
+    } finally {
+      await folder.delete(recursive: true);
+    }
+  }
 }
 
 Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) async {

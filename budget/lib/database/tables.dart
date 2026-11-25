@@ -2997,34 +2997,22 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   Future<bool> createDeleteLogs(
       DeleteLogType type, List<String> deletedPks) async {
-    List<DeleteLogsCompanion> deleteLogsToInsert = [];
-    Map<String, Transaction?> fetchedTransactions = {};
-
-    await Future.wait(deletedPks.map((deletePk) async {
-      deleteLogsToInsert.add(
-        DeleteLogsCompanion.insert(
-          type: type,
-          entryPk: deletePk,
-          dateTimeModified: Value(DateTime.now()),
-        ),
-      );
-      if (type == DeleteLogType.Transaction) {
-        Transaction? transactionToDelete =
-            await database.tryGetTransactionFromPk(deletePk);
-        fetchedTransactions[deletePk] = transactionToDelete;
+    if (type == DeleteLogType.Transaction) {
+      final removed = await Future.wait(deletedPks.map(tryGetTransactionFromPk));
+      for (final row in removed.nonNulls) {
+        addTransactionToRecentlyDeleted(row, save: false);
       }
-    }));
-
-    fetchedTransactions.forEach((deletePk, transactionToDelete) {
-      if (transactionToDelete != null)
-        addTransactionToRecentlyDeleted(transactionToDelete, save: false);
+      await saveRecentlyDeletedTransactions();
+    }
+    final now = DateTime.now();
+    await batch((batch) {
+      batch.insertAll(deleteLogs, [
+        for (final id in deletedPks)
+          DeleteLogsCompanion.insert(
+            type: type, entryPk: id, dateTimeModified: Value(now),
+          ),
+      ], mode: InsertMode.replace);
     });
-    saveRecentlyDeletedTransactions();
-
-    await database.batch((batch) {
-      batch.insertAll(deleteLogs, deleteLogsToInsert, mode: InsertMode.replace);
-    });
-
     return true;
   }
 
@@ -5761,6 +5749,26 @@ class FinanceDatabase extends _$FinanceDatabase {
     )).toList();
   }
 
+  Future<({String name, String currency, int decimals, double balance})?>
+      previewHouseholdWalletOpening(String walletPk, DateTime asOf) async {
+    final row = await customSelect(
+      'SELECT w.name, UPPER(TRIM(w.currency)) AS currency, w.decimals, '
+      'COALESCE(SUM(t.amount), 0) AS balance '
+      'FROM wallets w LEFT JOIN account_details d ON d.wallet_fk = w.wallet_pk '
+      'LEFT JOIN transactions t ON t.wallet_fk = w.wallet_pk AND t.paid = 1 '
+      'AND t.skip_paid = 0 AND t.date_created <= ? '
+      'WHERE w.wallet_pk = ? AND COALESCE(d.archived, 0) = 0 '
+      'GROUP BY w.wallet_pk',
+      variables: [Variable<DateTime>(asOf), Variable<String>(walletPk)],
+    ).getSingleOrNull();
+    final currency = row?.readNullable<String>('currency');
+    final balance = row?.read<double>('balance');
+    if (row == null || currency == null || balance == null || !balance.isFinite ||
+        !RegExp(r'^[A-Z]{3}$').hasMatch(currency)) return null;
+    return (name: row.read<String>('name'), currency: currency,
+      decimals: row.read<int>('decimals').clamp(0, 3), balance: balance);
+  }
+
   Future<void> recordSyncConflict({
     required String conflictPk,
     required String entityType,
@@ -5849,6 +5857,22 @@ class FinanceDatabase extends _$FinanceDatabase {
     return true;
   });
 
+  DeleteLogType? _metadataSyncType(SyncLog log) {
+    final type = log.deleteLogType ?? switch (log.updateLogType) {
+      UpdateLogType.TransactionWallet => DeleteLogType.TransactionWallet,
+      UpdateLogType.TransactionCategory => DeleteLogType.TransactionCategory,
+      UpdateLogType.Budget => DeleteLogType.Budget,
+      UpdateLogType.CategoryBudgetLimit => DeleteLogType.CategoryBudgetLimit,
+      UpdateLogType.TransactionAssociatedTitle => DeleteLogType.TransactionAssociatedTitle,
+      UpdateLogType.ScannerTemplate => DeleteLogType.ScannerTemplate,
+      UpdateLogType.Objective => DeleteLogType.Objective,
+      _ => null,
+    };
+    if (type == DeleteLogType.Transaction || type == DeleteLogType.Unused ||
+        (type == DeleteLogType.TransactionWallet && log.pk == '0')) return null;
+    return type;
+  }
+
   Future<bool> processSyncLogs(List<SyncLog> syncLogs) async {
     final ordered = syncLogs.toList()..sort(
       (a, b) => (a.transactionDateTime ?? DateTime(0))
@@ -5877,12 +5901,44 @@ class FinanceDatabase extends _$FinanceDatabase {
         }
       }
 
+      final metadataIds = ordered.where((log) => _metadataSyncType(log) != null)
+          .map((log) => log.pk).toSet().toList();
+      final metadataTombstones = <(DeleteLogType, String), DateTime>{};
+      for (var offset = 0; offset < metadataIds.length; offset += 400) {
+        final keys = metadataIds.skip(offset).take(400);
+        final rows = await (select(deleteLogs)
+              ..where((row) => row.entryPk.isIn(keys) &
+                  row.type.equalsValue(DeleteLogType.Transaction).not())).get();
+        for (final row in rows) {
+          final key = (row.type, row.entryPk);
+          if (metadataTombstones[key]?.isBefore(row.dateTimeModified) ?? true) {
+            metadataTombstones[key] = row.dateTimeModified;
+          }
+        }
+      }
+
       final transferPairs = await _getTransferSyncPairs(ordered, current);
       final transferIds = transferPairs.expand((pair) => [pair.$1, pair.$2]).toSet();
       await batch((batch) async {
         for (final syncLog in ordered) {
           if (syncLog.isTransaction && transferIds.contains(syncLog.pk)) continue;
           final date = syncLog.transactionDateTime ?? DateTime(0);
+          if (syncLog.deleteLogType == DeleteLogType.TransactionWallet &&
+              syncLog.pk == '0') {
+            // Cashew replaces its primary wallet in place when the owner deletes it.
+            continue;
+          }
+          final metadataType = _metadataSyncType(syncLog);
+          if (metadataType != null) {
+            final key = (metadataType, syncLog.pk);
+            if (!(metadataTombstones[key]?.isBefore(date) ?? true)) continue;
+            if (syncLog.deleteLogType != null) {
+              metadataTombstones[key] = date;
+              batch.insert(deleteLogs, DeleteLogsCompanion.insert(
+                entryPk: syncLog.pk, type: metadataType, dateTimeModified: Value(date),
+              ));
+            }
+          }
           if (syncLog.deleteLogType == DeleteLogType.TransactionWallet) {
             batch.deleteWhere(
               wallets,
@@ -5960,8 +6016,11 @@ class FinanceDatabase extends _$FinanceDatabase {
                   ),
             );
           } else if (syncLog.deleteLogType == DeleteLogType.ScannerTemplate) {
-            batch.deleteWhere(scannerTemplates,
-                (tbl) => tbl.scannerTemplatePk.equals(syncLog.pk));
+            batch.deleteWhere(
+              scannerTemplates,
+              (tbl) => tbl.scannerTemplatePk.equals(syncLog.pk) &
+                  (tbl.dateTimeModified.isNull() | tbl.dateTimeModified.isSmallerThanValue(date)),
+            );
           } else if (syncLog.deleteLogType == DeleteLogType.Objective) {
             batch.deleteWhere(
               objectives,
@@ -7324,31 +7383,25 @@ class FinanceDatabase extends _$FinanceDatabase {
     return;
   }
 
-  Future deleteCategoryBudgetLimitsInBudget(String budgetPk) async {
-    List<CategoryBudgetLimit> limitsToDelete =
-        await (select(categoryBudgetLimits)
-              ..where((t) => t.budgetFk.equals(budgetPk)))
-            .get();
-    List<String> limitPks =
-        limitsToDelete.map((limit) => limit.categoryLimitPk).toList();
-    await createDeleteLogs(DeleteLogType.TransactionAssociatedTitle, limitPks);
-    return (delete(categoryBudgetLimits)
-          ..where((t) => t.budgetFk.equals(budgetPk)))
-        .go();
-  }
+  Future<int> deleteCategoryBudgetLimitsInBudget(String budgetPk) =>
+      transaction(() async {
+        final limits = await (select(categoryBudgetLimits)
+              ..where((row) => row.budgetFk.equals(budgetPk))).get();
+        await createDeleteLogs(DeleteLogType.CategoryBudgetLimit,
+          limits.map((limit) => limit.categoryLimitPk).toList());
+        return (delete(categoryBudgetLimits)
+              ..where((row) => row.budgetFk.equals(budgetPk))).go();
+      });
 
-  Future deleteCategoryBudgetLimitsInCategory(String categoryPk) async {
-    List<CategoryBudgetLimit> limitsToDelete =
-        await (select(categoryBudgetLimits)
-              ..where((t) => t.categoryFk.equals(categoryPk)))
-            .get();
-    List<String> limitPks =
-        limitsToDelete.map((limit) => limit.categoryLimitPk).toList();
-    await createDeleteLogs(DeleteLogType.TransactionAssociatedTitle, limitPks);
-    return (delete(categoryBudgetLimits)
-          ..where((t) => t.categoryFk.equals(categoryPk)))
-        .go();
-  }
+  Future<int> deleteCategoryBudgetLimitsInCategory(String categoryPk) =>
+      transaction(() async {
+        final limits = await (select(categoryBudgetLimits)
+              ..where((row) => row.categoryFk.equals(categoryPk))).get();
+        await createDeleteLogs(DeleteLogType.CategoryBudgetLimit,
+          limits.map((limit) => limit.categoryLimitPk).toList());
+        return (delete(categoryBudgetLimits)
+              ..where((row) => row.categoryFk.equals(categoryPk))).go();
+      });
 
   //delete wallet given key
   Future deleteWallet(String walletPk, int order) async {

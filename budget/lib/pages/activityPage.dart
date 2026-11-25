@@ -51,7 +51,6 @@ Future<void> saveRecentlyDeletedTransactions() async {
           })
       .toList();
   String jsonString = jsonEncode(encodedData);
-  print(jsonString);
   await sharedPreferences.setString("recentlyDeletedTransactions", jsonString);
 }
 

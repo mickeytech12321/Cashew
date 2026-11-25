@@ -53,8 +53,27 @@ Run this only as part of an Android build you intend to create. GitHub-hosted de
 | --- | --- |
 | Drive attachments | Same Android OAuth project and clients, plus the optional `drive.file` scope. |
 | Gmail scanning | Gmail API enabled in the same project, plus the Gmail scope and any applicable verification. Keep it separate from backup consent. |
-| Firebase Auth and household sharing | A dedicated Firebase project owned by the publisher, a registered Android app for `com.mickey.cashew`, its client configuration, enabled auth providers and tested per-member Firestore security rules. It remains disabled in this branch. |
+| Firebase Auth and household sharing | A separate publisher-owned project, registered app, verified email/password sign-in and the isolated [household rules](budget/household/firestore.rules). See the setup below. |
 | Browser builds | A Web OAuth client restricted to the real JavaScript origins, plus integration of the provider-rendered Google sign-in button. The Android build variable does not enable browser sign-in. |
 | iOS | A separately registered iOS OAuth client and the matching native bundle and URL scheme configuration. |
+
+## Configure household sharing
+
+This optional service uses a dedicated Firebase project with a default Cloud Firestore database and Email/Password authentication. Register `com.mickey.cashew` as an Android app in the new Firebase project. Configure verification emails and apply the [household rules](budget/household/firestore.rules) to that project. The separate configuration in `budget/household/firebase.json` targets those rules. Specify the dedicated project explicitly if you deploy them with the Firebase CLI.
+
+Supply the project’s public client configuration to the intended app build. The free-edition Android workflow can read the same keys from repository variables.
+
+| Build value | Firebase setting |
+| --- | --- |
+| `CASHEW_HOUSEHOLD_PROJECT_ID` | Project ID |
+| `CASHEW_HOUSEHOLD_APP_ID` | Firebase App ID for the intended platform |
+| `CASHEW_HOUSEHOLD_API_KEY` | Firebase client API key for that app |
+| `CASHEW_HOUSEHOLD_SENDER_ID` | Messaging sender ID or project number |
+
+Local builds can supply these values as Dart defines or with `--dart-define-from-file`. Missing values leave the local Household profiles available. Firebase service-account credentials belong outside the app and repository. Household email sign-in uses its own Firebase session independently of Google Drive sign-in.
+
+In **Settings → Household profiles → Household sharing**, the owner verifies an email, creates a household and copies an invitation code for the recipient’s verified email. The recipient accepts the code before the owner assigns access to individual accounts. Starting with a personal balance shows the name, currency and opening balance for confirmation. Shared transactions use their own ledger. Offline changes remain saved under the current login and sync when the app can reach the server. An edit superseded on another device goes into conflict status for review before editing again. After revocation the server rejects further access and writes. A disconnected device can still display data that it previously downloaded until it checks access again.
+
+The Firestore rules tests run against the demo emulator with Java 21 and Node. From `budget/household`, install the development dependencies and run `npm test`. Verify the verified-email flow, invites, conflicting edits and access revocation on two configured devices before releasing. The rules and build integration are checked in. Production Firebase deployment and device verification are pending.
 
 Official setup references: [Google Android signing certificates](https://developers.google.com/android/guides/client-auth), [Flutter Android Google sign-in configuration](https://pub.dev/documentation/google_sign_in_android/latest/), and [Drive application data scope](https://developers.google.com/workspace/drive/api/guides/appdata).

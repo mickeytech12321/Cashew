@@ -10,6 +10,11 @@ jobs:
   android-debug:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      CASHEW_HOUSEHOLD_PROJECT_ID: ${{ vars.CASHEW_HOUSEHOLD_PROJECT_ID }}
+      CASHEW_HOUSEHOLD_APP_ID: ${{ vars.CASHEW_HOUSEHOLD_APP_ID }}
+      CASHEW_HOUSEHOLD_API_KEY: ${{ vars.CASHEW_HOUSEHOLD_API_KEY }}
+      CASHEW_HOUSEHOLD_SENDER_ID: ${{ vars.CASHEW_HOUSEHOLD_SENDER_ID }}
     steps:
       - uses: actions/checkout@v4
       - name: Use Java 17 for Android build
@@ -161,7 +166,13 @@ jobs:
         working-directory: budget
         env:
           CASHEW_GOOGLE_WEB_CLIENT_ID: ${{ vars.CASHEW_GOOGLE_WEB_CLIENT_ID }}
-        run: flutter build apk --debug --dart-define="CASHEW_GOOGLE_WEB_CLIENT_ID=$CASHEW_GOOGLE_WEB_CLIENT_ID"
+        run: >-
+          flutter build apk --debug
+          --dart-define="CASHEW_GOOGLE_WEB_CLIENT_ID=$CASHEW_GOOGLE_WEB_CLIENT_ID"
+          --dart-define="CASHEW_HOUSEHOLD_PROJECT_ID=$CASHEW_HOUSEHOLD_PROJECT_ID"
+          --dart-define="CASHEW_HOUSEHOLD_APP_ID=$CASHEW_HOUSEHOLD_APP_ID"
+          --dart-define="CASHEW_HOUSEHOLD_API_KEY=$CASHEW_HOUSEHOLD_API_KEY"
+          --dart-define="CASHEW_HOUSEHOLD_SENDER_ID=$CASHEW_HOUSEHOLD_SENDER_ID"
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
@@ -175,7 +186,13 @@ jobs:
         env:
           CASHEW_TEST_RELEASE: 'true'
           CASHEW_GOOGLE_WEB_CLIENT_ID: ${{ vars.CASHEW_GOOGLE_WEB_CLIENT_ID }}
-        run: flutter build apk --release --no-tree-shake-icons --dart-define="CASHEW_GOOGLE_WEB_CLIENT_ID=$CASHEW_GOOGLE_WEB_CLIENT_ID"
+        run: >-
+          flutter build apk --release --no-tree-shake-icons
+          --dart-define="CASHEW_GOOGLE_WEB_CLIENT_ID=$CASHEW_GOOGLE_WEB_CLIENT_ID"
+          --dart-define="CASHEW_HOUSEHOLD_PROJECT_ID=$CASHEW_HOUSEHOLD_PROJECT_ID"
+          --dart-define="CASHEW_HOUSEHOLD_APP_ID=$CASHEW_HOUSEHOLD_APP_ID"
+          --dart-define="CASHEW_HOUSEHOLD_API_KEY=$CASHEW_HOUSEHOLD_API_KEY"
+          --dart-define="CASHEW_HOUSEHOLD_SENDER_ID=$CASHEW_HOUSEHOLD_SENDER_ID"
       - name: Upload release test APK
         uses: actions/upload-artifact@v4
         with:

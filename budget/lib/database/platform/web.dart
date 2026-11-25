@@ -21,6 +21,21 @@ Future<FinanceDatabase> constructDb(String dbName,
   );
 }
 
+Future<FinanceDatabase> constructHouseholdDb() => constructDb('household-sharing');
+
+Future<T> readCashewSyncSnapshot<T>(
+  Uint8List bytes, Future<T> Function(FinanceDatabase) read,
+) async {
+  validateCashewBackupHeader(bytes);
+  final candidate = await constructDb('sync', initialDataWeb: bytes);
+  try {
+    await validateCashewBackupDatabase(candidate);
+    return await read(candidate);
+  } finally {
+    await candidate.close();
+  }
+}
+
 Future<DBFileInfo> getCurrentDBFileInfo({bool omitImportMessageBodies = false}) async {
   Uint8List dbFileBytes;
   late Stream<List<int>> mediaStream;

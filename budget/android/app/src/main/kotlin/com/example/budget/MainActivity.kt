@@ -8,6 +8,7 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterFragmentActivity() {
+    private var householdStorageMethods: MethodChannel? = null
     private var assistantKeyMethods: MethodChannel? = null
     private var assistantSpeech: AssistantSpeechBridge? = null
     private var notificationMethods: MethodChannel? = null
@@ -16,6 +17,14 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
+        householdStorageMethods = MethodChannel(messenger, "cashew/household_storage")
+        householdStorageMethods?.setMethodCallHandler { call, result ->
+            if (call.method == "directory") {
+                result.success(noBackupFilesDir.absolutePath)
+            } else {
+                result.notImplemented()
+            }
+        }
         assistantSpeech = AssistantSpeechBridge(this, messenger)
         val assistantKey = LocalEncryptedFile(this, "assistant-api-key")
         assistantKeyMethods = MethodChannel(messenger, "cashew/assistant_key")
@@ -103,6 +112,8 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         clearBankNotificationStream()
+        householdStorageMethods?.setMethodCallHandler(null)
+        householdStorageMethods = null
         assistantSpeech?.dispose()
         assistantSpeech = null
         assistantKeyMethods?.setMethodCallHandler(null)

@@ -1,3 +1,4 @@
+import 'package:budget/pages/sharedHouseholdsPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:flutter/material.dart';
@@ -202,9 +203,15 @@ class _HouseholdPageState extends State<HouseholdPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(_label(
-                    'Profiles and access previews are local to this device. Invitations and sharing across devices are not available.',
-                    'الملفات ومعاينة الصلاحيات محلية على هذا الجهاز. الدعوات والمشاركة بين الأجهزة غير متاحة.',
+                    'Profiles and access previews are local to this device.',
+                    'الملفات ومعاينة الصلاحيات محلية على هذا الجهاز.',
                   )),
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => const SharedHouseholdsPage(),
+                    )),
+                    child: Text(_label('Household sharing', 'المشاركة الأسرية')),
+                  ),
                   FilledButton(
                       onPressed: _busy ? null : () => _edit(),
                       child: Text(_label('Add profile', 'إضافة ملف شخصي'))),
